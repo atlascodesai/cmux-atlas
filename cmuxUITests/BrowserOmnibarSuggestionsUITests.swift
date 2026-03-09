@@ -3,15 +3,18 @@ import Foundation
 
 final class BrowserOmnibarSuggestionsUITests: XCTestCase {
     private var dataPath = ""
+    private var historyPath = ""
 
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
         dataPath = "/tmp/cmux-ui-test-omnibar-suggestions-\(UUID().uuidString).json"
         try? FileManager.default.removeItem(atPath: dataPath)
+        historyPath = "/tmp/cmux-ui-test-omnibar-history-\(UUID().uuidString).json"
+        try? FileManager.default.removeItem(atPath: historyPath)
 
         // Terminate any lingering app from a prior test so its debounced
-        // history-save doesn't overwrite the seeded browser_history.json.
+        // history-save doesn't leak state into the next isolated history file.
         let cleanup = XCUIApplication()
         cleanup.terminate()
         RunLoop.current.run(until: Date().addingTimeInterval(0.5))
@@ -25,11 +28,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         ])
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        // Keep suggestions deterministic for the keyboard-nav assertions.
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         // Focus omnibar.
@@ -111,11 +110,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        // Keep suggestions deterministic.
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         let omnibar = app.textFields["BrowserOmnibarTextField"].firstMatch
@@ -198,10 +193,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         app.launchEnvironment["CMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON"] = #"["go tutorial","go json","go fmt"]"#
         launchAndEnsureForeground(app)
 
@@ -243,10 +235,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         app.launchEnvironment["CMUX_UI_TEST_REMOTE_SUGGESTIONS_JSON"] = #"["go tutorial","go json","go fmt"]"#
         launchAndEnsureForeground(app)
 
@@ -271,10 +260,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         app.typeKey("l", modifierFlags: [.command])
@@ -332,10 +318,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         let omnibar = app.textFields["BrowserOmnibarTextField"].firstMatch
@@ -389,10 +372,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         )
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         app.typeKey("l", modifierFlags: [.command])
@@ -462,10 +442,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
 
     func testOmnibarSingleRowPopupUsesMinimumHeight() {
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         app.typeKey("l", modifierFlags: [.command])
@@ -507,10 +484,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         app.typeKey("l", modifierFlags: [.command])
@@ -544,10 +518,7 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         seedBrowserHistoryForTest()
 
         let app = XCUIApplication()
-        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
-        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
-        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        configureLaunchEnvironment(for: app)
         launchAndEnsureForeground(app)
 
         app.typeKey("l", modifierFlags: [.command])
@@ -590,6 +561,14 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
         )
     }
 
+    private func configureLaunchEnvironment(for app: XCUIApplication) {
+        app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
+        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_SETUP"] = "1"
+        app.launchEnvironment["CMUX_UI_TEST_GOTO_SPLIT_PATH"] = dataPath
+        app.launchEnvironment["CMUX_UI_TEST_DISABLE_REMOTE_SUGGESTIONS"] = "1"
+        app.launchEnvironment["CMUX_UI_TEST_BROWSER_HISTORY_PATH"] = historyPath
+    }
+
     private func ensureForegroundAfterLaunch(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
         if app.wait(for: .runningForeground, timeout: timeout) {
             return true
@@ -609,21 +588,17 @@ final class BrowserOmnibarSuggestionsUITests: XCTestCase {
     }
 
     private func seedBrowserHistoryForTest(entries: [(String, String)]? = nil, seedEntries: [SeedEntry]? = nil) {
-        // Keep the test hermetic: write a deterministic history file in the app's support dir
-        // so the omnibar always has at least one local suggestion row.
+        // Keep the test hermetic: write a deterministic history file to a per-test path
+        // and launch the app against that explicit store.
         let fileManager = FileManager.default
-        guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            XCTFail("Missing Application Support directory")
-            return
-        }
-
-        let bundleId = "com.cmuxterm.app.debug"
-        let dir = appSupport.appendingPathComponent(bundleId, isDirectory: true)
-        let url = dir.appendingPathComponent("browser_history.json", isDirectory: false)
+        let url = URL(fileURLWithPath: historyPath)
         do {
-            try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
         } catch {
-            XCTFail("Failed to create app support dir: \(error)")
+            XCTFail("Failed to create browser history seed dir: \(error)")
             return
         }
 
