@@ -3001,7 +3001,7 @@ class TerminalController {
         }
 
         var newId: UUID?
-        let shouldFocus = v2FocusAllowed()
+        let shouldFocus = v2FocusAllowed(requested: v2Bool(params, "focus") ?? true)
         #if DEBUG
         let startedAt = ProcessInfo.processInfo.systemUptime
         #endif
