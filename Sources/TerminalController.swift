@@ -2870,6 +2870,26 @@ class TerminalController {
         return v2MainSync { AppDelegate.shared?.windowId(for: tabManager) }
     }
 
+    private func v2PreferredCurrentWindowId() -> UUID? {
+        v2MainSync {
+            guard let app = AppDelegate.shared else {
+                return nil
+            }
+            let summaries = app.listMainWindowSummaries()
+            if let windowId = summaries.first(where: { $0.isKeyWindow })?.windowId {
+                return windowId
+            }
+            if let windowId = summaries.first(where: { $0.isVisible })?.windowId {
+                return windowId
+            }
+            if let activeManager = self.tabManager,
+               let activeWindowId = app.windowId(for: activeManager) {
+                return activeWindowId
+            }
+            return summaries.first?.windowId
+        }
+    }
+
     // MARK: - V2 Window Methods
 
     private func v2WindowList(params _: [String: Any]) -> V2CallResult {
@@ -2890,17 +2910,7 @@ class TerminalController {
     }
 
     private func v2WindowCurrent(params _: [String: Any]) -> V2CallResult {
-        let windowId = v2MainSync { () -> UUID? in
-            if let activeManager = self.tabManager,
-               let activeWindowId = self.v2ResolveWindowId(tabManager: activeManager) {
-                return activeWindowId
-            }
-            guard let app = AppDelegate.shared else { return nil }
-            let summaries = app.listMainWindowSummaries()
-            return summaries.first(where: { $0.isKeyWindow })?.windowId
-                ?? summaries.first(where: { $0.isVisible })?.windowId
-                ?? summaries.first?.windowId
-        }
+        let windowId = v2PreferredCurrentWindowId()
         guard let windowId else {
             return .err(code: "not_found", message: "Current window not found", data: nil)
         }
@@ -3011,6 +3021,10 @@ class TerminalController {
                 select: shouldFocus,
                 eagerLoadTerminal: !shouldFocus
             )
+            if shouldFocus {
+                v2MaybeFocusWindow(for: tabManager)
+                setActiveTabManager(tabManager)
+            }
             newId = ws.id
         }
         #if DEBUG
@@ -3062,7 +3076,14 @@ class TerminalController {
             ])
     }
     private func v2WorkspaceCurrent(params: [String: Any]) -> V2CallResult {
-        guard let tabManager = v2ResolveTabManager(params: params) else {
+        let tabManager: TabManager?
+        if params.isEmpty, let windowId = v2PreferredCurrentWindowId() {
+            tabManager = v2MainSync { AppDelegate.shared?.tabManagerFor(windowId: windowId) }
+                ?? v2ResolveTabManager(params: params)
+        } else {
+            tabManager = v2ResolveTabManager(params: params)
+        }
+        guard let tabManager else {
             return .err(code: "unavailable", message: "TabManager not available", data: nil)
         }
         var wsId: UUID?

@@ -1403,6 +1403,7 @@ final class BrowserPanel: Panel, ObservableObject {
     /// Monotonic identity for the current WKWebView instance.
     /// Incremented whenever we replace the underlying WKWebView after a process crash.
     @Published private(set) var webViewInstanceID: UUID = UUID()
+    @Published private(set) var portalStateRefreshGeneration: UInt64 = 0
 
     /// Prevent the omnibar from auto-focusing for a short window after explicit programmatic focus.
     /// This avoids races where SwiftUI focus state steals first responder back from WebKit.
@@ -1932,6 +1933,12 @@ final class BrowserPanel: Panel, ObservableObject {
 
     func updateWorkspaceId(_ newWorkspaceId: UUID) {
         workspaceId = newWorkspaceId
+    }
+
+    func requestPortalStateRefresh() {
+        DispatchQueue.main.async { [weak self] in
+            self?.portalStateRefreshGeneration &+= 1
+        }
     }
 
     func triggerFlash() {

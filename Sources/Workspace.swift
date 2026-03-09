@@ -3104,6 +3104,7 @@ final class Workspace: Identifiable, ObservableObject {
             } else {
                 maybeAutoFocusBrowserAddressBarOnPanelFocus(browserPanel, trigger: trigger)
             }
+            browserPanel.requestPortalStateRefresh()
         }
     }
 
@@ -3819,6 +3820,7 @@ extension Workspace: BonsplitDelegate {
             TerminalController.socketCommandAllowsInAppFocusMutations()
         if let browserPanel = panel as? BrowserPanel,
            previousFocusedPanelId != panelId || focusIntentAllowsBrowserOmnibarAutofocus {
+            browserPanel.requestPortalStateRefresh()
             maybeAutoFocusBrowserAddressBarOnPanelFocus(browserPanel, trigger: .standard)
         }
         if let terminalPanel = panel as? TerminalPanel {

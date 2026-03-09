@@ -114,6 +114,14 @@ final class BrowserLifecycleCrossWindowUITests: XCTestCase {
         }
 
         XCTAssertNotEqual(sourceWindowId, destinationWindowId)
+        XCTAssertTrue(
+            waitForWindowPresence(destinationWindowId, timeout: 8.0),
+            "Expected window.create destination window to appear in window.list before workspace move"
+        )
+        XCTAssertTrue(
+            waitForWorkspaceList(windowId: destinationWindowId, timeout: 8.0),
+            "Expected destination window to finish bootstrap workspace registration before workspace move"
+        )
 
         guard v2Call(
             "workspace.move_to_window",
@@ -127,7 +135,18 @@ final class BrowserLifecycleCrossWindowUITests: XCTestCase {
             return
         }
 
-        let lifecycleMatch = waitForLifecycleSnapshot(timeout: 8.0) { snapshot in
+        XCTAssertEqual(
+            waitForCurrentWorkspaceId(timeout: 8.0),
+            workspaceId,
+            "Expected focused workspace.move_to_window to converge workspace selection before lifecycle assertion"
+        )
+        XCTAssertEqual(
+            waitForCurrentWindowId(timeout: 8.0),
+            destinationWindowId,
+            "Expected focused workspace.move_to_window to converge window selection before lifecycle assertion"
+        )
+
+        let lifecycleMatch = waitForLifecycleSnapshot(timeout: 15.0) { snapshot in
             guard let browser = snapshot.records.first(where: { $0.panelId == browserPanelId }) else {
                 return false
             }
@@ -210,6 +229,36 @@ final class BrowserLifecycleCrossWindowUITests: XCTestCase {
         return false
     }
 
+    private func waitForWindowPresence(_ windowId: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let response = v2Call("window.list"),
+               let result = response["result"] as? [String: Any],
+               let windows = result["windows"] as? [[String: Any]],
+               windows.contains(where: {
+                   ($0["window_id"] as? String) == windowId || ($0["id"] as? String) == windowId
+               }) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return false
+    }
+
+    private func waitForWorkspaceList(windowId: String, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let response = v2Call("workspace.list", params: ["window_id": windowId]),
+               let result = response["result"] as? [String: Any],
+               let workspaces = result["workspaces"] as? [[String: Any]],
+               !workspaces.isEmpty {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        return false
+    }
+
     private func latestLifecycleSnapshot() -> BrowserCrossWindowSnapshot? {
         guard let response = v2Call("debug.panel_lifecycle"),
               let result = response["result"] as? [String: Any],
@@ -254,6 +303,30 @@ final class BrowserLifecycleCrossWindowUITests: XCTestCase {
         }
         if let workspaceId = loadSocketSanityData()?["currentWorkspaceId"], !workspaceId.isEmpty {
             return workspaceId
+        }
+        return nil
+    }
+
+    private func waitForCurrentWindowId(timeout: TimeInterval) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let windowId = loadSocketSanityData()?["currentWindowId"], !windowId.isEmpty {
+                return windowId
+            }
+            if let response = v2Call("window.current"),
+               let result = response["result"] as? [String: Any],
+               let windowId = result["window_id"] as? String,
+               !windowId.isEmpty {
+                return windowId
+            }
+            if let snapshot = latestLifecycleSnapshot(),
+               snapshot.activeWindowNumber != 0 {
+                return String(snapshot.activeWindowNumber)
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+        if let windowId = loadSocketSanityData()?["currentWindowId"], !windowId.isEmpty {
+            return windowId
         }
         return nil
     }

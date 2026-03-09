@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for browser workspace move-to-window focus semantics.
+"""Regression test for browser surface.move focus=true visibility semantics.
 
 Requires a Debug app socket that allows external clients, typically:
 
@@ -35,12 +35,18 @@ def _wait_for_browser_visibility(
     while time.time() - start < timeout_s:
         snapshot = client.panel_lifecycle()
         last_snapshot = snapshot
-        row = next((row for row in list(snapshot.get("records") or []) if row.get("panelId") == panel_id), None)
-        if row and row.get("workspaceId") == workspace_id:
+        row = next(
+            (
+                row
+                for row in list(snapshot.get("records") or [])
+                if row.get("panelId") == panel_id and row.get("workspaceId") == workspace_id
+            ),
+            None,
+        )
+        if row and row.get("selectedWorkspace") is True:
             anchor = dict(row.get("anchor") or {})
             if (
-                row.get("selectedWorkspace") is True
-                and row.get("activeWindowMembership") is True
+                row.get("activeWindowMembership") is True
                 and row.get("residency") == "visibleInActiveWindow"
                 and int(anchor.get("windowNumber") or 0) != 0
             ):
@@ -99,52 +105,23 @@ def _prepare_fresh_source_workspace(client: cmux) -> tuple[str, str]:
         isinstance(source_workspace_id, str) and source_workspace_id,
         f"workspace.create returned no workspace_id: {created}",
     )
-    _wait_for_current_workspace(client, source_window_id, source_workspace_id)
+    _wait_for_current_workspace(client, source_workspace_id)
     return source_workspace_id, source_window_id
 
 
 def _wait_for_current_workspace(
     client: cmux,
-    window_id: str,
     expected_workspace_id: str,
     timeout_s: float = 8.0,
 ) -> None:
     start = time.time()
     while time.time() - start < timeout_s:
-        current = client._call("workspace.current", {"window_id": window_id}) or {}
-        if current.get("workspace_id") == expected_workspace_id:
+        if client.current_workspace() == expected_workspace_id:
             return
         time.sleep(0.05)
-    current = client._call("workspace.current", {"window_id": window_id}) or {}
     raise cmuxError(
-        f"workspace.create focus=true should select fresh source workspace in target window, got {current.get('workspace_id')} expected {expected_workspace_id}"
+        f"surface.move focus=true should select destination workspace, got {client.current_workspace()} expected {expected_workspace_id}"
     )
-
-
-def _wait_for_window_presence(
-    client: cmux,
-    window_id: str,
-    timeout_s: float = 8.0,
-) -> None:
-    start = time.time()
-    while time.time() - start < timeout_s:
-        if any(str(row.get("window_id") or row.get("id")) == window_id for row in client.list_windows()):
-            return
-        time.sleep(0.05)
-    raise cmuxError(f"timed out waiting for destination window presence: {window_id}")
-
-
-def _wait_for_window_workspace_registration(
-    client: cmux,
-    window_id: str,
-    timeout_s: float = 8.0,
-) -> None:
-    start = time.time()
-    while time.time() - start < timeout_s:
-        if client.list_workspaces(window_id=window_id):
-            return
-        time.sleep(0.05)
-    raise cmuxError(f"timed out waiting for destination window workspace registration: {window_id}")
 
 
 def _wait_for_current_window(
@@ -158,38 +135,55 @@ def _wait_for_current_window(
             return
         time.sleep(0.05)
     raise cmuxError(
-        f"workspace.move_to_window with focus=true should focus destination window, got {client.current_window()} expected {expected_window_id}"
+        f"surface.move within a window should preserve current window, got {client.current_window()} expected {expected_window_id}"
     )
 
 
 def main() -> int:
     with cmux(SOCKET_PATH) as client:
         source_workspace_id, source_window_id = _prepare_fresh_source_workspace(client)
-        workspace_id, source_window_id, browser_panel_id = _open_browser_from_current_terminal(
+        opened_workspace_id, opened_window_id, browser_panel_id = _open_browser_from_current_terminal(
             client,
-            "https://example.com/browser-workspace-move-to-window",
+            "https://example.com/browser-surface-move-focus",
         )
         _must(
-            workspace_id == source_workspace_id,
-            f"browser should open in the fresh source workspace, got {workspace_id} expected {source_workspace_id}",
+            opened_workspace_id == source_workspace_id,
+            f"browser should open in the fresh source workspace, got {opened_workspace_id} expected {source_workspace_id}",
         )
-        _wait_for_browser_visibility(client, browser_panel_id, workspace_id)
-        destination_window_id = client.new_window()
-        _wait_for_window_presence(client, destination_window_id)
-        _wait_for_window_workspace_registration(client, destination_window_id)
+        _must(
+            opened_window_id == source_window_id,
+            f"browser should open in the source window, got {opened_window_id} expected {source_window_id}",
+        )
+        _wait_for_browser_visibility(client, browser_panel_id, source_workspace_id)
 
-        _must(source_window_id != destination_window_id, "window.create should return a new window id")
-        client.move_workspace_to_window(workspace_id, destination_window_id, focus=True)
+        created = client._call(
+            "workspace.create",
+            {
+                "window_id": source_window_id,
+                "workspace_id": source_workspace_id,
+                "focus": False,
+            },
+        ) or {}
+        destination_workspace_id = created.get("workspace_id")
+        _must(
+            isinstance(destination_workspace_id, str) and destination_workspace_id,
+            f"workspace.create returned no workspace_id: {created}",
+        )
+        _must(
+            client.current_workspace() == source_workspace_id,
+            f"workspace.create focus=false should preserve current workspace, got {client.current_workspace()} expected {source_workspace_id}",
+        )
 
-        _wait_for_current_workspace(client, destination_window_id, workspace_id)
-        _wait_for_current_window(client, destination_window_id)
+        client.move_surface(browser_panel_id, workspace=destination_workspace_id, focus=True)
+        _wait_for_current_workspace(client, destination_workspace_id)
+        _wait_for_current_window(client, source_window_id)
 
-        browser = _wait_for_browser_visibility(client, browser_panel_id, workspace_id)
+        browser = _wait_for_browser_visibility(client, browser_panel_id, destination_workspace_id)
         _must(browser.get("selectedWorkspace") is True, f"browser not selected after move: {browser}")
         _must(browser.get("activeWindowMembership") is True, f"browser not active-window member after move: {browser}")
         _must(browser.get("residency") == "visibleInActiveWindow", f"browser wrong residency after move: {browser}")
 
-    print("PASS: browser workspace move_to_window preserves focus and visible residency")
+    print("PASS: browser surface.move focus=true preserves visible residency")
     return 0
 
 

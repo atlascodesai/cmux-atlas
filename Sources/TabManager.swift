@@ -691,6 +691,9 @@ class TabManager: ObservableObject {
     private var workspaceCycleCooldownTask: Task<Void, Never>?
     private var pendingWorkspaceUnfocusTarget: (tabId: UUID, panelId: UUID)?
     private let panelLifecycleCoordinator = PanelLifecycleCoordinator()
+    private var panelLifecycleMountedWorkspaceIds = Set<UUID>()
+    private var panelLifecycleRetiringWorkspaceId: UUID?
+    private var panelLifecycleHandoffGeneration: UInt64 = 0
 #if DEBUG
     private var debugWorkspaceSwitchCounter: UInt64 = 0
     private var debugWorkspaceSwitchId: UInt64 = 0
@@ -2136,10 +2139,52 @@ class TabManager: ObservableObject {
         retiringWorkspaceId: UUID?,
         handoffGeneration: UInt64
     ) {
+        let mountedWorkspaceIdSet = Set(mountedWorkspaceIds)
+        let didChange =
+            mountedWorkspaceIdSet != panelLifecycleMountedWorkspaceIds ||
+            retiringWorkspaceId != panelLifecycleRetiringWorkspaceId ||
+            handoffGeneration != panelLifecycleHandoffGeneration
+        panelLifecycleMountedWorkspaceIds = mountedWorkspaceIdSet
+        panelLifecycleRetiringWorkspaceId = retiringWorkspaceId
+        panelLifecycleHandoffGeneration = handoffGeneration
         panelLifecycleCoordinator.updateMountedWorkspaceState(
             mountedWorkspaceIds: mountedWorkspaceIds,
             retiringWorkspaceId: retiringWorkspaceId,
             handoffGeneration: handoffGeneration
+        )
+        guard didChange else { return }
+
+        var workspaceIdsNeedingRefresh = mountedWorkspaceIdSet
+        if let retiringWorkspaceId {
+            workspaceIdsNeedingRefresh.insert(retiringWorkspaceId)
+        }
+        for workspace in tabs where workspaceIdsNeedingRefresh.contains(workspace.id) {
+            for panel in workspace.panels.values {
+                guard let browserPanel = panel as? BrowserPanel else { continue }
+                browserPanel.requestPortalStateRefresh()
+                reconcileBrowserPortalRuntimeTarget(browserPanel)
+            }
+        }
+    }
+
+    private func reconcileBrowserPortalRuntimeTarget(_ browserPanel: BrowserPanel) {
+        let desiredRecord = panelLifecycleDesiredRecord(for: browserPanel.id)
+        let binding = BrowserWindowPortalRegistry.bindingSnapshot(forPanelId: browserPanel.id)
+        let runtimeTarget = BrowserLifecycleExecutor.runtimeTarget(
+            desiredRecord: desiredRecord,
+            fallbackVisible: desiredRecord?.targetVisible ?? false,
+            fallbackActive: desiredRecord?.targetActive ?? false,
+            expectedAnchorId: browserPanel.portalAnchorView.panelLifecycleAnchorId,
+            binding: binding
+        )
+        let zPriority = binding?.zPriority ?? 2
+        _ = BrowserWindowPortalRegistry.reconcileRuntimeTarget(
+            webView: browserPanel.webView,
+            panelId: browserPanel.id,
+            expectedGeneration: desiredRecord?.generation,
+            target: runtimeTarget,
+            anchorView: browserPanel.portalAnchorView,
+            zPriority: zPriority
         )
     }
 
