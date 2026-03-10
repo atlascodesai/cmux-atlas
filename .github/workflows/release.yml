@@ -21,7 +21,24 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Determine release mode
+        id: release_mode
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            echo "publish_release=true" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=release-${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            REF_SLUG="$(printf '%s' "${GITHUB_REF_NAME}" | tr '/[:space:]' '-' | tr -cd '[:alnum:]-_.')"
+            SHORT_SHA="${GITHUB_SHA::7}"
+            echo "publish_release=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=verify-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=release-verification-${REF_SLUG}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Guard immutable release assets
+        if: steps.release_mode.outputs.publish_release == 'true'
         id: guard_release_assets
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
@@ -131,8 +148,36 @@ jobs:
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           xcodebuild -scheme cmux -configuration Release -derivedDataPath build \
+            -destination 'generic/platform=macOS' \
             -clonedSourcePackagesDirPath .spm-cache \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO build
+
+      - name: Verify release binary architectures
+        if: steps.guard_release_assets.outputs.skip_all != 'true'
+        run: |
+          set -euo pipefail
+          APP_BINARY="build/Build/Products/Release/cmux.app/Contents/MacOS/cmux"
+          CLI_BINARY="build/Build/Products/Release/cmux.app/Contents/Resources/bin/cmux"
+          APP_ARCHS="$(lipo -archs "$APP_BINARY")"
+          CLI_ARCHS="$(lipo -archs "$CLI_BINARY")"
+          if [[ "${{ steps.release_mode.outputs.publish_release }}" == "true" ]]; then
+            RELEASE_MODE="publish"
+          else
+            RELEASE_MODE="verify"
+          fi
+          echo "App binary architectures: $APP_ARCHS"
+          echo "CLI binary architectures: $CLI_ARCHS"
+          [[ "$APP_ARCHS" == *arm64* && "$APP_ARCHS" == *x86_64* ]]
+          [[ "$CLI_ARCHS" == *arm64* && "$CLI_ARCHS" == *x86_64* ]]
+          {
+            echo "Release mode: $RELEASE_MODE"
+            echo "Ref: ${GITHUB_REF_NAME}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "App binary architectures: $APP_ARCHS"
+            echo "CLI binary architectures: $CLI_ARCHS"
+          } > release-verification.txt
 
       - name: Inject Sparkle keys into Info.plist
         if: steps.guard_release_assets.outputs.skip_all != 'true'
@@ -258,10 +303,10 @@ jobs:
             echo "Missing SPARKLE_PRIVATE_KEY secret" >&2
             exit 1
           fi
-          ./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "$GITHUB_REF_NAME" appcast.xml
+          ./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "${{ steps.release_mode.outputs.release_tag }}" appcast.xml
 
       - name: Upload release asset
-        if: steps.guard_release_assets.outputs.skip_upload != 'true'
+        if: steps.release_mode.outputs.publish_release == 'true' && steps.guard_release_assets.outputs.skip_upload != 'true'
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: |
@@ -269,6 +314,16 @@ jobs:
             appcast.xml
           generate_release_notes: true
           overwrite_files: false
+
+      - name: Upload verification artifacts
+        if: steps.release_mode.outputs.publish_release != 'true' && steps.guard_release_assets.outputs.skip_all != 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ steps.release_mode.outputs.artifact_name }}
+          path: |-
+            cmux-macos.dmg
+            appcast.xml
+            release-verification.txt
 
       - name: Cleanup keychain
         if: always()

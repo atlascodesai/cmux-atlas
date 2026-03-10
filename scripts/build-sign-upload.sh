@@ -71,8 +71,21 @@ fi
 # --- Build app (Release, unsigned) ---
 echo "Building app..."
 rm -rf build/
-xcodebuild -scheme cmux -configuration Release -derivedDataPath build CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
+xcodebuild -scheme cmux -configuration Release -derivedDataPath build \
+  -destination 'generic/platform=macOS' \
+  ARCHS="arm64 x86_64" \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGNING_ALLOWED=NO build 2>&1 | tail -5
 echo "Build succeeded"
+
+APP_BINARY="$APP_PATH/Contents/MacOS/cmux"
+CLI_BINARY="$APP_PATH/Contents/Resources/bin/cmux"
+APP_ARCHS="$(lipo -archs "$APP_BINARY")"
+CLI_ARCHS="$(lipo -archs "$CLI_BINARY")"
+echo "App binary architectures: $APP_ARCHS"
+echo "CLI binary architectures: $CLI_ARCHS"
+[[ "$APP_ARCHS" == *arm64* && "$APP_ARCHS" == *x86_64* ]]
+[[ "$CLI_ARCHS" == *arm64* && "$CLI_ARCHS" == *x86_64* ]]
 
 # --- Inject Sparkle keys ---
 echo "Injecting Sparkle keys..."
