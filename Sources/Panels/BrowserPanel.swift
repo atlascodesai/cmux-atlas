@@ -1735,11 +1735,18 @@ final class BrowserPanel: Panel, ObservableObject {
         let inWindow: Bool
         let area: CGFloat
     }
+    private struct LocalInlineHostLease {
+        let hostId: ObjectIdentifier
+        let paneId: UUID
+        let inWindow: Bool
+        let area: CGFloat
+    }
     private struct PortalHostLock {
         let hostId: ObjectIdentifier
         let paneId: UUID
     }
     private var activePortalHostLease: PortalHostLease?
+    private var activeLocalInlineHostLease: LocalInlineHostLease?
     private var pendingDistinctPortalHostReplacementPaneId: UUID?
     private var lockedPortalHost: PortalHostLock?
     private var webViewCancellables = Set<AnyCancellable>()
@@ -1791,6 +1798,10 @@ final class BrowserPanel: Panel, ObservableObject {
     }
 
     private static func portalHostIsUsable(_ lease: PortalHostLease) -> Bool {
+        lease.inWindow && lease.area > portalHostAreaThreshold
+    }
+
+    private static func localInlineHostIsUsable(_ lease: LocalInlineHostLease) -> Bool {
         lease.inWindow && lease.area > portalHostAreaThreshold
     }
 
@@ -1926,6 +1937,88 @@ final class BrowserPanel: Panel, ObservableObject {
 #if DEBUG
         dlog(
             "browser.portal.host.release panel=\(id.uuidString.prefix(5)) " +
+            "reason=\(reason) host=\(hostId) pane=\(current.paneId.uuidString.prefix(5)) " +
+            "inWin=\(current.inWindow ? 1 : 0) area=\(String(format: "%.1f", current.area))"
+        )
+#endif
+        return true
+    }
+
+    func claimLocalInlineHost(
+        hostId: ObjectIdentifier,
+        paneId: PaneID,
+        inWindow: Bool,
+        bounds: CGRect,
+        reason: String
+    ) -> Bool {
+        let next = LocalInlineHostLease(
+            hostId: hostId,
+            paneId: paneId.id,
+            inWindow: inWindow,
+            area: Self.portalHostArea(for: bounds)
+        )
+
+        if let current = activeLocalInlineHostLease {
+            if current.hostId == hostId {
+                activeLocalInlineHostLease = next
+                return true
+            }
+
+            let currentUsable = Self.localInlineHostIsUsable(current)
+            let nextUsable = Self.localInlineHostIsUsable(next)
+            let shouldReplace =
+                current.paneId != paneId.id ||
+                !currentUsable ||
+                (
+                    nextUsable &&
+                    next.area > (current.area * Self.portalHostReplacementAreaGainRatio)
+                )
+
+            if shouldReplace {
+#if DEBUG
+                dlog(
+                    "browser.localHost.claim panel=\(id.uuidString.prefix(5)) " +
+                    "reason=\(reason) host=\(hostId) pane=\(paneId.id.uuidString.prefix(5)) " +
+                    "inWin=\(inWindow ? 1 : 0) size=\(String(format: "%.1fx%.1f", bounds.width, bounds.height)) " +
+                    "replacingHost=\(current.hostId) replacingPane=\(current.paneId.uuidString.prefix(5)) " +
+                    "replacingInWin=\(current.inWindow ? 1 : 0) replacingArea=\(String(format: "%.1f", current.area))"
+                )
+#endif
+                activeLocalInlineHostLease = next
+                return true
+            }
+
+#if DEBUG
+            dlog(
+                "browser.localHost.skip panel=\(id.uuidString.prefix(5)) " +
+                "reason=\(reason) host=\(hostId) pane=\(paneId.id.uuidString.prefix(5)) " +
+                "inWin=\(inWindow ? 1 : 0) size=\(String(format: "%.1fx%.1f", bounds.width, bounds.height)) " +
+                "ownerHost=\(current.hostId) ownerPane=\(current.paneId.uuidString.prefix(5)) " +
+                "ownerInWin=\(current.inWindow ? 1 : 0) ownerArea=\(String(format: "%.1f", current.area))"
+            )
+#endif
+            return false
+        }
+
+        activeLocalInlineHostLease = next
+#if DEBUG
+        dlog(
+            "browser.localHost.claim panel=\(id.uuidString.prefix(5)) " +
+            "reason=\(reason) host=\(hostId) pane=\(paneId.id.uuidString.prefix(5)) " +
+            "inWin=\(inWindow ? 1 : 0) size=\(String(format: "%.1fx%.1f", bounds.width, bounds.height)) " +
+            "replacingHost=nil"
+        )
+#endif
+        return true
+    }
+
+    @discardableResult
+    func releaseLocalInlineHostIfOwned(hostId: ObjectIdentifier, reason: String) -> Bool {
+        guard let current = activeLocalInlineHostLease, current.hostId == hostId else { return false }
+        activeLocalInlineHostLease = nil
+#if DEBUG
+        dlog(
+            "browser.localHost.release panel=\(id.uuidString.prefix(5)) " +
             "reason=\(reason) host=\(hostId) pane=\(current.paneId.uuidString.prefix(5)) " +
             "inWin=\(current.inWindow ? 1 : 0) area=\(String(format: "%.1f", current.area))"
         )

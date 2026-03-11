@@ -4500,7 +4500,21 @@ struct WebViewRepresentable: NSViewRepresentable {
         coordinator: Coordinator,
         panel: BrowserPanel,
         reason: String
-    ) {
+    ) -> Bool {
+        guard host.window != nil else {
+            host.setLocalInlineSlotHidden(true)
+            host.releaseHostedWebViewConstraints()
+            coordinator.localInlineDidReparent = false
+#if DEBUG
+            dlog(
+                "browser.localHost.attach.skip web=\(Self.objectID(webView)) " +
+                "reason=\(reason) host=\(Self.objectID(host)) slot=\(Self.objectID(slotView)) " +
+                "skip=hostWithoutWindow"
+            )
+#endif
+            return false
+        }
+
         let didReparentIntoLocalHost = webView.superview !== slotView
         coordinator.localInlineDidReparent = didReparentIntoLocalHost
         if didReparentIntoLocalHost {
@@ -4534,6 +4548,7 @@ struct WebViewRepresentable: NSViewRepresentable {
                 reason: reason
             )
         }
+        return true
     }
 
     private static func runLocalInlineHostedWebViewRefreshPass(
@@ -4678,6 +4693,7 @@ struct WebViewRepresentable: NSViewRepresentable {
     private func updateUsingLocalInlineHosting(_ nsView: NSView, context: Context, webView: WKWebView) -> Bool {
         guard let host = nsView as? HostContainerView else { return false }
         let slotView = host.ensureLocalInlineSlotView()
+        let hostId = ObjectIdentifier(host)
 
         let coordinator = context.coordinator
         coordinator.localInlineSlotView = slotView
@@ -4686,14 +4702,112 @@ struct WebViewRepresentable: NSViewRepresentable {
         coordinator.attachGeneration += 1
         let generation = coordinator.attachGeneration
 
+        let retryDeferredAttachIfNeeded: (String) -> Void = { [weak host, weak webView, weak coordinator, weak slotView, weak browserPanel = panel] reason in
+            guard let host, let webView, let coordinator, let slotView, let browserPanel else { return }
+            guard coordinator.attachGeneration == generation else { return }
+            if let currentPaneId = currentPaneDropContext()?.paneId.id,
+               currentPaneId != paneId.id {
+                return
+            }
+            guard browserPanel.claimLocalInlineHost(
+                hostId: ObjectIdentifier(host),
+                paneId: paneId,
+                inWindow: host.window != nil,
+                bounds: host.bounds,
+                reason: reason
+            ) else {
+                host.setLocalInlineSlotHidden(true)
+                host.releaseHostedWebViewConstraints()
+                return
+            }
+            guard host.window != nil else { return }
+            guard webView.superview !== slotView else { return }
+
+            host.layoutSubtreeIfNeeded()
+            slotView.layoutSubtreeIfNeeded()
+            guard slotView.bounds.width > 1, slotView.bounds.height > 1 else { return }
+
+#if DEBUG
+            dlog(
+                "browser.localHost.deferredAttach web=\(Self.objectID(webView)) " +
+                "reason=\(reason) host=\(Self.objectID(host)) slot=\(Self.objectID(slotView))"
+            )
+#endif
+            guard Self.attachLocalInlineHostedWebView(
+                webView,
+                to: slotView,
+                in: host,
+                coordinator: coordinator,
+                panel: browserPanel,
+                reason: reason
+            ) else {
+                return
+            }
+#if DEBUG
+            Self.logDevToolsState(
+                browserPanel,
+                event: "localHost.update",
+                generation: generation,
+                retryCount: 0,
+                details: Self.attachContext(webView: webView, host: host) + " deferred=1 reason=\(reason)"
+            )
+#endif
+        }
+        host.onDidMoveToWindow = { [weak host, weak browserPanel = panel] in
+            DispatchQueue.main.async {
+                guard let host, let browserPanel else { return }
+                _ = browserPanel.claimLocalInlineHost(
+                    hostId: ObjectIdentifier(host),
+                    paneId: paneId,
+                    inWindow: host.window != nil,
+                    bounds: host.bounds,
+                    reason: "didMoveToWindow"
+                )
+                retryDeferredAttachIfNeeded("localHost.didMoveToWindow")
+            }
+        }
+        host.onGeometryChanged = {
+            _ = panel.claimLocalInlineHost(
+                hostId: hostId,
+                paneId: paneId,
+                inWindow: host.window != nil,
+                bounds: host.bounds,
+                reason: "geometryChanged"
+            )
+            retryDeferredAttachIfNeeded("localHost.geometryChanged")
+        }
+
         if panel.releasePortalHostIfOwned(
-            hostId: ObjectIdentifier(host),
+            hostId: hostId,
             reason: "localInlineHosting"
         ) {
             BrowserWindowPortalRegistry.hide(
                 webView: webView,
                 source: "viewStateChanged.localInlineHosting"
             )
+        }
+
+        guard panel.claimLocalInlineHost(
+            hostId: hostId,
+            paneId: paneId,
+            inWindow: host.window != nil,
+            bounds: host.bounds,
+            reason: "update"
+        ) else {
+            host.setLocalInlineSlotHidden(true)
+            host.releaseHostedWebViewConstraints()
+            coordinator.lastPortalHostId = nil
+            coordinator.lastSynchronizedHostGeometryRevision = 0
+#if DEBUG
+            Self.logDevToolsState(
+                panel,
+                event: "localHost.skip",
+                generation: coordinator.attachGeneration,
+                retryCount: 0,
+                details: Self.attachContext(webView: webView, host: host) + " reason=hostOwnershipRejected"
+            )
+#endif
+            return false
         }
 
         let shouldPreserveExistingExternalLocalHost =
@@ -4724,61 +4838,25 @@ struct WebViewRepresentable: NSViewRepresentable {
             return false
         }
 
-        let retryDeferredAttachIfNeeded: (String) -> Void = { [weak host, weak webView, weak coordinator, weak slotView, weak browserPanel = panel] reason in
-            guard let host, let webView, let coordinator, let slotView, let browserPanel else { return }
-            guard coordinator.attachGeneration == generation else { return }
-            if let currentPaneId = currentPaneDropContext()?.paneId.id,
-               currentPaneId != paneId.id {
-                return
-            }
-            guard host.window != nil else { return }
-            guard webView.superview !== slotView else { return }
-
-            host.layoutSubtreeIfNeeded()
-            slotView.layoutSubtreeIfNeeded()
-            guard slotView.bounds.width > 1, slotView.bounds.height > 1 else { return }
-
-#if DEBUG
-            dlog(
-                "browser.localHost.deferredAttach web=\(Self.objectID(webView)) " +
-                "reason=\(reason) host=\(Self.objectID(host)) slot=\(Self.objectID(slotView))"
-            )
-#endif
-            Self.attachLocalInlineHostedWebView(
-                webView,
-                to: slotView,
-                in: host,
-                coordinator: coordinator,
-                panel: browserPanel,
-                reason: reason
-            )
-#if DEBUG
-            Self.logDevToolsState(
-                browserPanel,
-                event: "localHost.update",
-                generation: generation,
-                retryCount: 0,
-                details: Self.attachContext(webView: webView, host: host) + " deferred=1 reason=\(reason)"
-            )
-#endif
-        }
-        host.onDidMoveToWindow = {
-            DispatchQueue.main.async {
-                retryDeferredAttachIfNeeded("localHost.didMoveToWindow")
-            }
-        }
-        host.onGeometryChanged = {
-            retryDeferredAttachIfNeeded("localHost.geometryChanged")
-        }
-
-        Self.attachLocalInlineHostedWebView(
+        guard Self.attachLocalInlineHostedWebView(
             webView,
             to: slotView,
             in: host,
             coordinator: coordinator,
             panel: panel,
             reason: "localHost.attach"
-        )
+        ) else {
+#if DEBUG
+            Self.logDevToolsState(
+                panel,
+                event: "localHost.skip",
+                generation: coordinator.attachGeneration,
+                retryCount: 0,
+                details: Self.attachContext(webView: webView, host: host) + " reason=hostWithoutWindow"
+            )
+#endif
+            return false
+        }
 
 #if DEBUG
         Self.logDevToolsState(
@@ -4796,6 +4874,10 @@ struct WebViewRepresentable: NSViewRepresentable {
         guard let host = nsView as? HostContainerView else { return false }
         host.setLocalInlineSlotHidden(true)
         host.releaseHostedWebViewConstraints()
+        _ = panel.releaseLocalInlineHostIfOwned(
+            hostId: ObjectIdentifier(host),
+            reason: "windowPortal"
+        )
 
         let coordinator = context.coordinator
         Self.resetLocalInlineFocusRefreshState(coordinator)
@@ -5134,6 +5216,10 @@ struct WebViewRepresentable: NSViewRepresentable {
         clearPortalCallbacks(for: nsView)
         if let panel = coordinator.panel, let host = nsView as? HostContainerView {
             panel.releasePortalHostIfOwned(
+                hostId: ObjectIdentifier(host),
+                reason: "dismantle"
+            )
+            panel.releaseLocalInlineHostIfOwned(
                 hostId: ObjectIdentifier(host),
                 reason: "dismantle"
             )
