@@ -1682,6 +1682,32 @@ func shouldRouteTerminalFontZoomShortcutToGhostty(
     ) != nil
 }
 
+@discardableResult
+func startOrFocusTerminalSearch(
+    _ terminalSurface: TerminalSurface,
+    searchFocusNotifier: @escaping (TerminalSurface) -> Void = {
+        NotificationCenter.default.post(name: .ghosttySearchFocus, object: $0)
+    }
+) -> Bool {
+    if terminalSurface.searchState != nil {
+        searchFocusNotifier(terminalSurface)
+        return true
+    }
+
+    if terminalSurface.performBindingAction("start_search") {
+        DispatchQueue.main.async { [weak terminalSurface] in
+            guard let terminalSurface, terminalSurface.searchState == nil else { return }
+            terminalSurface.searchState = TerminalSurface.SearchState()
+            searchFocusNotifier(terminalSurface)
+        }
+        return true
+    }
+
+    terminalSurface.searchState = TerminalSurface.SearchState()
+    searchFocusNotifier(terminalSurface)
+    return true
+}
+
 enum TerminalFindShortcutAction {
     case start
     case next
@@ -1776,11 +1802,7 @@ func handleTerminalFindShortcutEquivalent(
     guard let terminalSurface = ghosttyView.terminalSurface else { return false }
     switch action {
     case .start:
-        if terminalSurface.searchState == nil {
-            terminalSurface.searchState = TerminalSurface.SearchState()
-        }
-        NotificationCenter.default.post(name: .ghosttySearchFocus, object: terminalSurface)
-        _ = terminalSurface.performBindingAction("start_search")
+        _ = startOrFocusTerminalSearch(terminalSurface)
     case .next:
         _ = terminalSurface.performBindingAction("search:next")
     case .previous:

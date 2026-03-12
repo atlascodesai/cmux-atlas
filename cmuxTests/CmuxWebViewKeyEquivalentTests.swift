@@ -3685,11 +3685,13 @@ final class TerminalFindShortcutRoutingTests: XCTestCase {
         let spy = ActionSpy()
         installMenu(spy: spy)
 
-        guard let (_, hostedView, surfaceView, window) = makeTerminalSurfaceWindow() else {
+        guard let (surface, hostedView, surfaceView, window) = makeTerminalSurfaceWindow() else {
             XCTFail("Expected Ghostty surface view")
             return
         }
         defer { window.orderOut(nil) }
+        _ = surface
+        _ = hostedView
 
         XCTAssertTrue(window.makeFirstResponder(surfaceView), "Expected terminal to be first responder")
 
