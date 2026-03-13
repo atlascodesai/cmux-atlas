@@ -108,6 +108,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 """
 
+ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+class CaseSkipped(RuntimeError):
+    pass
+
 
 def _must(condition: bool, message: str) -> None:
     if not condition:
@@ -264,7 +270,28 @@ def _wait_for_marker(client: cmux, workspace_id: str, surface_id: str, marker: s
 def _session_json_contains(snapshot: Path, marker: str) -> bool:
     if not snapshot.exists():
         return False
-    return marker in snapshot.read_text(encoding="utf-8", errors="replace")
+    raw = snapshot.read_text(encoding="utf-8", errors="replace")
+    if marker in raw:
+        return True
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return marker in ANSI_ESCAPE_RE.sub("", raw)
+
+    stack: list[object] = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            stack.extend(value.values())
+            continue
+        if isinstance(value, list):
+            stack.extend(value)
+            continue
+        if isinstance(value, str):
+            if marker in ANSI_ESCAPE_RE.sub("", value):
+                return True
+    return False
 
 
 def _session_json_contains_all(snapshot: Path, markers: list[str]) -> bool:
@@ -324,6 +351,10 @@ def _run_case(
     ready_timeout: float = 8.0,
     restore_timeout: float = 12.0,
     settle_delay: float = 0.0,
+    startup_inputs: list[str] | None = None,
+    post_ready_marker: str | None = None,
+    post_ready_timeout: float = 0.0,
+    skip_markers: list[str] | None = None,
 ) -> None:
     socket_path = Path(f"/tmp/cmux-quit-restore-{label}-{os.getpid()}.sock")
     snapshot.unlink(missing_ok=True)
@@ -338,8 +369,22 @@ def _run_case(
             surface_id = _current_surface_id(client, workspace_id)
             client.send_surface(surface_id, command + "\n")
             _wait_for_marker(client, workspace_id, surface_id, ready_marker, timeout=ready_timeout)
+            for input_text in startup_inputs or []:
+                client.send_surface(surface_id, input_text)
+            if post_ready_marker:
+                _wait_for_marker(
+                    client,
+                    workspace_id,
+                    surface_id,
+                    post_ready_marker,
+                    timeout=post_ready_timeout or ready_timeout,
+                )
             if settle_delay > 0:
                 time.sleep(settle_delay)
+            scrollback = _read_scrollback(client, surface_id)
+            for marker in skip_markers or []:
+                if marker in scrollback:
+                    raise CaseSkipped(marker)
         finally:
             client.close()
 
@@ -412,7 +457,10 @@ def main() -> int:
                 "expected_markers": ["To continue this session, run codex resume"],
                 "ready_timeout": 8.0,
                 "restore_timeout": 20.0,
-                "settle_delay": 12.0,
+                "startup_inputs": ["\r"],
+                "post_ready_marker": "OpenAI Codex",
+                "post_ready_timeout": 30.0,
+                "settle_delay": 5.0,
             },
             {
                 "label": "real-claude",
@@ -422,6 +470,7 @@ def main() -> int:
                 "ready_timeout": 8.0,
                 "restore_timeout": 20.0,
                 "settle_delay": 12.0,
+                "skip_markers": ["Invalid API key", "Run /login"],
             },
         ])
 
@@ -444,8 +493,14 @@ def main() -> int:
                     ready_timeout=float(case.get("ready_timeout", 8.0)),
                     restore_timeout=float(case.get("restore_timeout", 12.0)),
                     settle_delay=float(case.get("settle_delay", 0.0)),
+                    startup_inputs=[str(value) for value in case.get("startup_inputs", [])],
+                    post_ready_marker=str(case["post_ready_marker"]) if "post_ready_marker" in case else None,
+                    post_ready_timeout=float(case.get("post_ready_timeout", 0.0)),
+                    skip_markers=[str(value) for value in case.get("skip_markers", [])],
                 )
                 print(f"PASS: {label}")
+            except CaseSkipped as exc:
+                print(f"SKIP: {label} ({exc})")
             except Exception as exc:
                 failures.append(f"{label}: {exc}")
     finally:
