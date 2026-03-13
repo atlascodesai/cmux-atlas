@@ -316,6 +316,7 @@ private struct ClaudeHookSessionRecord: Codable {
     var workspaceId: String
     var surfaceId: String
     var cwd: String?
+    var pid: Int?
     var lastSubtitle: String?
     var lastBody: String?
     var startedAt: TimeInterval
@@ -363,6 +364,7 @@ private final class ClaudeHookSessionStore {
         workspaceId: String,
         surfaceId: String,
         cwd: String?,
+        pid: Int? = nil,
         lastSubtitle: String? = nil,
         lastBody: String? = nil
     ) throws {
@@ -375,6 +377,7 @@ private final class ClaudeHookSessionStore {
                 workspaceId: workspaceId,
                 surfaceId: surfaceId,
                 cwd: nil,
+                pid: nil,
                 lastSubtitle: nil,
                 lastBody: nil,
                 startedAt: now,
@@ -384,6 +387,9 @@ private final class ClaudeHookSessionStore {
             record.surfaceId = surfaceId
             if let cwd = normalizeOptional(cwd) {
                 record.cwd = cwd
+            }
+            if let pid {
+                record.pid = pid
             }
             if let subtitle = normalizeOptional(lastSubtitle) {
                 record.lastSubtitle = subtitle
@@ -8477,12 +8483,20 @@ struct CMUXCLI {
                 workspaceId: workspaceId,
                 client: client
             )
+            let claudePid: Int? = {
+                if let pidStr = ProcessInfo.processInfo.environment["CMUX_CLAUDE_PID"],
+                   let pid = Int(pidStr) {
+                    return pid
+                }
+                return nil
+            }()
             if let sessionId = parsedInput.sessionId {
                 try? sessionStore.upsert(
                     sessionId: sessionId,
                     workspaceId: workspaceId,
                     surfaceId: surfaceId,
-                    cwd: parsedInput.cwd
+                    cwd: parsedInput.cwd,
+                    pid: claudePid
                 )
             }
             try setClaudeStatus(
@@ -8490,7 +8504,8 @@ struct CMUXCLI {
                 workspaceId: workspaceId,
                 value: "Running",
                 icon: "bolt.fill",
-                color: "#4C8DFF"
+                color: "#4C8DFF",
+                pid: claudePid
             )
             print("OK")
 
@@ -8586,11 +8601,44 @@ struct CMUXCLI {
             )
             print(response)
 
+        case "session-end":
+            telemetry.breadcrumb("claude-hook.session-end")
+            // Safety net for cases where the Stop hook didn't fire (e.g. Ctrl+C interrupt).
+            // Consumes the session if Stop hasn't already, and clears status/notifications.
+            let consumedSession = try? sessionStore.consume(
+                sessionId: parsedInput.sessionId,
+                workspaceId: fallbackWorkspaceId,
+                surfaceId: fallbackSurfaceId
+            )
+            let workspaceId = consumedSession?.workspaceId ?? fallbackWorkspaceId
+            _ = try? clearClaudeStatus(client: client, workspaceId: workspaceId)
+            _ = try? sendV1Command("clear_notifications --tab=\(workspaceId)", client: client)
+            print("OK")
+
+        case "pre-tool-use":
+            telemetry.breadcrumb("claude-hook.pre-tool-use")
+            // Clears "Needs input" status when Claude resumes work (e.g. after permission grant).
+            // Runs async so it doesn't block tool execution.
+            var workspaceId = fallbackWorkspaceId
+            if let sessionId = parsedInput.sessionId,
+               let mapped = try? sessionStore.lookup(sessionId: sessionId),
+               let mappedWorkspace = try? resolveWorkspaceIdForClaudeHook(mapped.workspaceId, client: client) {
+                workspaceId = mappedWorkspace
+            }
+            try setClaudeStatus(
+                client: client,
+                workspaceId: workspaceId,
+                value: "Running",
+                icon: "bolt.fill",
+                color: "#4C8DFF"
+            )
+            print("OK")
+
         case "help", "--help", "-h":
             telemetry.breadcrumb("claude-hook.help")
             print(
                 """
-                cmux claude-hook <session-start|stop|notification> [--workspace <id|index>] [--surface <id|index>]
+                cmux claude-hook <session-start|stop|session-end|notification|prompt-submit|pre-tool-use> [--workspace <id|index>] [--surface <id|index>]
                 """
             )
 
@@ -8604,11 +8652,14 @@ struct CMUXCLI {
         workspaceId: String,
         value: String,
         icon: String,
-        color: String
+        color: String,
+        pid: Int? = nil
     ) throws {
-        _ = try client.send(
-            command: "set_status claude_code \(value) --icon=\(icon) --color=\(color) --tab=\(workspaceId)"
-        )
+        var cmd = "set_status claude_code \(value) --icon=\(icon) --color=\(color) --tab=\(workspaceId)"
+        if let pid {
+            cmd += " --pid=\(pid)"
+        }
+        _ = try client.send(command: cmd)
     }
 
     private func clearClaudeStatus(client: SocketClient, workspaceId: String) throws {

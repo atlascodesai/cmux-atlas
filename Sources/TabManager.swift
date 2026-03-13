@@ -751,6 +751,7 @@ class TabManager: ObservableObject {
             return tabs.first(where: { $0.id == selectedTabId })
         }
     }
+    private var agentPIDSweepTimer: DispatchSourceTimer?
 #if DEBUG
     private var debugWorkspaceSwitchCounter: UInt64 = 0
     private var debugWorkspaceSwitchId: UInt64 = 0
@@ -796,6 +797,8 @@ class TabManager: ObservableObject {
             }
         })
 
+        startAgentPIDSweepTimer()
+
 #if DEBUG
         setupUITestFocusShortcutsIfNeeded()
         setupSplitCloseRightUITestIfNeeded()
@@ -806,6 +809,42 @@ class TabManager: ObservableObject {
 
     deinit {
         workspaceCycleCooldownTask?.cancel()
+        agentPIDSweepTimer?.cancel()
+    }
+
+    // MARK: - Agent PID Sweep
+
+    /// Periodically checks agent PIDs associated with status entries.
+    /// If a process has exited (SIGKILL, crash, etc.), clears the stale status entry.
+    /// This is the safety net for cases where no hook fires (e.g. SIGKILL).
+    private func startAgentPIDSweepTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.sweepStaleAgentPIDs()
+            }
+        }
+        timer.resume()
+        agentPIDSweepTimer = timer
+    }
+
+    private func sweepStaleAgentPIDs() {
+        for tab in tabs {
+            var keysToRemove: [String] = []
+            for (key, pid) in tab.agentPIDs {
+                // kill(pid, 0) returns 0 if the process exists, -1 if not.
+                if kill(pid, 0) != 0 {
+                    keysToRemove.append(key)
+                }
+            }
+            for key in keysToRemove {
+                tab.statusEntries.removeValue(forKey: key)
+                tab.agentPIDs.removeValue(forKey: key)
+            }
+        }
     }
 
     private func wireClosedBrowserTracking(for workspace: Workspace) {
