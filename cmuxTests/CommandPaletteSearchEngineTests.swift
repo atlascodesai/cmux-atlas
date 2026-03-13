@@ -434,6 +434,28 @@ final class CommandPaletteSearchEngineTests: XCTestCase {
         )
     }
 
+    func testCommandPaletteEmptyListViewportUsesCompactHeight() {
+        XCTAssertEqual(
+            ContentView.commandPaletteListViewportHeight(resultCount: 0),
+            30
+        )
+        XCTAssertEqual(
+            ContentView.commandPaletteListViewportHeight(resultCount: 1),
+            24
+        )
+    }
+
+    func testCommandPaletteListViewportCapsAtMaximumHeight() {
+        XCTAssertEqual(
+            ContentView.commandPaletteListViewportHeight(resultCount: 32),
+            450
+        )
+        XCTAssertEqual(
+            ContentView.commandPaletteListViewportHeight(resultCount: 80),
+            450
+        )
+    }
+
     func testCommandContextFingerprintTracksExactContextValues() {
         let base = ContentView.commandPaletteContextFingerprint(
             boolValues: [
