@@ -253,6 +253,8 @@ struct SessionPanelSnapshot: Codable, Sendable {
     var terminal: SessionTerminalPanelSnapshot?
     var browser: SessionBrowserPanelSnapshot?
     var markdown: SessionMarkdownPanelSnapshot?
+    /// AI coding agent session that was active in this terminal at snapshot time.
+    var aiSession: AISessionSnapshot?
 }
 
 enum SessionSplitOrientation: String, Codable, Sendable {

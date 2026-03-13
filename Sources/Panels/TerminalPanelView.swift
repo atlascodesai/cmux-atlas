@@ -15,24 +15,41 @@ struct TerminalPanelView: View {
     let hasUnreadNotification: Bool
     let onFocus: () -> Void
     let onTriggerFlash: () -> Void
+    /// AI session that was active at snapshot time, provided during session restore.
+    var restoredAISession: AISessionSnapshot?
+    /// Called when the user wants to resume the detected AI session.
+    var onResumeAISession: ((AISessionSnapshot) -> Void)?
+    /// Called when the user dismisses the AI session resume banner.
+    var onDismissAISession: (() -> Void)?
 
     var body: some View {
         // Layering contract: terminal find UI is mounted in GhosttySurfaceScrollView (AppKit portal layer)
         // via `searchState`. Rendering `SurfaceSearchOverlay` in this SwiftUI container can hide it.
-        GhosttyTerminalView(
-            terminalSurface: panel.surface,
-            isActive: isFocused,
-            isVisibleInUI: isVisibleInUI,
-            portalZPriority: portalPriority,
-            showsInactiveOverlay: isSplit && !isFocused,
-            showsUnreadNotificationRing: hasUnreadNotification && notificationPaneRingEnabled,
-            inactiveOverlayColor: appearance.unfocusedOverlayNSColor,
-            inactiveOverlayOpacity: appearance.unfocusedOverlayOpacity,
-            searchState: panel.searchState,
-            reattachToken: panel.viewReattachToken,
-            onFocus: { _ in onFocus() },
-            onTriggerFlash: onTriggerFlash
-        )
+        ZStack(alignment: .top) {
+            GhosttyTerminalView(
+                terminalSurface: panel.surface,
+                isActive: isFocused,
+                isVisibleInUI: isVisibleInUI,
+                portalZPriority: portalPriority,
+                showsInactiveOverlay: isSplit && !isFocused,
+                showsUnreadNotificationRing: hasUnreadNotification && notificationPaneRingEnabled,
+                inactiveOverlayColor: appearance.unfocusedOverlayNSColor,
+                inactiveOverlayOpacity: appearance.unfocusedOverlayOpacity,
+                searchState: panel.searchState,
+                reattachToken: panel.viewReattachToken,
+                onFocus: { _ in onFocus() },
+                onTriggerFlash: onTriggerFlash
+            )
+
+            if let aiSession = restoredAISession {
+                AISessionResumeBanner(
+                    session: aiSession,
+                    onResume: { onResumeAISession?(aiSession) },
+                    onDismiss: { onDismissAISession?() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         // Keep the NSViewRepresentable identity stable across bonsplit structural updates.
         // This prevents transient teardown/recreate that can momentarily detach the hosted terminal view.
         .id(panel.id)

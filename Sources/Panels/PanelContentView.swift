@@ -16,6 +16,12 @@ struct PanelContentView: View {
     let onFocus: () -> Void
     let onRequestPanelFocus: () -> Void
     let onTriggerFlash: () -> Void
+    /// AI session that was active at snapshot time, provided during session restore.
+    var restoredAISession: AISessionSnapshot?
+    /// Called when the user wants to resume the detected AI session.
+    var onResumeAISession: ((AISessionSnapshot) -> Void)?
+    /// Called when the user dismisses the AI session resume banner.
+    var onDismissAISession: (() -> Void)?
 
     var body: some View {
         switch panel.panelType {
@@ -30,7 +36,10 @@ struct PanelContentView: View {
                     appearance: appearance,
                     hasUnreadNotification: hasUnreadNotification,
                     onFocus: onFocus,
-                    onTriggerFlash: onTriggerFlash
+                    onTriggerFlash: onTriggerFlash,
+                    restoredAISession: restoredAISession,
+                    onResumeAISession: onResumeAISession,
+                    onDismissAISession: onDismissAISession
                 )
             }
         case .browser:

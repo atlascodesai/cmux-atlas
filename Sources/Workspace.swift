@@ -349,6 +349,17 @@ extension Workspace {
             markdownSnapshot = SessionMarkdownPanelSnapshot(filePath: mdPanel.filePath)
         }
 
+        // Detect AI coding agent sessions running in this terminal
+        let aiSession: AISessionSnapshot?
+        if panel.panelType == .terminal {
+            aiSession = AISessionDetector.detect(
+                ttyName: ttyName,
+                workingDirectory: directory ?? currentDirectory
+            )
+        } else {
+            aiSession = nil
+        }
+
         return SessionPanelSnapshot(
             id: panelId,
             type: panel.panelType,
@@ -362,7 +373,8 @@ extension Workspace {
             ttyName: ttyName,
             terminal: terminalSnapshot,
             browser: browserSnapshot,
-            markdown: markdownSnapshot
+            markdown: markdownSnapshot,
+            aiSession: aiSession
         )
     }
 
@@ -510,6 +522,10 @@ extension Workspace {
                 restoredTerminalScrollbackByPanelId.removeValue(forKey: terminalPanel.id)
             }
             applySessionPanelMetadata(snapshot, toPanelId: terminalPanel.id)
+            // Carry forward AI session info for the resume banner
+            if let aiSession = snapshot.aiSession {
+                restoredAISessions[terminalPanel.id] = aiSession
+            }
             return terminalPanel.id
         case .browser:
             let initialURL = snapshot.browser?.urlString.flatMap { URL(string: $0) }
@@ -999,6 +1015,9 @@ final class Workspace: Identifiable, ObservableObject {
     @Published var surfaceListeningPorts: [UUID: [Int]] = [:]
     @Published var listeningPorts: [Int] = []
     var surfaceTTYNames: [UUID: String] = [:]
+    /// AI agent sessions detected at snapshot time, keyed by the *new* panel ID after restore.
+    /// The resume banner UI reads this to offer one-click resume.
+    @Published var restoredAISessions: [UUID: AISessionSnapshot] = [:]
     private var restoredTerminalScrollbackByPanelId: [UUID: String] = [:]
 
     var focusedSurfaceId: UUID? { focusedPanelId }
