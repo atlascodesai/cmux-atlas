@@ -1927,7 +1927,7 @@ class GhosttyApp {
                     // The hook system manages notifications with proper lifecycle tracking;
                     // raw OSC notifications would duplicate or outlive the structured hooks.
                     if let workspace = tabManager.tabs.first(where: { $0.id == tabId }),
-                       workspace.statusEntries["claude_code"] != nil {
+                       workspace.agentPIDs["claude_code"] != nil {
                         return true
                     }
                     let tabTitle = tabManager.titleForTab(tabId) ?? "Terminal"
