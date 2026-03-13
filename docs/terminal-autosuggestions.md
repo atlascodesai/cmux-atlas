@@ -219,6 +219,21 @@ For other providers, add markers as we learn them, but keep the fallback conserv
 2. if zsh shows evidence that an external autosuggestion layer owns suggestion rendering or accept widgets but the provider is not recognized, report `external:unknown`
 3. if detection is ambiguous, prefer `external:unknown` over `none`
 
+## Local Probe Helper
+
+For local dogfooding without touching the user's real `~/.zshrc`, use:
+
+`./scripts/probe-terminal-autosuggestions.sh`
+
+This launches a nested zsh with a temporary `ZDOTDIR`, leaves the current cmux panel and socket in place, and adds a `cas` alias inside the nested shell that prints the autosuggestion fields from `cmux sidebar-state`.
+
+Useful presets:
+
+1. `./scripts/probe-terminal-autosuggestions.sh --once`
+2. `./scripts/probe-terminal-autosuggestions.sh --provider zsh-autosuggestions --once`
+3. `./scripts/probe-terminal-autosuggestions.sh --provider zsh-autocomplete --once`
+4. `./scripts/probe-terminal-autosuggestions.sh --provider unknown --override none --once`
+
 This avoids double suggestions without requiring exhaustive support for every plugin manager or custom zle script on day one.
 
 ### Default policy
