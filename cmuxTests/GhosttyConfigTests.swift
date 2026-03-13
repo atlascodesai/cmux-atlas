@@ -554,6 +554,7 @@ final class GhosttyConfigTests: XCTestCase {
         XCTAssertTrue(TerminalAutosuggestionSettings.shouldRender(mode: .forceOn, reportedProvider: "external:zsh-autosuggestions"))
         XCTAssertTrue(TerminalAutosuggestionSettings.shouldRender(mode: .automatic, reportedProvider: "none"))
         XCTAssertTrue(TerminalAutosuggestionSettings.shouldRender(mode: .automatic, reportedProvider: "cmux"))
+        XCTAssertTrue(TerminalAutosuggestionSettings.shouldRender(mode: .automatic, reportedProvider: " NONE "))
         XCTAssertFalse(TerminalAutosuggestionSettings.shouldRender(mode: .automatic, reportedProvider: nil))
         XCTAssertFalse(TerminalAutosuggestionSettings.shouldRender(mode: .automatic, reportedProvider: "external:unknown"))
     }

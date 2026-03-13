@@ -58,6 +58,8 @@ typeset -g _CMUX_CMD_START=0
 typeset -g _CMUX_TTY_NAME=""
 typeset -g _CMUX_TTY_REPORTED=0
 typeset -g _CMUX_AUTOSUGGEST_PROVIDER_LAST=""
+typeset -g _CMUX_AUTOSUGGEST_PROVIDER_ACK_FILE="${TMPDIR:-/tmp}/cmux-autosuggest-provider.$$.ack"
+/bin/rm -f -- "$_CMUX_AUTOSUGGEST_PROVIDER_ACK_FILE" >/dev/null 2>&1 || true
 
 _cmux_normalize_autosuggestion_provider() {
     local value="$1"
@@ -215,15 +217,30 @@ _cmux_autosuggestion_provider() {
     print -r -- "none"
 }
 
+_cmux_sync_autosuggestion_provider_ack() {
+    local path="${_CMUX_AUTOSUGGEST_PROVIDER_ACK_FILE:-}"
+    [[ -n "$path" && -r "$path" ]] || return 0
+
+    local provider=""
+    provider="$(/bin/cat -- "$path" 2>/dev/null || true)"
+    /bin/rm -f -- "$path" >/dev/null 2>&1 || true
+    provider="$(_cmux_normalize_autosuggestion_provider "$provider" 2>/dev/null || true)"
+    [[ -n "$provider" ]] || return 0
+    _CMUX_AUTOSUGGEST_PROVIDER_LAST="$provider"
+}
+
 _cmux_report_autosuggestion_provider() {
+    _cmux_sync_autosuggestion_provider_ack
+
     local provider
     provider="$(_cmux_autosuggestion_provider 2>/dev/null || true)"
-    [[ -n "$provider" ]] || provider="external:unknown"
     [[ "$provider" == "$_CMUX_AUTOSUGGEST_PROVIDER_LAST" ]] && return 0
 
-    _CMUX_AUTOSUGGEST_PROVIDER_LAST="$provider"
+    local ack_path="${_CMUX_AUTOSUGGEST_PROVIDER_ACK_FILE:-}"
     {
-        _cmux_send "report_autosuggestion_provider $provider --tab=$CMUX_TAB_ID --panel=$CMUX_PANEL_ID"
+        if _cmux_send "report_autosuggestion_provider $provider --tab=$CMUX_TAB_ID --panel=$CMUX_PANEL_ID" >/dev/null 2>&1; then
+            print -r -- "$provider" >| "$ack_path"
+        fi
     } >/dev/null 2>&1 &!
 }
 

@@ -12,7 +12,7 @@ The right first version is shell-assisted:
 2. Extend cmux shell integration to report the live editable command line for shells that can expose it cleanly.
 3. Render suggestions in cmux as an overlay, not by mutating shell state until the user accepts.
 
-This fits the current architecture better than a renderer-only approach and avoids a lot of prompt parsing edge cases.
+This fits the current architecture better than a renderer-only approach and avoids a lot of prompt-parsing edge cases.
 
 ## Why This Fits cmux
 
@@ -108,7 +108,7 @@ Show a suggestion only when:
 
 1. the shell says the prompt is editable
 2. the cursor is at the end of the buffer
-3. there is no IME marked text
+3. there is no IME-marked text
 4. terminal copy mode is off
 5. there is no active completion menu/search mode from the shell
 

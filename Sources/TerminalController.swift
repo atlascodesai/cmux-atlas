@@ -13627,6 +13627,20 @@ class TerminalController {
             return "ERROR: Missing or invalid provider — usage: report_autosuggestion_provider <none|cmux|external:name> [--tab=X] [--panel=Y]"
         }
 
+        let panelArg = parsed.options["panel"] ?? parsed.options["surface"]
+        let requestedSurfaceId: UUID?
+        if let panelArg {
+            if panelArg.isEmpty {
+                return "ERROR: Missing panel id — usage: report_autosuggestion_provider <none|cmux|external:name> [--tab=X] [--panel=Y]"
+            }
+            guard let parsedId = UUID(uuidString: panelArg) else {
+                return "ERROR: Invalid panel id '\(panelArg)'"
+            }
+            requestedSurfaceId = parsedId
+        } else {
+            requestedSurfaceId = nil
+        }
+
         if let scope = Self.explicitSocketScope(options: parsed.options) {
             DispatchQueue.main.async {
                 guard let tabManager = AppDelegate.shared?.tabManagerFor(tabId: scope.workspaceId),
@@ -13641,44 +13655,22 @@ class TerminalController {
             return "OK"
         }
 
-        var result = "OK"
-        DispatchQueue.main.sync {
-            guard let tab = resolveTabForReport(args) else {
-                result = parsed.options["tab"] != nil ? "ERROR: Tab not found" : "ERROR: No tab selected"
+        DispatchQueue.main.async {
+            guard let tab = self.resolveTabForReport(args) else {
                 return
             }
 
             let validSurfaceIds = Set(tab.panels.keys)
             tab.pruneSurfaceMetadata(validSurfaceIds: validSurfaceIds)
 
-            let panelArg = parsed.options["panel"] ?? parsed.options["surface"]
-            let surfaceId: UUID
-            if let panelArg {
-                if panelArg.isEmpty {
-                    result = "ERROR: Missing panel id — usage: report_autosuggestion_provider <none|cmux|external:name> [--tab=X] [--panel=Y]"
-                    return
-                }
-                guard let parsedId = UUID(uuidString: panelArg) else {
-                    result = "ERROR: Invalid panel id '\(panelArg)'"
-                    return
-                }
-                surfaceId = parsedId
-            } else {
-                guard let focused = tab.focusedPanelId else {
-                    result = "ERROR: Missing panel id (no focused surface)"
-                    return
-                }
-                surfaceId = focused
-            }
-
-            guard validSurfaceIds.contains(surfaceId) else {
-                result = "ERROR: Panel not found '\(surfaceId.uuidString)'"
+            let surfaceId = requestedSurfaceId ?? tab.focusedPanelId
+            guard let surfaceId, validSurfaceIds.contains(surfaceId) else {
                 return
             }
 
             tab.updatePanelAutosuggestionProvider(panelId: surfaceId, provider: provider)
         }
-        return result
+        return "OK"
     }
 
     private func clearPorts(_ args: String) -> String {

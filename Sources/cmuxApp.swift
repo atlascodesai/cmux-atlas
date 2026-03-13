@@ -3080,13 +3080,16 @@ enum TerminalAutosuggestionSettings {
         mode: TerminalAutosuggestionMode,
         reportedProvider: String?
     ) -> Bool {
+        let provider = reportedProvider?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
         switch mode {
         case .off:
             return false
         case .forceOn:
             return true
         case .automatic:
-            return reportedProvider == "none" || reportedProvider == "cmux"
+            return provider == "none" || provider == "cmux"
         }
     }
 }
@@ -3228,6 +3231,13 @@ struct SettingsView: View {
 
     private var selectedTerminalAutosuggestionMode: TerminalAutosuggestionMode {
         TerminalAutosuggestionSettings.mode(for: terminalAutosuggestionMode)
+    }
+
+    private var terminalAutosuggestionModeSelection: Binding<String> {
+        Binding(
+            get: { TerminalAutosuggestionSettings.mode(for: terminalAutosuggestionMode).rawValue },
+            set: { terminalAutosuggestionMode = TerminalAutosuggestionSettings.mode(for: $0).rawValue }
+        )
     }
 
     private var selectedBrowserThemeMode: BrowserThemeMode {
@@ -4098,7 +4108,7 @@ struct SettingsView: View {
                             String(localized: "settings.automation.terminalAutosuggestions", defaultValue: "Terminal Autosuggestions"),
                             subtitle: selectedTerminalAutosuggestionMode.description,
                             controlWidth: pickerColumnWidth,
-                            selection: $terminalAutosuggestionMode
+                            selection: terminalAutosuggestionModeSelection
                         ) {
                             ForEach(TerminalAutosuggestionMode.allCases) { mode in
                                 Text(mode.displayName).tag(mode.rawValue)
