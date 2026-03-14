@@ -1662,6 +1662,8 @@ final class Workspace: Identifiable, ObservableObject {
         // Update current directory if this is the focused panel
         if panelId == focusedPanelId, currentDirectory != trimmed {
             currentDirectory = trimmed
+            // Sync editor to the new directory (e.g. after `cd`)
+            EditorSyncController.shared.workspaceDidChange(directory: trimmed)
         }
     }
 
