@@ -3209,13 +3209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #if DEBUG
         let fingerprintStart = ProcessInfo.processInfo.systemUptime
 #endif
-        let autosaveFingerprint = sessionAutosaveFingerprint(includeScrollback: false)
+        let autosaveFingerprint = sessionAutosaveFingerprint(includeScrollback: true)
 #if DEBUG
         fingerprintMs = (ProcessInfo.processInfo.systemUptime - fingerprintStart) * 1000.0
 #endif
         if Self.shouldSkipSessionAutosaveForUnchangedFingerprint(
             isTerminatingApp: isTerminatingApp,
-            includeScrollback: false,
+            includeScrollback: true,
             previousFingerprint: lastSessionAutosaveFingerprint,
             currentFingerprint: autosaveFingerprint,
             lastPersistedAt: lastSessionAutosavePersistedAt,
@@ -3223,7 +3223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) {
 #if DEBUG
             dlog(
-                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=0 source=\(source)"
+                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=1 source=\(source)"
             )
 #endif
             return
@@ -3232,12 +3232,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #if DEBUG
         let saveStart = ProcessInfo.processInfo.systemUptime
 #endif
-        _ = saveSessionSnapshot(includeScrollback: false)
+        _ = saveSessionSnapshot(includeScrollback: true)
 #if DEBUG
         saveMs = (ProcessInfo.processInfo.systemUptime - saveStart) * 1000.0
 #endif
         updateSessionAutosaveSaveState(
-            includeScrollback: false,
+            includeScrollback: true,
             persistedAt: now,
             fingerprint: autosaveFingerprint
         )

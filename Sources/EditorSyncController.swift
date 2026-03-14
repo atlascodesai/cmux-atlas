@@ -10,7 +10,11 @@ import Foundation
 /// cmux on the left, editor on the right — clicking a workspace in cmux instantly
 /// shows the matching project in the editor.
 ///
+/// Uses CLI commands with --reuse-window so only one editor window is open at a time.
+/// Switching workspaces in cmux changes the project in the same editor window.
+///
 /// Behavior:
+/// - Single window: reuses the same editor window instead of opening new ones
 /// - Debounced: rapid workspace switching only triggers one editor open (300ms)
 /// - Deduplicates: won't re-open the same directory if it's already the active one
 /// - Configurable: target editor stored in UserDefaults
@@ -51,6 +55,9 @@ final class EditorSyncController: ObservableObject {
 
     /// Delay before triggering editor open (allows rapid tab switching to settle).
     private let debounceInterval: Duration = .milliseconds(300)
+
+    /// Hook for getting the current workspace directory. Set by TabManager.
+    var currentWorkspaceDirectory: () -> String? = { nil }
 
     // MARK: - Init
 
@@ -94,19 +101,134 @@ final class EditorSyncController: ObservableObject {
         }
     }
 
-    /// Opens a directory in the configured external editor.
+    /// Opens the current workspace directory immediately (e.g. when the user first enables sync).
+    func openCurrentDirectoryNow(activate: Bool = true) {
+        guard let directory = currentWorkspaceDirectory(), !directory.isEmpty else { return }
+        lastOpenedDirectory = nil  // Force re-open even if same directory
+        openDirectoryInEditor(directory)
+    }
+
+    // MARK: - Editor Open (CLI-based, single window)
+
+    /// Opens a directory in the configured external editor, reusing the existing window.
     private func openDirectoryInEditor(_ directory: String) {
         // Don't re-open if it's the same directory
         guard directory != lastOpenedDirectory else { return }
         lastOpenedDirectory = directory
 
-        let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        // Use CLI commands with --reuse-window to keep a single editor window
+        if let cliArgs = cliCommand(for: targetEditor, directory: directory) {
+            launchCLI(cliArgs)
+        } else {
+            // Fallback: NSWorkspace.open for editors without a known CLI
+            fallbackOpen(directory: directory)
+        }
+    }
 
-        // Use NSWorkspace to open the directory in the target editor
+    /// Returns the CLI command + arguments to open a directory in the editor,
+    /// reusing the existing window. Returns nil if no CLI is known for this editor.
+    private func cliCommand(for editor: TerminalDirectoryOpenTarget, directory: String) -> [String]? {
+        switch editor {
+        case .cursor:
+            // Cursor CLI: same flags as VS Code
+            if let cli = findCLI(names: ["cursor"]) {
+                return [cli, "--reuse-window", directory]
+            }
+            // Cursor sometimes installs as 'code' in its own path
+            if let appURL = editor.applicationURL() {
+                let embeddedCLI = appURL.path + "/Contents/Resources/app/bin/code"
+                if FileManager.default.isExecutableFile(atPath: embeddedCLI) {
+                    return [embeddedCLI, "--reuse-window", directory]
+                }
+            }
+            return nil
+
+        case .vscode:
+            if let cli = findCLI(names: ["code"]) {
+                return [cli, "--reuse-window", directory]
+            }
+            if let appURL = editor.applicationURL() {
+                let embeddedCLI = appURL.path + "/Contents/Resources/app/bin/code"
+                if FileManager.default.isExecutableFile(atPath: embeddedCLI) {
+                    return [embeddedCLI, "--reuse-window", directory]
+                }
+            }
+            return nil
+
+        case .windsurf:
+            if let cli = findCLI(names: ["windsurf"]) {
+                return [cli, "--reuse-window", directory]
+            }
+            return nil
+
+        case .zed:
+            // Zed reuses the existing window by default
+            if let cli = findCLI(names: ["zed"]) {
+                return [cli, directory]
+            }
+            return nil
+
+        case .xcode:
+            // xed opens in Xcode; no --reuse-window but it reuses by default
+            return ["/usr/bin/xed", directory]
+
+        default:
+            return nil
+        }
+    }
+
+    /// Searches PATH for a CLI binary by name.
+    private func findCLI(names: [String]) -> String? {
+        let searchPaths = [
+            "/usr/local/bin",
+            "/opt/homebrew/bin",
+            NSHomeDirectory() + "/.local/bin",
+            NSHomeDirectory() + "/bin",
+        ]
+
+        for name in names {
+            for dir in searchPaths {
+                let path = "\(dir)/\(name)"
+                if FileManager.default.isExecutableFile(atPath: path) {
+                    return path
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Launches a CLI command in the background without blocking.
+    private func launchCLI(_ arguments: [String]) {
+        guard let executable = arguments.first else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(arguments.dropFirst())
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+
+        // Inherit a clean environment but ensure PATH is set
+        var env = ProcessInfo.processInfo.environment
+        let extraPaths = "/usr/local/bin:/opt/homebrew/bin"
+        if let existingPath = env["PATH"] {
+            env["PATH"] = extraPaths + ":" + existingPath
+        } else {
+            env["PATH"] = extraPaths + ":/usr/bin:/bin"
+        }
+        process.environment = env
+
+        do {
+            try process.run()
+        } catch {
+            // Silently ignore — editor may not be available
+        }
+    }
+
+    /// Fallback: use NSWorkspace.open for editors without CLI support.
+    private func fallbackOpen(directory: String) {
+        let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
         guard let applicationURL = targetEditor.applicationURL() else { return }
 
         let configuration = NSWorkspace.OpenConfiguration()
-        // Don't activate the editor — keep cmux in focus
         configuration.activates = false
 
         NSWorkspace.shared.open(

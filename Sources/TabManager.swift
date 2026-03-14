@@ -718,6 +718,10 @@ class TabManager: ObservableObject {
                 if let workspace = self.selectedWorkspace {
                     EditorSyncController.shared.workspaceDidChange(directory: workspace.currentDirectory)
                 }
+                // Keep the directory hook up to date for immediate-open
+                EditorSyncController.shared.currentWorkspaceDirectory = { [weak self] in
+                    self?.selectedWorkspace?.currentDirectory
+                }
 #if DEBUG
                 let dtMs = self.debugWorkspaceSwitchStartTime > 0
                     ? (CACurrentMediaTime() - self.debugWorkspaceSwitchStartTime) * 1000
