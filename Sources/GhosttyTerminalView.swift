@@ -361,11 +361,15 @@ func cmuxPasteboardImagePathForTesting(_ pasteboard: NSPasteboard) -> String? {
 enum TerminalOpenURLTarget: Equatable {
     case embeddedBrowser(URL)
     case external(URL)
+    /// A local markdown file to render in a native markdown panel.
+    case markdownFile(String)
 
     var url: URL {
         switch self {
         case let .embeddedBrowser(url), let .external(url):
             return url
+        case let .markdownFile(path):
+            return URL(fileURLWithPath: path)
         }
     }
 }
@@ -456,10 +460,29 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
     }
 
     if NSString(string: trimmed).isAbsolutePath {
+        // Absolute markdown files → native markdown panel
+        if trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown") {
+            #if DEBUG
+            dlog("link.resolve result=markdownFile(absolutePath) path=\(trimmed)")
+            #endif
+            return .markdownFile(trimmed)
+        }
         #if DEBUG
         dlog("link.resolve result=external(absolutePath) url=\(trimmed)")
         #endif
         return .external(URL(fileURLWithPath: trimmed))
+    }
+
+    // Relative paths to markdown files (e.g. "docs/story.md", "./README.md")
+    // These look like file paths but aren't absolute, so they'd otherwise be
+    // misinterpreted as URLs. Detect them early and mark for markdown rendering.
+    if (trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown")),
+       !trimmed.contains("://"),
+       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil {
+        #if DEBUG
+        dlog("link.resolve result=markdownFile(relativePath) path=\(trimmed)")
+        #endif
+        return .markdownFile(trimmed)
     }
 
     if let parsed = URL(string: trimmed),
@@ -2319,6 +2342,47 @@ class GhosttyApp {
                 }
             }
             switch target {
+            case let .markdownFile(relativePath):
+                // Resolve relative markdown paths against the workspace directory and
+                // open in a native markdown panel split beside the terminal.
+                let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
+                let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
+                #if DEBUG
+                dlog("link.openURL target=markdownFile path=\(relativePath)")
+                #endif
+                return performOnMain {
+                    guard let sourceWorkspaceId, let sourcePanelId,
+                          let app = AppDelegate.shared,
+                          let resolved = app.workspaceContainingPanel(
+                            panelId: sourcePanelId,
+                            preferredWorkspaceId: sourceWorkspaceId
+                          ) else {
+                        return false
+                    }
+                    let workspace = resolved.workspace
+                    let absolutePath: String
+                    if NSString(string: relativePath).isAbsolutePath {
+                        absolutePath = relativePath
+                    } else {
+                        let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
+                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                    }
+                    let standardized = NSString(string: absolutePath).standardizingPath
+                    guard FileManager.default.fileExists(atPath: standardized) else {
+                        #if DEBUG
+                        dlog("link.openURL markdownFile not found at \(standardized), falling back to external")
+                        #endif
+                        NSWorkspace.shared.open(URL(fileURLWithPath: standardized))
+                        return true
+                    }
+                    // Open as a markdown panel split to the right of the terminal
+                    let _ = workspace.newMarkdownSplit(
+                        from: sourcePanelId,
+                        orientation: .horizontal,
+                        filePath: standardized
+                    )
+                    return true
+                }
             case let .external(url):
                 #if DEBUG
                 dlog("link.openURL target=external, opening externally url=\(url)")
