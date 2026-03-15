@@ -247,7 +247,7 @@ private final class CLISocketSentryTelemetry {
         }
         var sockets: [String] = []
         for name in entries.sorted() {
-            guard name.hasPrefix("cmux"), name.hasSuffix(".sock") else { continue }
+            guard name.hasPrefix("cmux-atlas"), name.hasSuffix(".sock") else { continue }
             let fullPath = URL(fileURLWithPath: directory)
                 .appendingPathComponent(name, isDirectory: false)
                 .path
@@ -522,7 +522,7 @@ enum CLIIDFormat: String {
 }
 
 private enum SocketPasswordResolver {
-    private static let directoryName = "cmux"
+    private static let directoryName = "cmux-atlas"
     private static let fileName = "socket-control-password"
 
     static func resolve(explicit: String?) -> String? {
@@ -565,13 +565,13 @@ private enum CLISocketPathSource {
 }
 
 private enum CLISocketPathResolver {
-    private static let appSupportDirectoryName = "cmux"
+    private static let appSupportDirectoryName = "cmux-atlas"
     private static let stableSocketFileName = "cmux.sock"
     private static let lastSocketPathFileName = "last-socket-path"
-    static let legacyDefaultSocketPath = "/tmp/cmux.sock"
-    private static let fallbackSocketPath = "/tmp/cmux-debug.sock"
-    private static let stagingSocketPath = "/tmp/cmux-staging.sock"
-    private static let legacyLastSocketPathFile = "/tmp/cmux-last-socket-path"
+    static let legacyDefaultSocketPath = "/tmp/cmux-atlas.sock"
+    private static let fallbackSocketPath = "/tmp/cmux-atlas-debug.sock"
+    private static let stagingSocketPath = "/tmp/cmux-atlas-staging.sock"
+    private static let legacyLastSocketPathFile = "/tmp/cmux-atlas-last-socket-path"
 
     static var defaultSocketPath: String {
         let stablePath: String? = stableSocketDirectoryURL()?
@@ -613,8 +613,8 @@ private enum CLISocketPathResolver {
 
         if let tag = normalized(environment["CMUX_TAG"]) {
             let slug = sanitizeTagSlug(tag)
-            candidates.append("/tmp/cmux-debug-\(slug).sock")
-            candidates.append("/tmp/cmux-\(slug).sock")
+            candidates.append("/tmp/cmux-atlas-debug-\(slug).sock")
+            candidates.append("/tmp/cmux-atlas-\(slug).sock")
         }
 
         candidates.append(requestedPath)
@@ -653,7 +653,7 @@ private enum CLISocketPathResolver {
                 continue
             }
             discovered.reserveCapacity(min(limit, discovered.count + entries.count))
-            for name in entries where name.hasPrefix("cmux") && name.hasSuffix(".sock") {
+            for name in entries where name.hasPrefix("cmux-atlas") && name.hasSuffix(".sock") {
                 let path = URL(fileURLWithPath: directory)
                     .appendingPathComponent(name, isDirectory: false)
                     .path
@@ -5518,7 +5518,7 @@ struct CMUXCLI {
         return true
     }
 
-    private static let cmuxThemeOverrideBundleIdentifier = "com.cmuxterm.app"
+    private static let cmuxThemeOverrideBundleIdentifier = "com.atlascodes.cmux-atlas"
     private static let cmuxThemesBlockStart = "# cmux themes start"
     private static let cmuxThemesBlockEnd = "# cmux themes end"
     private static let cmuxThemesReloadNotificationName = "com.cmuxterm.themes.reload-config"

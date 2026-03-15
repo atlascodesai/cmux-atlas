@@ -11,7 +11,7 @@
 set -euo pipefail
 
 TAG="${1:-dev-test}"
-APP_NAME="cmux DEV"
+APP_NAME="cmux Atlas DEV"
 DERIVED_DATA="$HOME/Library/Developer/Xcode/DerivedData"
 
 # Find the GhosttyTabs DerivedData directory
@@ -35,7 +35,7 @@ fi
 # Gracefully quit any existing instance (Cmd+Q via AppleScript)
 # This lets the app run applicationWillTerminate() and save scrollback.
 # Falls back to SIGTERM if AppleScript fails.
-BUNDLE_ID="com.cmuxterm.app.debug"
+BUNDLE_ID="com.atlascodes.cmux-atlas.debug"
 if pgrep -f "$APP_NAME" >/dev/null 2>&1; then
     echo "Quitting existing instance gracefully..."
     osascript -e "tell application id \"$BUNDLE_ID\" to quit" 2>/dev/null || true
