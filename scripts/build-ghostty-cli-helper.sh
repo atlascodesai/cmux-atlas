@@ -80,6 +80,26 @@ if [[ ! -f "$GHOSTTY_DIR/build.zig" ]]; then
   exit 1
 fi
 
+# Check if the cli-helper build step exists in this version of ghostty.
+# If not, create a stub so the build succeeds (theme picker will show
+# "helper not found" at runtime).
+HAS_CLI_HELPER=false
+if (cd "$GHOSTTY_DIR" && zig build --help 2>&1 | grep -q "cli-helper"); then
+  HAS_CLI_HELPER=true
+fi
+
+if [[ "$HAS_CLI_HELPER" == "false" ]]; then
+  echo "warning: ghostty cli-helper build step not available, creating stub" >&2
+  mkdir -p "$(dirname "$OUTPUT_PATH")"
+  cat > "$OUTPUT_PATH" <<'STUB'
+#!/bin/sh
+echo "error: ghostty cli-helper not available in this build" >&2
+exit 1
+STUB
+  chmod +x "$OUTPUT_PATH"
+  exit 0
+fi
+
 build_helper() {
   local prefix="$1"
   local target="${2:-}"
