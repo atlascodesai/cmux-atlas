@@ -1,28 +1,27 @@
-<h1 align="center">cmux</h1>
-<p align="center">A Ghostty-based macOS terminal with vertical tabs and notifications for AI coding agents</p>
+<h1 align="center">cmux Atlas</h1>
+<p align="center">A personal fork of <a href="https://github.com/manaflow-ai/cmux">manaflow-ai/cmux</a> — adding AI workflow features we want in our terminal</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
-  </a>
+  <img src="./docs/assets/main-first-image.png" alt="cmux Atlas screenshot" width="900" />
 </p>
 
-<p align="center">
-  English | <a href="README.ja.md">日本語</a> | <a href="README.vi.md">Tiếng Việt</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | <a href="README.ko.md">한국어</a> | <a href="README.de.md">Deutsch</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.it.md">Italiano</a> | <a href="README.da.md">Dansk</a> | <a href="README.pl.md">Polski</a> | <a href="README.ru.md">Русский</a> | <a href="README.bs.md">Bosanski</a> | <a href="README.ar.md">العربية</a> | <a href="README.no.md">Norsk</a> | <a href="README.pt-BR.md">Português (Brasil)</a> | <a href="README.th.md">ไทย</a> | <a href="README.tr.md">Türkçe</a> | <a href="README.km.md">ភាសាខ្មែរ</a>
-</p>
+## What's different from upstream cmux
 
-<p align="center">
-  <a href="https://x.com/manaflowai"><img src="https://img.shields.io/badge/@manaflow-555?logo=x" alt="X / Twitter" /></a>
-  <a href="https://discord.gg/xsgFEVrWCZ"><img src="https://img.shields.io/badge/Discord-555?logo=discord" alt="Discord" /></a>
-</p>
+This fork builds on top of cmux to add features focused on AI coding agent workflows:
 
-<p align="center">
-  <img src="./docs/assets/main-first-image.png" alt="cmux screenshot" width="900" />
-</p>
+- **AI session auto-resume** — Detects AI coding agent sessions (Claude Code, Codex, etc.) and offers to auto-resume them on app restart
+- **Editor sync** — Auto-opens the workspace directory in your configured editor (VS Code, Cursor, Zed, etc.) when the terminal's working directory changes
+- **Markdown link interception** — Intercepts markdown file links in the terminal and renders them in the native panel
+- **AI quick launch buttons** — Titlebar buttons with Claude and Codex logos for one-click agent launch, with right-click permissive mode toggle
+- **Session ID resolver** — PID-correlated scoring to reliably identify and restore AI agent sessions
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=i-WxO5YUTOs">▶ Demo video</a> · <a href="https://cmux.com/blog/zen-of-cmux">The Zen of cmux</a>
-</p>
+We sync regularly with upstream cmux and aim to contribute features back where it makes sense.
+
+---
+
+*Everything below is from the upstream cmux README.*
+
+---
 
 ## Features
 
