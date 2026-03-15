@@ -94,29 +94,21 @@ struct AIQuickLaunchTitlebarButton: View {
 
     var body: some View {
         let button = Button(action: launch) {
-            ZStack {
-                Image(systemName: iconName)
-                    .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(permissiveEnabled ? AnyShapeStyle(accentColor) : AnyShapeStyle(.primary))
-                    .frame(width: buttonSize, height: buttonSize)
-
-                if permissiveEnabled {
-                    Circle()
-                        .fill(accentColor)
-                        .frame(width: 5, height: 5)
-                        .offset(
-                            x: (buttonSize ?? 20) / 2 - 4,
-                            y: -((buttonSize ?? 20) / 2 - 4)
-                        )
-                }
-            }
+            Image(imageName)
+                .resizable()
+                .interpolation(.high)
+                .antialiased(true)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: iconSize, height: iconSize)
+                .frame(width: buttonSize, height: buttonSize)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
         .contextMenu {
-            Button(permissiveToggleTitle) {
-                quickLaunch.togglePermissiveMode(for: agent)
-            }
+            Toggle(permissiveToggleTitle, isOn: Binding(
+                get: { permissiveEnabled },
+                set: { _ in quickLaunch.togglePermissiveMode(for: agent) }
+            ))
         }
         .accessibilityIdentifier(accessibilityIdentifier)
         .accessibilityLabel(accessibilityLabel)
@@ -129,21 +121,12 @@ struct AIQuickLaunchTitlebarButton: View {
         }
     }
 
-    private var iconName: String {
+    private var imageName: String {
         switch agent {
         case .codex:
-            return "chevron.left.forwardslash.chevron.right"
+            return "codex-logo"
         case .claudeCode:
-            return "text.bubble"
-        }
-    }
-
-    private var accentColor: Color {
-        switch agent {
-        case .codex:
-            return .green
-        case .claudeCode:
-            return .orange
+            return "claude-logo"
         }
     }
 
