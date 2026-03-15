@@ -11379,6 +11379,16 @@ private struct TabItemView: View, Equatable {
 
         Divider()
 
+        Button(String(localized: "contextMenu.revealInFinder", defaultValue: "Reveal in Finder")) {
+            let dir = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !dir.isEmpty {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir)
+            }
+        }
+        .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Divider()
+
         Button(markReadLabel) {
             markTabsRead(targetIds)
         }
