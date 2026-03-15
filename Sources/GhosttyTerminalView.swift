@@ -7410,6 +7410,7 @@ final class GhosttySurfaceScrollView: NSView {
         }()
         let isHiddenForFocus = isHiddenOrHasHiddenAncestor || surfaceView.isHiddenOrHasHiddenAncestor
         let surfaceShort = surfaceView.terminalSurface?.id.uuidString.prefix(5) ?? "nil"
+        let storedTopVisibleRow = surfaceView.terminalSurface?.storedScrollViewportAnchorTopVisibleRow()
 
         guard isActive else { return }
         guard surfaceView.isVisibleInUI else { return }
@@ -7434,6 +7435,12 @@ final class GhosttySurfaceScrollView: NSView {
         if surfaceView.terminalSurface?.searchState != nil {
             // Find bar is open. Restore focus based on what the user last intended.
             restoreSearchFocus(window: window)
+            return
+        }
+        guard ghosttyShouldRestoreAutomaticTerminalFocus(storedTopVisibleRow: storedTopVisibleRow) else {
+#if DEBUG
+            dlog("focus.apply.skip surface=\(surfaceShort) reason=reviewing_scrollback")
+#endif
             return
         }
         if let fr = window.firstResponder as? NSView,
