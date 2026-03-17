@@ -1251,7 +1251,7 @@ enum CLIProcessRunner {
 struct CMUXCLI {
     let args: [String]
 
-    private static let debugLastSocketHintPath = "/tmp/cmux-last-socket-path"
+    private static let debugLastSocketHintPath = "/tmp/cmux-atlas-last-socket-path"
 
     private static func normalizedEnvValue(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1273,7 +1273,7 @@ struct CMUXCLI {
             return nil
         }
         guard let hinted = normalizedEnvValue(raw),
-              hinted.hasPrefix("/tmp/cmux-debug"),
+              hinted.hasPrefix("/tmp/cmux-atlas-debug"),
               hinted.hasSuffix(".sock"),
               pathIsSocket(hinted) else {
             return nil
@@ -1292,7 +1292,7 @@ struct CMUXCLI {
         if let hinted = debugSocketPathFromHintFile() {
             return hinted
         }
-        return "/tmp/cmux-debug.sock"
+        return "/tmp/cmux-atlas-debug.sock"
 #else
         return "/tmp/cmux.sock"
 #endif
@@ -4371,7 +4371,7 @@ struct CMUXCLI {
             if let trimmedExplicit, !trimmedExplicit.isEmpty {
                 return trimmedExplicit
             }
-            guard let marker = try? String(contentsOfFile: "/tmp/cmux-last-debug-log-path", encoding: .utf8) else {
+            guard let marker = try? String(contentsOfFile: "/tmp/cmux-atlas-last-debug-log-path", encoding: .utf8) else {
                 return nil
             }
             let trimmedMarker = marker.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -11143,7 +11143,7 @@ struct CMUXCLI {
           CMUX_TAB_ID         Optional alias used by `tab-action`/`rename-tab` as default --tab.
           CMUX_SURFACE_ID     Auto-set in cmux terminals. Used as default --surface.
           CMUX_SOCKET_PATH    Override the Unix socket path. Without this, the CLI defaults
-                              to ~/Library/Application Support/cmux/cmux.sock and auto-discovers tagged/debug sockets.
+                              to ~/Library/Application Support/cmux-atlas/cmux-atlas.sock and auto-discovers tagged/debug sockets.
         """
     }
 
