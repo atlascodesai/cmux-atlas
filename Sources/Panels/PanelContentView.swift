@@ -16,9 +16,9 @@ struct PanelContentView: View {
     let onFocus: () -> Void
     let onRequestPanelFocus: () -> Void
     let onTriggerFlash: () -> Void
-    let restoredAISession: AISessionSnapshot?
-    let onResumeAISession: ((AISessionSnapshot) -> Void)?
-    let onDismissAISession: (() -> Void)?
+    let restoredTerminalAction: RestoredTerminalActionSnapshot?
+    let onRunRestoredTerminalAction: ((RestoredTerminalActionSnapshot) -> Void)?
+    let onDismissRestoredTerminalAction: (() -> Void)?
 
     var body: some View {
         switch panel.panelType {
@@ -34,9 +34,9 @@ struct PanelContentView: View {
                     hasUnreadNotification: hasUnreadNotification,
                     onFocus: onFocus,
                     onTriggerFlash: onTriggerFlash,
-                    restoredAISession: restoredAISession,
-                    onResumeAISession: onResumeAISession,
-                    onDismissAISession: onDismissAISession
+                    restoredTerminalAction: restoredTerminalAction,
+                    onRunRestoredTerminalAction: onRunRestoredTerminalAction,
+                    onDismissRestoredTerminalAction: onDismissRestoredTerminalAction
                 )
             }
         case .browser:

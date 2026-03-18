@@ -97,24 +97,24 @@ struct WorkspaceContentView: View {
                         workspace.focusPanel(panel.id)
                     },
                     onTriggerFlash: { workspace.triggerDebugFlash(panelId: panel.id) },
-                    restoredAISession: workspace.restoredAISessions[panel.id],
-                    onResumeAISession: { aiSession in
+                    restoredTerminalAction: workspace.restoredTerminalActions[panel.id],
+                    onRunRestoredTerminalAction: { restoredAction in
                         let permissiveModeEnabled: Bool
-                        switch aiSession.agentType {
+                        switch restoredAction.agentType {
                         case .claudeCode:
                             permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
                         case .codex:
                             permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
                         }
-                        guard let resumeCommand = aiSession.resumeCommand(
+                        guard let resumeCommand = restoredAction.resumeCommand(
                                 permissiveModeEnabled: permissiveModeEnabled
                               ),
                               let terminalPanel = panel as? TerminalPanel else { return }
                         terminalPanel.sendCommand(resumeCommand)
-                        workspace.restoredAISessions.removeValue(forKey: panel.id)
+                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
                     },
-                    onDismissAISession: {
-                        workspace.restoredAISessions.removeValue(forKey: panel.id)
+                    onDismissRestoredTerminalAction: {
+                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
                     }
                 )
                 .onTapGesture {

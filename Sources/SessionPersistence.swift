@@ -226,7 +226,10 @@ enum AIAgentType: String, Codable, Sendable {
     case codex = "codex"
 }
 
-struct AISessionSnapshot: Codable, Sendable, Equatable {
+/// A generic post-restore terminal action. Today this is backed by agent
+/// session resume providers, but the workspace/UI layer only depends on this
+/// transport object rather than any specific CLI integration.
+struct RestoredTerminalActionSnapshot: Codable, Sendable, Equatable {
     var agentType: AIAgentType
     var sessionId: String?
     var workingDirectory: String?
@@ -298,7 +301,58 @@ struct SessionPanelSnapshot: Codable, Sendable {
     var terminal: SessionTerminalPanelSnapshot?
     var browser: SessionBrowserPanelSnapshot?
     var markdown: SessionMarkdownPanelSnapshot?
-    var aiSession: AISessionSnapshot?
+    var restoredTerminalAction: RestoredTerminalActionSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case title
+        case customTitle
+        case directory
+        case isPinned
+        case isManuallyUnread
+        case gitBranch
+        case listeningPorts
+        case ttyName
+        case terminal
+        case browser
+        case markdown
+        case restoredTerminalAction = "aiSession"
+    }
+}
+
+protocol RestoredTerminalActionProvider {
+    static func restoredTerminalAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> RestoredTerminalActionSnapshot?
+}
+
+enum RestoredTerminalActionRegistry {
+    private static let providers: [RestoredTerminalActionProvider.Type] = [
+        ClaudeHookSessionSnapshotStore.self,
+        CodexHookSessionSnapshotStore.self
+    ]
+
+    static func latestAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> RestoredTerminalActionSnapshot? {
+        providers
+            .compactMap {
+                $0.restoredTerminalAction(
+                    workspaceId: workspaceId,
+                    panelId: panelId,
+                    processEnv: processEnv,
+                    fileManager: fileManager
+                )
+            }
+            .max(by: { $0.lastSeenActive < $1.lastSeenActive })
+    }
 }
 
 private struct ClaudeHookSessionRecord: Codable {
@@ -335,15 +389,15 @@ private struct CodexHookSessionStoreFile: Codable {
     var sessions: [String: CodexHookSessionRecord] = [:]
 }
 
-enum ClaudeHookSessionSnapshotStore {
+enum ClaudeHookSessionSnapshotStore: RestoredTerminalActionProvider {
     private static let defaultStatePath = "~/.cmuxterm/claude-hook-sessions.json"
 
-    static func sessionSnapshot(
+    static func restoredTerminalAction(
         workspaceId: UUID,
         panelId: UUID,
         processEnv: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
-    ) -> AISessionSnapshot? {
+    ) -> RestoredTerminalActionSnapshot? {
         guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
 
         let workspaceToken = workspaceId.uuidString.lowercased()
@@ -360,7 +414,7 @@ enum ClaudeHookSessionSnapshotStore {
 
         let workingDirectory = normalizedOptional(record.cwd)
 
-        return AISessionSnapshot(
+        return RestoredTerminalActionSnapshot(
             agentType: .claudeCode,
             sessionId: normalizedOptional(record.sessionId),
             workingDirectory: workingDirectory,
@@ -393,15 +447,15 @@ enum ClaudeHookSessionSnapshotStore {
     }
 }
 
-enum CodexHookSessionSnapshotStore {
+enum CodexHookSessionSnapshotStore: RestoredTerminalActionProvider {
     private static let defaultStatePath = "~/.cmuxterm/codex-hook-sessions.json"
 
-    static func sessionSnapshot(
+    static func restoredTerminalAction(
         workspaceId: UUID,
         panelId: UUID,
         processEnv: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
-    ) -> AISessionSnapshot? {
+    ) -> RestoredTerminalActionSnapshot? {
         guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
 
         let workspaceToken = workspaceId.uuidString.lowercased()
@@ -418,7 +472,7 @@ enum CodexHookSessionSnapshotStore {
 
         let workingDirectory = normalizedOptional(record.cwd)
 
-        return AISessionSnapshot(
+        return RestoredTerminalActionSnapshot(
             agentType: .codex,
             sessionId: normalizedOptional(record.sessionId),
             workingDirectory: workingDirectory,

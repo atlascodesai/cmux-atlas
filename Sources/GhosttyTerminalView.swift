@@ -6206,7 +6206,7 @@ final class GhosttySurfaceScrollView: NSView {
     private let keyboardCopyModeBadgeView: GhosttyPassthroughVisualEffectView
     private let keyboardCopyModeBadgeIconView: NSImageView
     private let keyboardCopyModeBadgeLabel: NSTextField
-    private var aiSessionBannerHostingView: NSHostingView<AISessionResumeBanner>?
+    private var restoredTerminalActionBannerHostingView: NSHostingView<RestoredTerminalActionBanner>?
     private var searchOverlayHostingView: NSHostingView<SurfaceSearchOverlay>?
     private var deferredSearchOverlayMutationWorkItem: DispatchWorkItem?
     private var lastSearchOverlayStateID: ObjectIdentifier?
@@ -6961,38 +6961,38 @@ final class GhosttySurfaceScrollView: NSView {
         guard !keyboardCopyModeBadgeContainerView.isHidden else { return }
         if let overlay, overlay.superview === self {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: overlay)
-        } else if let banner = aiSessionBannerHostingView, banner.superview === self {
+        } else if let banner = restoredTerminalActionBannerHostingView, banner.superview === self {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: banner)
         } else {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: nil)
         }
     }
 
-    func setAISessionResumeBanner(
-        session: AISessionSnapshot?,
-        onResume: (() -> Void)?,
+    func setRestoredTerminalActionBanner(
+        action: RestoredTerminalActionSnapshot?,
+        onRun: (() -> Void)?,
         onDismiss: (() -> Void)?
     ) {
         if !Thread.isMainThread {
             DispatchQueue.main.async { [weak self] in
-                self?.setAISessionResumeBanner(session: session, onResume: onResume, onDismiss: onDismiss)
+                self?.setRestoredTerminalActionBanner(action: action, onRun: onRun, onDismiss: onDismiss)
             }
             return
         }
 
-        guard let session, let onResume, let onDismiss else {
-            aiSessionBannerHostingView?.removeFromSuperview()
-            aiSessionBannerHostingView = nil
+        guard let action, let onRun, let onDismiss else {
+            restoredTerminalActionBannerHostingView?.removeFromSuperview()
+            restoredTerminalActionBannerHostingView = nil
             return
         }
 
-        let rootView = AISessionResumeBanner(
-            session: session,
-            onResume: onResume,
+        let rootView = RestoredTerminalActionBanner(
+            action: action,
+            onRun: onRun,
             onDismiss: onDismiss
         )
 
-        if let banner = aiSessionBannerHostingView {
+        if let banner = restoredTerminalActionBannerHostingView {
             banner.rootView = rootView
             if banner.superview !== self {
                 mountTopBannerHostingView(banner)
@@ -7001,7 +7001,7 @@ final class GhosttySurfaceScrollView: NSView {
         }
 
         let banner = NSHostingView(rootView: rootView)
-        aiSessionBannerHostingView = banner
+        restoredTerminalActionBannerHostingView = banner
         mountTopBannerHostingView(banner)
     }
 
@@ -8889,9 +8889,9 @@ struct GhosttyTerminalView: NSViewRepresentable {
     var inactiveOverlayColor: NSColor = .clear
     var inactiveOverlayOpacity: Double = 0
     var searchState: TerminalSurface.SearchState? = nil
-    var restoredAISession: AISessionSnapshot? = nil
-    var onResumeAISession: ((AISessionSnapshot) -> Void)? = nil
-    var onDismissAISession: (() -> Void)? = nil
+    var restoredTerminalAction: RestoredTerminalActionSnapshot? = nil
+    var onRunRestoredTerminalAction: ((RestoredTerminalActionSnapshot) -> Void)? = nil
+    var onDismissRestoredTerminalAction: (() -> Void)? = nil
     var reattachToken: UInt64 = 0
     var onFocus: ((UUID) -> Void)? = nil
     var onTriggerFlash: (() -> Void)? = nil
@@ -9080,14 +9080,14 @@ struct GhosttyTerminalView: NSViewRepresentable {
                 visible: showsInactiveOverlay
             )
             hostedView.setNotificationRing(visible: showsUnreadNotificationRing)
-            hostedView.setAISessionResumeBanner(
-                session: restoredAISession,
-                onResume: restoredAISession.flatMap { session in
-                    onResumeAISession.map { handler in
-                        { handler(session) }
+            hostedView.setRestoredTerminalActionBanner(
+                action: restoredTerminalAction,
+                onRun: restoredTerminalAction.flatMap { action in
+                    onRunRestoredTerminalAction.map { handler in
+                        { handler(action) }
                     }
                 },
-                onDismiss: onDismissAISession
+                onDismiss: onDismissRestoredTerminalAction
             )
             hostedView.setSearchOverlay(searchState: searchState)
             hostedView.syncKeyStateIndicator(text: terminalSurface.currentKeyStateIndicatorText)

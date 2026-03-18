@@ -15,9 +15,9 @@ struct TerminalPanelView: View {
     let hasUnreadNotification: Bool
     let onFocus: () -> Void
     let onTriggerFlash: () -> Void
-    let restoredAISession: AISessionSnapshot?
-    let onResumeAISession: ((AISessionSnapshot) -> Void)?
-    let onDismissAISession: (() -> Void)?
+    let restoredTerminalAction: RestoredTerminalActionSnapshot?
+    let onRunRestoredTerminalAction: ((RestoredTerminalActionSnapshot) -> Void)?
+    let onDismissRestoredTerminalAction: (() -> Void)?
 
     var body: some View {
         // Layering contract: terminal find UI is mounted in GhosttySurfaceScrollView (AppKit portal layer)
@@ -32,9 +32,9 @@ struct TerminalPanelView: View {
             inactiveOverlayColor: appearance.unfocusedOverlayNSColor,
             inactiveOverlayOpacity: appearance.unfocusedOverlayOpacity,
             searchState: panel.searchState,
-            restoredAISession: restoredAISession,
-            onResumeAISession: onResumeAISession,
-            onDismissAISession: onDismissAISession,
+            restoredTerminalAction: restoredTerminalAction,
+            onRunRestoredTerminalAction: onRunRestoredTerminalAction,
+            onDismissRestoredTerminalAction: onDismissRestoredTerminalAction,
             reattachToken: panel.viewReattachToken,
             onFocus: { _ in onFocus() },
             onTriggerFlash: onTriggerFlash
@@ -61,9 +61,9 @@ struct PanelAppearance {
     }
 }
 
-struct AISessionResumeBanner: View {
-    let session: AISessionSnapshot
-    let onResume: () -> Void
+struct RestoredTerminalActionBanner: View {
+    let action: RestoredTerminalActionSnapshot
+    let onRun: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -103,8 +103,8 @@ struct AISessionResumeBanner: View {
             }
 
             HStack(spacing: 8) {
-                if session.isResumable {
-                    Button(action: onResume) {
+                if action.isResumable {
+                    Button(action: onRun) {
                         Label {
                             Text(String(localized: "aiSession.banner.resume", defaultValue: "Resume"))
                                 .font(.system(size: 11, weight: .semibold))
@@ -143,7 +143,7 @@ struct AISessionResumeBanner: View {
     }
 
     private var iconName: String {
-        switch session.agentType {
+        switch action.agentType {
         case .claudeCode:
             return "brain"
         case .codex:
@@ -152,7 +152,7 @@ struct AISessionResumeBanner: View {
     }
 
     private var accentColor: Color {
-        switch session.agentType {
+        switch action.agentType {
         case .claudeCode:
             return .orange
         case .codex:
@@ -161,7 +161,7 @@ struct AISessionResumeBanner: View {
     }
 
     private var title: String {
-        switch session.agentType {
+        switch action.agentType {
         case .claudeCode:
             return String(
                 localized: "aiSession.banner.claudeDetected",
@@ -176,10 +176,10 @@ struct AISessionResumeBanner: View {
     }
 
     private var detailText: String? {
-        let project = session.projectPath ??
-            session.workingDirectory ??
+        let project = action.projectPath ??
+            action.workingDirectory ??
             String(localized: "aiSession.banner.unknownProject", defaultValue: "unknown project")
-        if let sessionId = session.sessionId {
+        if let sessionId = action.sessionId {
             let shortId = String(sessionId.prefix(8))
             return String(
                 format: String(

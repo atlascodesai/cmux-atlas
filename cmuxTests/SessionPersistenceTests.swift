@@ -855,7 +855,7 @@ final class SessionPersistenceTests: XCTestCase {
         """
         try json.write(to: stateURL, atomically: true, encoding: .utf8)
 
-        let snapshot = ClaudeHookSessionSnapshotStore.sessionSnapshot(
+        let snapshot = ClaudeHookSessionSnapshotStore.restoredTerminalAction(
             workspaceId: workspaceId,
             panelId: panelId,
             processEnv: ["CMUX_CLAUDE_HOOK_STATE_PATH": stateURL.path]
@@ -919,7 +919,7 @@ final class SessionPersistenceTests: XCTestCase {
         """
         try json.write(to: stateURL, atomically: true, encoding: .utf8)
 
-        let snapshot = CodexHookSessionSnapshotStore.sessionSnapshot(
+        let snapshot = CodexHookSessionSnapshotStore.restoredTerminalAction(
             workspaceId: workspaceId,
             panelId: panelId,
             processEnv: ["CMUX_CODEX_HOOK_STATE_PATH": stateURL.path]
@@ -933,8 +933,8 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(snapshot?.lastSeenActive, 250)
     }
 
-    func testAISessionSnapshotResumeCommandRespectsPermissiveMode() {
-        let claudeSession = AISessionSnapshot(
+    func testRestoredTerminalActionResumeCommandRespectsPermissiveMode() {
+        let claudeSession = RestoredTerminalActionSnapshot(
             agentType: .claudeCode,
             sessionId: "claude-session-id",
             workingDirectory: "/tmp/claude",
@@ -950,7 +950,7 @@ final class SessionPersistenceTests: XCTestCase {
             "claude --dangerously-skip-permissions --resume claude-session-id"
         )
 
-        let codexSession = AISessionSnapshot(
+        let codexSession = RestoredTerminalActionSnapshot(
             agentType: .codex,
             sessionId: "123e4567-e89b-12d3-a456-426614174000",
             workingDirectory: "/tmp/codex",
@@ -965,6 +965,35 @@ final class SessionPersistenceTests: XCTestCase {
             codexSession.resumeCommand(permissiveModeEnabled: true),
             "codex --dangerously-bypass-approvals-and-sandbox resume 123e4567-e89b-12d3-a456-426614174000"
         )
+    }
+
+    func testSessionPanelSnapshotDecodesLegacyAISessionKey() throws {
+        let panelId = UUID()
+        let json = """
+        {
+          "id": "\(panelId.uuidString)",
+          "type": "terminal",
+          "title": "Terminal",
+          "isPinned": false,
+          "isManuallyUnread": false,
+          "listeningPorts": [],
+          "terminal": {
+            "workingDirectory": "/tmp/project"
+          },
+          "aiSession": {
+            "agentType": "claude_code",
+            "sessionId": "legacy-session-id",
+            "workingDirectory": "/tmp/project",
+            "projectPath": "/tmp/project",
+            "lastSeenActive": 123
+          }
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(SessionPanelSnapshot.self, from: json)
+        XCTAssertEqual(decoded.restoredTerminalAction?.agentType, .claudeCode)
+        XCTAssertEqual(decoded.restoredTerminalAction?.sessionId, "legacy-session-id")
+        XCTAssertEqual(decoded.restoredTerminalAction?.projectPath, "/tmp/project")
     }
 
     private func makeSnapshot(version: Int) -> AppSessionSnapshot {
