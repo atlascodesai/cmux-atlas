@@ -198,9 +198,10 @@ final class TerminalPanel: Panel, ObservableObject {
         needsConfirmClose: Bool,
         includeUnsafeTerminalScrollback: Bool
     ) -> Bool {
-        // Graceful-quit restores stay conservative and only replay when Ghostty reports
-        // the terminal is safely at a prompt. Crash-recovery autosaves can opt into
-        // persisting active TUI scrollback so recent terminal state is not lost.
+        // Passive background snapshots stay conservative and only replay when Ghostty
+        // reports the terminal is safely at a prompt. Crash recovery and explicit
+        // app termination can opt into persisting active TUI scrollback so recent
+        // terminal state is not lost across relaunch.
         includeUnsafeTerminalScrollback || !needsConfirmClose
     }
 

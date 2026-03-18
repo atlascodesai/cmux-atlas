@@ -710,13 +710,34 @@ _cmux_fix_path() {
     add-zsh-hook -d precmd _cmux_fix_path
 }
 
+_cmux_install_command_wrapper() {
+    local command_name="$1"
+    [[ -n "${GHOSTTY_BIN_DIR:-}" ]] || return 0
+    [[ -n "$command_name" ]] || return 0
+
+    local gui_dir="${GHOSTTY_BIN_DIR%/}"
+    local wrapper_path="${gui_dir%/MacOS}/Resources/bin/${command_name}"
+    [[ -x "$wrapper_path" ]] || return 0
+
+    unalias "$command_name" >/dev/null 2>&1 || true
+    eval "function ${command_name}() { \"$wrapper_path\" \"\$@\"; }"
+}
+
+_cmux_install_ai_wrappers() {
+    _cmux_install_command_wrapper claude
+    _cmux_install_command_wrapper codex
+    (( $+functions[add-zsh-hook] )) && add-zsh-hook -d precmd _cmux_install_ai_wrappers
+}
+
 _cmux_zshexit() {
     _cmux_stop_git_head_watch
     _cmux_stop_pr_poll_loop
 }
 
 autoload -Uz add-zsh-hook
+_cmux_install_ai_wrappers
 add-zsh-hook preexec _cmux_preexec
 add-zsh-hook precmd _cmux_precmd
 add-zsh-hook precmd _cmux_fix_path
+add-zsh-hook precmd _cmux_install_ai_wrappers
 add-zsh-hook zshexit _cmux_zshexit

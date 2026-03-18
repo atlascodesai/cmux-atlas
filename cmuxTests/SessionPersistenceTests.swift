@@ -782,6 +782,191 @@ final class SessionPersistenceTests: XCTestCase {
         )
     }
 
+    func testResolvedSnapshotTerminalTextPrefersRicherLiveRead() {
+        let vtExportText = "Last login: Tue Mar 17 22:28:40 on ttys018\nuser@host ~ % "
+        let liveReadText = """
+        Claude Code
+        > inspecting repository
+        > found 12 files
+        user@host ~ %
+        """
+
+        XCTAssertEqual(
+            TerminalController.resolvedSnapshotTerminalText(
+                vtExportText: vtExportText,
+                liveReadText: liveReadText
+            ),
+            liveReadText
+        )
+    }
+
+    func testResolvedSnapshotTerminalTextPrefersVTExportOnTie() {
+        let vtExportText = "\u{001B}[0mhello\nworld"
+        let liveReadText = "hello\nworld"
+
+        XCTAssertEqual(
+            TerminalController.resolvedSnapshotTerminalText(
+                vtExportText: vtExportText,
+                liveReadText: liveReadText
+            ),
+            vtExportText
+        )
+    }
+
+    func testClaudeHookSessionSnapshotStoreReturnsLatestMatchingSession() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-claude-hook-state-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let workspaceId = UUID()
+        let panelId = UUID()
+        let stateURL = tempDir.appendingPathComponent("claude-hook-sessions.json", isDirectory: false)
+        let json = """
+        {
+          "version": 1,
+          "sessions": {
+            "older": {
+              "cwd": "/tmp/older",
+              "sessionId": "older-session-id",
+              "startedAt": 100,
+              "surfaceId": "\(panelId.uuidString.lowercased())",
+              "updatedAt": 150,
+              "workspaceId": "\(workspaceId.uuidString.lowercased())"
+            },
+            "newer": {
+              "cwd": "/tmp/newer",
+              "sessionId": "newer-session-id",
+              "startedAt": 100,
+              "surfaceId": "\(panelId.uuidString.uppercased())",
+              "updatedAt": 250,
+              "workspaceId": "\(workspaceId.uuidString.uppercased())"
+            },
+            "other": {
+              "cwd": "/tmp/other",
+              "sessionId": "other-session-id",
+              "startedAt": 100,
+              "surfaceId": "\(UUID().uuidString)",
+              "updatedAt": 500,
+              "workspaceId": "\(workspaceId.uuidString)"
+            }
+          }
+        }
+        """
+        try json.write(to: stateURL, atomically: true, encoding: .utf8)
+
+        let snapshot = ClaudeHookSessionSnapshotStore.sessionSnapshot(
+            workspaceId: workspaceId,
+            panelId: panelId,
+            processEnv: ["CMUX_CLAUDE_HOOK_STATE_PATH": stateURL.path]
+        )
+
+        XCTAssertEqual(snapshot?.agentType, .claudeCode)
+        XCTAssertEqual(snapshot?.sessionId, "newer-session-id")
+        XCTAssertEqual(snapshot?.workingDirectory, "/tmp/newer")
+        XCTAssertEqual(snapshot?.resumeCommand, "claude --resume newer-session-id")
+        XCTAssertEqual(snapshot?.lastSeenActive, 250)
+    }
+
+    func testCodexHookSessionSnapshotStoreReturnsLatestMatchingSession() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-codex-hook-state-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let workspaceId = UUID()
+        let panelId = UUID()
+        let stateURL = tempDir.appendingPathComponent("codex-hook-sessions.json", isDirectory: false)
+        let json = """
+        {
+          "version": 1,
+          "sessions": {
+            "older": {
+              "cwd": "/tmp/older-codex",
+              "permissionMode": "default",
+              "sessionId": "older-codex-session-id",
+              "source": "startup",
+              "startedAt": 100,
+              "surfaceId": "\(panelId.uuidString.lowercased())",
+              "transcriptPath": "/tmp/older-codex/transcript.jsonl",
+              "updatedAt": 150,
+              "workspaceId": "\(workspaceId.uuidString.lowercased())"
+            },
+            "newer": {
+              "cwd": "/tmp/newer-codex",
+              "permissionMode": "danger-full-access",
+              "sessionId": "newer-codex-session-id",
+              "source": "resume",
+              "startedAt": 100,
+              "surfaceId": "\(panelId.uuidString.uppercased())",
+              "transcriptPath": "/tmp/newer-codex/transcript.jsonl",
+              "updatedAt": 250,
+              "workspaceId": "\(workspaceId.uuidString.uppercased())"
+            },
+            "other": {
+              "cwd": "/tmp/other-codex",
+              "permissionMode": "default",
+              "sessionId": "other-codex-session-id",
+              "source": "startup",
+              "startedAt": 100,
+              "surfaceId": "\(UUID().uuidString)",
+              "transcriptPath": "/tmp/other-codex/transcript.jsonl",
+              "updatedAt": 500,
+              "workspaceId": "\(workspaceId.uuidString)"
+            }
+          }
+        }
+        """
+        try json.write(to: stateURL, atomically: true, encoding: .utf8)
+
+        let snapshot = CodexHookSessionSnapshotStore.sessionSnapshot(
+            workspaceId: workspaceId,
+            panelId: panelId,
+            processEnv: ["CMUX_CODEX_HOOK_STATE_PATH": stateURL.path]
+        )
+
+        XCTAssertEqual(snapshot?.agentType, .codex)
+        XCTAssertEqual(snapshot?.sessionId, "newer-codex-session-id")
+        XCTAssertEqual(snapshot?.workingDirectory, "/tmp/newer-codex")
+        XCTAssertEqual(snapshot?.projectPath, "/tmp/newer-codex")
+        XCTAssertEqual(snapshot?.resumeCommand, "codex resume newer-codex-session-id")
+        XCTAssertEqual(snapshot?.lastSeenActive, 250)
+    }
+
+    func testAISessionSnapshotResumeCommandRespectsPermissiveMode() {
+        let claudeSession = AISessionSnapshot(
+            agentType: .claudeCode,
+            sessionId: "claude-session-id",
+            workingDirectory: "/tmp/claude",
+            projectPath: "/tmp/claude",
+            lastSeenActive: 100
+        )
+        XCTAssertEqual(
+            claudeSession.resumeCommand(permissiveModeEnabled: false),
+            "claude --resume claude-session-id"
+        )
+        XCTAssertEqual(
+            claudeSession.resumeCommand(permissiveModeEnabled: true),
+            "claude --dangerously-skip-permissions --resume claude-session-id"
+        )
+
+        let codexSession = AISessionSnapshot(
+            agentType: .codex,
+            sessionId: "123e4567-e89b-12d3-a456-426614174000",
+            workingDirectory: "/tmp/codex",
+            projectPath: "/tmp/codex",
+            lastSeenActive: 200
+        )
+        XCTAssertEqual(
+            codexSession.resumeCommand(permissiveModeEnabled: false),
+            "codex resume 123e4567-e89b-12d3-a456-426614174000"
+        )
+        XCTAssertEqual(
+            codexSession.resumeCommand(permissiveModeEnabled: true),
+            "codex --dangerously-bypass-approvals-and-sandbox resume 123e4567-e89b-12d3-a456-426614174000"
+        )
+    }
+
     private func makeSnapshot(version: Int) -> AppSessionSnapshot {
         let workspace = SessionWorkspaceSnapshot(
             processTitle: "Terminal",

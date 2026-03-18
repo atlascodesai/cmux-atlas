@@ -6200,6 +6200,7 @@ final class GhosttySurfaceScrollView: NSView {
     private let keyboardCopyModeBadgeView: GhosttyPassthroughVisualEffectView
     private let keyboardCopyModeBadgeIconView: NSImageView
     private let keyboardCopyModeBadgeLabel: NSTextField
+    private var aiSessionBannerHostingView: NSHostingView<AISessionResumeBanner>?
     private var searchOverlayHostingView: NSHostingView<SurfaceSearchOverlay>?
     private var deferredSearchOverlayMutationWorkItem: DispatchWorkItem?
     private var lastSearchOverlayStateID: ObjectIdentifier?
@@ -6954,9 +6955,64 @@ final class GhosttySurfaceScrollView: NSView {
         guard !keyboardCopyModeBadgeContainerView.isHidden else { return }
         if let overlay, overlay.superview === self {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: overlay)
+        } else if let banner = aiSessionBannerHostingView, banner.superview === self {
+            addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: banner)
         } else {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: nil)
         }
+    }
+
+    func setAISessionResumeBanner(
+        session: AISessionSnapshot?,
+        onResume: (() -> Void)?,
+        onDismiss: (() -> Void)?
+    ) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.setAISessionResumeBanner(session: session, onResume: onResume, onDismiss: onDismiss)
+            }
+            return
+        }
+
+        guard let session, let onResume, let onDismiss else {
+            aiSessionBannerHostingView?.removeFromSuperview()
+            aiSessionBannerHostingView = nil
+            return
+        }
+
+        let rootView = AISessionResumeBanner(
+            session: session,
+            onResume: onResume,
+            onDismiss: onDismiss
+        )
+
+        if let banner = aiSessionBannerHostingView {
+            banner.rootView = rootView
+            if banner.superview !== self {
+                mountTopBannerHostingView(banner)
+            }
+            return
+        }
+
+        let banner = NSHostingView(rootView: rootView)
+        aiSessionBannerHostingView = banner
+        mountTopBannerHostingView(banner)
+    }
+
+    private func mountTopBannerHostingView(_ view: NSView) {
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        if let overlay = searchOverlayHostingView, overlay.superview === self {
+            addSubview(view, positioned: .below, relativeTo: overlay)
+        } else {
+            addSubview(view, positioned: .above, relativeTo: nil)
+        }
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+        updateKeyboardCopyModeBadgeZOrder(relativeTo: searchOverlayHostingView)
     }
 
     private func makeSearchOverlayRootView(
@@ -8827,6 +8883,9 @@ struct GhosttyTerminalView: NSViewRepresentable {
     var inactiveOverlayColor: NSColor = .clear
     var inactiveOverlayOpacity: Double = 0
     var searchState: TerminalSurface.SearchState? = nil
+    var restoredAISession: AISessionSnapshot? = nil
+    var onResumeAISession: ((AISessionSnapshot) -> Void)? = nil
+    var onDismissAISession: (() -> Void)? = nil
     var reattachToken: UInt64 = 0
     var onFocus: ((UUID) -> Void)? = nil
     var onTriggerFlash: (() -> Void)? = nil
@@ -9015,6 +9074,15 @@ struct GhosttyTerminalView: NSViewRepresentable {
                 visible: showsInactiveOverlay
             )
             hostedView.setNotificationRing(visible: showsUnreadNotificationRing)
+            hostedView.setAISessionResumeBanner(
+                session: restoredAISession,
+                onResume: restoredAISession.flatMap { session in
+                    onResumeAISession.map { handler in
+                        { handler(session) }
+                    }
+                },
+                onDismiss: onDismissAISession
+            )
             hostedView.setSearchOverlay(searchState: searchState)
             hostedView.syncKeyStateIndicator(text: terminalSurface.currentKeyStateIndicatorText)
         }

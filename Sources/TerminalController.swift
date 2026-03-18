@@ -5581,17 +5581,51 @@ class TerminalController {
         return output
     }
 
+    nonisolated static func resolvedSnapshotTerminalText(
+        vtExportText: String?,
+        liveReadText: String?
+    ) -> String? {
+        struct Candidate {
+            let text: String
+            let sourceRank: Int
+
+            var lineCount: Int {
+                text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+            }
+
+            var byteCount: Int {
+                text.utf8.count
+            }
+        }
+
+        let candidates: [Candidate] = [
+            vtExportText.map { Candidate(text: $0, sourceRank: 1) },
+            liveReadText.map { Candidate(text: $0, sourceRank: 0) },
+        ].compactMap { $0 }
+
+        return candidates.max { lhs, rhs in
+            if lhs.lineCount != rhs.lineCount {
+                return lhs.lineCount < rhs.lineCount
+            }
+            if lhs.byteCount != rhs.byteCount {
+                return lhs.byteCount < rhs.byteCount
+            }
+            return lhs.sourceRank < rhs.sourceRank
+        }?.text
+    }
+
     func readTerminalTextForSnapshot(
         terminalPanel: TerminalPanel,
         includeScrollback: Bool = false,
         lineLimit: Int? = nil
     ) -> String? {
-        if includeScrollback,
-           let vtOutput = readTerminalTextFromVTExportForSnapshot(
-               terminalPanel: terminalPanel,
-               lineLimit: lineLimit
-           ) {
-            return vtOutput
+        let vtOutput: String? = if includeScrollback {
+            readTerminalTextFromVTExportForSnapshot(
+                terminalPanel: terminalPanel,
+                lineLimit: lineLimit
+            )
+        } else {
+            nil
         }
 
         let response = readTerminalTextBase64(
@@ -5599,16 +5633,27 @@ class TerminalController {
             includeScrollback: includeScrollback,
             lineLimit: lineLimit
         )
-        guard response.hasPrefix("OK ") else { return nil }
-        let base64 = String(response.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-        if base64.isEmpty {
-            return ""
+        let decodedLiveRead: String? = {
+            guard response.hasPrefix("OK ") else { return nil }
+            let base64 = String(response.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if base64.isEmpty {
+                return ""
+            }
+            guard let data = Data(base64Encoded: base64),
+                  let decoded = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return decoded
+        }()
+
+        if includeScrollback {
+            return Self.resolvedSnapshotTerminalText(
+                vtExportText: vtOutput,
+                liveReadText: decodedLiveRead
+            )
         }
-        guard let data = Data(base64Encoded: base64),
-              let decoded = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return decoded
+
+        return decodedLiveRead
     }
 
     func readTerminalTextForSessionSnapshot(

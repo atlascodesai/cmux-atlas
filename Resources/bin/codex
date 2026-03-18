@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# cmux codex wrapper - injects launch-scoped hooks for interactive Codex runs
+
+find_real_codex() {
+    if [[ -n "${CMUX_CODEX_REAL_BIN:-}" && -x "${CMUX_CODEX_REAL_BIN}" ]]; then
+        printf '%s' "${CMUX_CODEX_REAL_BIN}"
+        return 0
+    fi
+
+    local dev_build="/Users/timapple/Documents/guest/codex/codex-rs/target/debug/codex"
+    if [[ -x "$dev_build" ]]; then
+        printf '%s' "$dev_build"
+        return 0
+    fi
+
+    local self_dir
+    self_dir="$(cd "$(dirname "$0")" && pwd)"
+    local IFS=:
+    for d in $PATH; do
+        [[ "$d" == "$self_dir" ]] && continue
+        [[ -x "$d/codex" ]] && printf '%s' "$d/codex" && return 0
+    done
+    return 1
+}
+
+cmux_socket_available() {
+    local socket="${CMUX_SOCKET_PATH:-}"
+    [[ -n "$socket" && -S "$socket" ]] || return 1
+
+    local self_dir cmux_bin
+    self_dir="$(cd "$(dirname "$0")" && pwd)"
+    cmux_bin="$self_dir/cmux"
+    [[ -x "$cmux_bin" ]] || cmux_bin="$(command -v cmux || true)"
+    [[ -n "$cmux_bin" ]] || return 1
+
+    CMUXTERM_CLI_RESPONSE_TIMEOUT_SEC=0.75 \
+        "$cmux_bin" --socket "$socket" ping >/dev/null 2>&1
+}
+
+REAL_CODEX="$(find_real_codex)" || { echo "Error: codex not found in PATH" >&2; exit 127; }
+
+IN_CMUX=0
+if [[ -n "${CMUX_SURFACE_ID:-}" ]]; then
+    IN_CMUX=1
+fi
+
+if [[ "$IN_CMUX" == "0" || "${CMUX_CODEX_HOOKS_DISABLED:-0}" == "1" ]] || ! cmux_socket_available; then
+    exec "$REAL_CODEX" "$@"
+fi
+
+case "${1:-}" in
+    exec|review|login|logout|mcp|mcp-server|app-server|app|completion|sandbox|debug|apply|cloud|features|help|-h|--help|-V|--version)
+        exec "$REAL_CODEX" "$@"
+        ;;
+esac
+
+exec \
+    "$REAL_CODEX" \
+    --enable codex_hooks \
+    --hook "session_start=cmux codex-hook session-start" \
+    --hook "stop=cmux codex-hook stop" \
+    "$@"

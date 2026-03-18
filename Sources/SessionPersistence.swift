@@ -221,6 +221,50 @@ struct SessionGitBranchSnapshot: Codable, Sendable {
     var isDirty: Bool
 }
 
+enum AIAgentType: String, Codable, Sendable {
+    case claudeCode = "claude_code"
+    case codex = "codex"
+}
+
+struct AISessionSnapshot: Codable, Sendable, Equatable {
+    var agentType: AIAgentType
+    var sessionId: String?
+    var workingDirectory: String?
+    var projectPath: String?
+    var lastSeenActive: TimeInterval
+
+    var isResumable: Bool {
+        normalizedSessionId != nil
+    }
+
+    var resumeCommand: String? {
+        resumeCommand(permissiveModeEnabled: false)
+    }
+
+    func resumeCommand(permissiveModeEnabled: Bool) -> String? {
+        switch agentType {
+        case .claudeCode:
+            guard let sessionId = normalizedSessionId else { return nil }
+            if permissiveModeEnabled {
+                return "claude --dangerously-skip-permissions --resume \(sessionId)"
+            }
+            return "claude --resume \(sessionId)"
+        case .codex:
+            guard let sessionId = normalizedSessionId else { return nil }
+            if permissiveModeEnabled {
+                return "codex --dangerously-bypass-approvals-and-sandbox resume \(sessionId)"
+            }
+            return "codex resume \(sessionId)"
+        }
+    }
+
+    private var normalizedSessionId: String? {
+        guard let sessionId else { return nil }
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 struct SessionTerminalPanelSnapshot: Codable, Sendable {
     var workingDirectory: String?
     var scrollback: String?
@@ -254,6 +298,157 @@ struct SessionPanelSnapshot: Codable, Sendable {
     var terminal: SessionTerminalPanelSnapshot?
     var browser: SessionBrowserPanelSnapshot?
     var markdown: SessionMarkdownPanelSnapshot?
+    var aiSession: AISessionSnapshot?
+}
+
+private struct ClaudeHookSessionRecord: Codable {
+    var sessionId: String
+    var workspaceId: String
+    var surfaceId: String
+    var cwd: String?
+    var pid: Int?
+    var lastSubtitle: String?
+    var lastBody: String?
+    var startedAt: TimeInterval
+    var updatedAt: TimeInterval
+}
+
+private struct ClaudeHookSessionStoreFile: Codable {
+    var version: Int = 1
+    var sessions: [String: ClaudeHookSessionRecord] = [:]
+}
+
+private struct CodexHookSessionRecord: Codable {
+    var sessionId: String
+    var workspaceId: String
+    var surfaceId: String
+    var cwd: String?
+    var transcriptPath: String?
+    var permissionMode: String?
+    var source: String?
+    var startedAt: TimeInterval
+    var updatedAt: TimeInterval
+}
+
+private struct CodexHookSessionStoreFile: Codable {
+    var version: Int = 1
+    var sessions: [String: CodexHookSessionRecord] = [:]
+}
+
+enum ClaudeHookSessionSnapshotStore {
+    private static let defaultStatePath = "~/.cmuxterm/claude-hook-sessions.json"
+
+    static func sessionSnapshot(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> AISessionSnapshot? {
+        guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
+
+        let workspaceToken = workspaceId.uuidString.lowercased()
+        let panelToken = panelId.uuidString.lowercased()
+
+        guard let record = state.sessions.values
+            .filter({
+                $0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == workspaceToken &&
+                $0.surfaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == panelToken
+            })
+            .max(by: { $0.updatedAt < $1.updatedAt }) else {
+            return nil
+        }
+
+        let workingDirectory = normalizedOptional(record.cwd)
+
+        return AISessionSnapshot(
+            agentType: .claudeCode,
+            sessionId: normalizedOptional(record.sessionId),
+            workingDirectory: workingDirectory,
+            projectPath: workingDirectory,
+            lastSeenActive: record.updatedAt
+        )
+    }
+
+    private static func loadState(
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> ClaudeHookSessionStoreFile? {
+        let path = statePath(processEnv: processEnv)
+        guard fileManager.fileExists(atPath: path) else { return nil }
+        guard let data = fileManager.contents(atPath: path) else { return nil }
+        return try? JSONDecoder().decode(ClaudeHookSessionStoreFile.self, from: data)
+    }
+
+    private static func statePath(processEnv: [String: String]) -> String {
+        if let overridePath = normalizedOptional(processEnv["CMUX_CLAUDE_HOOK_STATE_PATH"]) {
+            return NSString(string: overridePath).expandingTildeInPath
+        }
+        return NSString(string: defaultStatePath).expandingTildeInPath
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+enum CodexHookSessionSnapshotStore {
+    private static let defaultStatePath = "~/.cmuxterm/codex-hook-sessions.json"
+
+    static func sessionSnapshot(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> AISessionSnapshot? {
+        guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
+
+        let workspaceToken = workspaceId.uuidString.lowercased()
+        let panelToken = panelId.uuidString.lowercased()
+
+        guard let record = state.sessions.values
+            .filter({
+                $0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == workspaceToken &&
+                $0.surfaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == panelToken
+            })
+            .max(by: { $0.updatedAt < $1.updatedAt }) else {
+            return nil
+        }
+
+        let workingDirectory = normalizedOptional(record.cwd)
+
+        return AISessionSnapshot(
+            agentType: .codex,
+            sessionId: normalizedOptional(record.sessionId),
+            workingDirectory: workingDirectory,
+            projectPath: workingDirectory,
+            lastSeenActive: record.updatedAt
+        )
+    }
+
+    private static func loadState(
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> CodexHookSessionStoreFile? {
+        let path = statePath(processEnv: processEnv)
+        guard fileManager.fileExists(atPath: path) else { return nil }
+        guard let data = fileManager.contents(atPath: path) else { return nil }
+        return try? JSONDecoder().decode(CodexHookSessionStoreFile.self, from: data)
+    }
+
+    private static func statePath(processEnv: [String: String]) -> String {
+        if let overridePath = normalizedOptional(processEnv["CMUX_CODEX_HOOK_STATE_PATH"]) {
+            return NSString(string: overridePath).expandingTildeInPath
+        }
+        return NSString(string: defaultStatePath).expandingTildeInPath
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 enum SessionSplitOrientation: String, Codable, Sendable {

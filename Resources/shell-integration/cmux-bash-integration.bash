@@ -117,6 +117,24 @@ _cmux_report_shell_activity_state() {
     } >/dev/null 2>&1 & disown
 }
 
+_cmux_install_command_wrapper() {
+    local command_name="$1"
+    [[ -n "${GHOSTTY_BIN_DIR:-}" ]] || return 0
+    [[ -n "$command_name" ]] || return 0
+
+    local gui_dir="${GHOSTTY_BIN_DIR%/}"
+    local wrapper_path="${gui_dir%/MacOS}/Resources/bin/${command_name}"
+    [[ -x "$wrapper_path" ]] || return 0
+
+    unalias "$command_name" >/dev/null 2>&1 || true
+    eval "
+    ${command_name}() {
+        \"$wrapper_path\" \"\$@\"
+    }"
+}
+_cmux_install_command_wrapper claude
+_cmux_install_command_wrapper codex
+
 _cmux_ports_kick() {
     # Lightweight: just tell the app to run a batched scan for this panel.
     # The app coalesces kicks across all panels and runs a single ps+lsof.
