@@ -3828,6 +3828,12 @@ struct SettingsView: View {
     @AppStorage("sidebarShowLog") private var sidebarShowLog = true
     @AppStorage("sidebarShowProgress") private var sidebarShowProgress = true
     @AppStorage("sidebarShowStatusPills") private var sidebarShowMetadata = true
+    @AppStorage(MemoryUsageDisplaySettings.showInSidebarKey)
+    private var memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
+    @AppStorage(MemoryUsageDisplaySettings.showInPaneTabsKey)
+    private var memoryUsageShowInPaneTabs = MemoryUsageDisplaySettings.defaultShowInPaneTabs
+    @AppStorage(MemoryUsageDisplaySettings.showInFooterKey)
+    private var memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
     @AppStorage("sidebarTintHex") private var sidebarTintHex = SidebarTintDefaults.hex
     @AppStorage("sidebarTintHexLight") private var sidebarTintHexLight: String?
     @AppStorage("sidebarTintHexDark") private var sidebarTintHexDark: String?
@@ -4728,6 +4734,39 @@ struct SettingsView: View {
                                 .controlSize(.small)
                         }
                         .disabled(sidebarHideAllDetails)
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInSidebar", defaultValue: "Show RAM in Sidebar"),
+                            subtitle: String(localized: "settings.app.showMemoryInSidebar.subtitle", defaultValue: "Add a compact workspace RAM badge in each sidebar row.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInSidebar)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInPaneTabs", defaultValue: "Show RAM in Pane Tabs"),
+                            subtitle: String(localized: "settings.app.showMemoryInPaneTabs.subtitle", defaultValue: "Append live terminal RAM usage to pane tab titles.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInPaneTabs)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInFooter", defaultValue: "Show RAM in Footer"),
+                            subtitle: String(localized: "settings.app.showMemoryInFooter.subtitle", defaultValue: "Show app RAM in the sidebar footer and open a memory breakdown popover.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInFooter)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
                     }
 
                     SettingsSectionHeader(title: String(localized: "settings.section.workspaceColors", defaultValue: "Workspace Colors"))
@@ -5544,6 +5583,9 @@ struct SettingsView: View {
         sidebarShowLog = true
         sidebarShowProgress = true
         sidebarShowMetadata = true
+        memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
+        memoryUsageShowInPaneTabs = MemoryUsageDisplaySettings.defaultShowInPaneTabs
+        memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
         sidebarTintHex = SidebarTintDefaults.hex
         sidebarTintHexLight = nil
         sidebarTintHexDark = nil

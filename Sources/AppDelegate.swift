@@ -4254,6 +4254,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         mainWindowContexts.values.first(where: { $0.windowId == windowId })?.tabManager
     }
 
+    func allTabManagers() -> [TabManager] {
+        Array(mainWindowContexts.values.map(\.tabManager))
+    }
+
     func windowId(for tabManager: TabManager) -> UUID? {
         mainWindowContexts.values.first(where: { $0.tabManager === tabManager })?.windowId
     }

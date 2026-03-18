@@ -4,6 +4,7 @@ import Foundation
 import Bonsplit
 import CoreVideo
 import Combine
+import Darwin
 
 // MARK: - Tab Type Alias for Backwards Compatibility
 // The old Tab class is replaced by Workspace
@@ -191,6 +192,358 @@ enum SidebarActiveTabIndicatorSettings {
 
     static func current(defaults: UserDefaults = .standard) -> SidebarActiveTabIndicatorStyle {
         resolvedStyle(rawValue: defaults.string(forKey: styleKey))
+    }
+}
+
+enum MemoryUsageDisplaySettings {
+    static let showInSidebarKey = "memoryUsageShowInSidebar"
+    static let showInPaneTabsKey = "memoryUsageShowInPaneTabs"
+    static let showInFooterKey = "memoryUsageShowInFooter"
+    static let defaultShowInSidebar = true
+    static let defaultShowInPaneTabs = true
+    static let defaultShowInFooter = true
+
+    static func showsInSidebar(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInSidebarKey) == nil {
+            return defaultShowInSidebar
+        }
+        return defaults.bool(forKey: showInSidebarKey)
+    }
+
+    static func showsInPaneTabs(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInPaneTabsKey) == nil {
+            return defaultShowInPaneTabs
+        }
+        return defaults.bool(forKey: showInPaneTabsKey)
+    }
+
+    static func showsInFooter(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInFooterKey) == nil {
+            return defaultShowInFooter
+        }
+        return defaults.bool(forKey: showInFooterKey)
+    }
+}
+
+struct MemoryPanelConsumer: Identifiable, Equatable {
+    let panelId: UUID
+    let workspaceId: UUID
+    let workspaceTitle: String
+    let panelTitle: String
+    let bytes: Int64
+
+    var id: UUID { panelId }
+}
+
+struct MemoryProcessSummary: Identifiable, Equatable {
+    let pid: Int32
+    let name: String
+    let bytes: Int64
+
+    var id: Int32 { pid }
+}
+
+struct MemoryUsageSnapshot: Equatable {
+    let appResidentBytes: Int64
+    let trackedTerminalResidentBytes: Int64
+    let workspaceResidentBytes: [UUID: Int64]
+    let panelResidentBytes: [UUID: Int64]
+    let topPanelConsumers: [MemoryPanelConsumer]
+    let topSystemProcesses: [MemoryProcessSummary]
+
+    static let empty = Self(
+        appResidentBytes: 0,
+        trackedTerminalResidentBytes: 0,
+        workspaceResidentBytes: [:],
+        panelResidentBytes: [:],
+        topPanelConsumers: [],
+        topSystemProcesses: []
+    )
+
+    func bytes(forWorkspace workspaceId: UUID) -> Int64 {
+        workspaceResidentBytes[workspaceId] ?? 0
+    }
+
+    func bytes(forPanel panelId: UUID) -> Int64 {
+        panelResidentBytes[panelId] ?? 0
+    }
+}
+
+enum MemoryUsageFormatter {
+    static func compactString(for bytes: Int64) -> String {
+        guard bytes > 0 else { return "0B" }
+        let kilo = Double(1024)
+        let mega = kilo * 1024
+        let giga = mega * 1024
+
+        let value = Double(bytes)
+        if value >= giga {
+            return abbreviated(value / giga, unit: "G", threshold: 10)
+        }
+        if value >= mega {
+            return abbreviated(value / mega, unit: "M", threshold: 100)
+        }
+        if value >= kilo {
+            return abbreviated(value / kilo, unit: "K", threshold: 100)
+        }
+        return "\(bytes)B"
+    }
+
+    static func inlineBadgeString(for bytes: Int64) -> String? {
+        guard bytes > 0 else { return nil }
+        return compactString(for: bytes)
+    }
+
+    static func detailedString(for bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        formatter.countStyle = .memory
+        formatter.includesUnit = true
+        formatter.includesCount = true
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    static func footerLabel(for bytes: Int64) -> String {
+        detailedString(for: bytes)
+    }
+
+    private static func abbreviated(_ value: Double, unit: String, threshold: Double) -> String {
+        if value >= threshold {
+            return "\(Int(value.rounded()))\(unit)"
+        }
+        return String(format: "%.1f%@", value, unit)
+    }
+}
+
+final class MemoryUsageStore: ObservableObject {
+    static let shared = MemoryUsageStore()
+
+    @Published private(set) var snapshot: MemoryUsageSnapshot = .empty
+
+    private struct TrackedPanel {
+        let panelId: UUID
+        let workspaceId: UUID
+        let workspaceTitle: String
+        let panelTitle: String
+        let ttyName: String
+    }
+
+    private struct PollContext {
+        let appPID: Int32
+        let trackedPanels: [TrackedPanel]
+    }
+
+    private struct PSRow {
+        let pid: Int32
+        let tty: String?
+        let residentBytes: Int64
+        let command: String
+    }
+
+    private let pollQueue = DispatchQueue(
+        label: "com.cmuxterm.memoryUsage",
+        qos: .utility
+    )
+    private var timer: DispatchSourceTimer?
+
+    private init() {
+        startPolling()
+    }
+
+    deinit {
+        timer?.setEventHandler {}
+        timer?.cancel()
+    }
+
+    private func startPolling() {
+        let timer = DispatchSource.makeTimerSource(queue: pollQueue)
+        timer.schedule(deadline: .now() + 0.5, repeating: .seconds(3), leeway: .milliseconds(400))
+        timer.setEventHandler { [weak self] in
+            self?.pollOnce()
+        }
+        self.timer = timer
+        timer.resume()
+        pollQueue.async { [weak self] in
+            self?.pollOnce()
+        }
+    }
+
+    private func pollOnce() {
+        let context = capturePollContext()
+        let rows = loadProcessRows()
+        let nextSnapshot = buildSnapshot(context: context, rows: rows)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.snapshot != nextSnapshot else { return }
+            self.snapshot = nextSnapshot
+        }
+    }
+
+    private func capturePollContext() -> PollContext {
+        DispatchQueue.main.sync {
+            let managers = AppDelegate.shared?.allTabManagers() ?? []
+            var trackedPanels: [TrackedPanel] = []
+
+            for tabManager in managers {
+                for workspace in tabManager.tabs {
+                    let workspaceTitle = workspace.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? String(localized: "memory.workspace.fallbackTitle", defaultValue: "Workspace")
+                        : workspace.title
+                    for (panelId, ttyName) in workspace.surfaceTTYNames {
+                        guard workspace.terminalPanel(for: panelId) != nil else { continue }
+                        let trimmedTTY = ttyName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmedTTY.isEmpty else { continue }
+                        let rawPanelTitle = workspace.panelTitle(panelId: panelId)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let panelTitle = rawPanelTitle?.isEmpty == false
+                            ? rawPanelTitle!
+                            : String(localized: "memory.panel.fallbackTitle", defaultValue: "Terminal")
+                        trackedPanels.append(
+                            TrackedPanel(
+                                panelId: panelId,
+                                workspaceId: workspace.id,
+                                workspaceTitle: workspaceTitle,
+                                panelTitle: panelTitle,
+                                ttyName: trimmedTTY
+                            )
+                        )
+                    }
+                }
+            }
+
+            return PollContext(appPID: getpid(), trackedPanels: trackedPanels)
+        }
+    }
+
+    private func loadProcessRows() -> [PSRow] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,tty=,rss=,comm="]
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let output = String(data: data, encoding: .utf8) else {
+            return []
+        }
+
+        return output
+            .split(whereSeparator: \.isNewline)
+            .compactMap { parsePSRow(String($0)) }
+    }
+
+    private func parsePSRow(_ line: String) -> PSRow? {
+        let components = line.split(
+            maxSplits: 3,
+            whereSeparator: { $0.isWhitespace }
+        )
+        guard components.count >= 4,
+              let pid = Int32(components[0]),
+              let residentKB = Int64(components[2]) else {
+            return nil
+        }
+
+        let tty = normalizedTTY(String(components[1]))
+        let command = String(components[3]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return PSRow(
+            pid: pid,
+            tty: tty,
+            residentBytes: residentKB * 1024,
+            command: command
+        )
+    }
+
+    private func buildSnapshot(context: PollContext, rows: [PSRow]) -> MemoryUsageSnapshot {
+        let trackedByTTY = context.trackedPanels.reduce(into: [String: TrackedPanel]()) { partialResult, panel in
+            guard let normalizedTTY = normalizedTTY(panel.ttyName) else { return }
+            partialResult[normalizedTTY] = panel
+        }
+
+        var appResidentBytes: Int64 = 0
+        var panelBytes: [UUID: Int64] = [:]
+
+        for row in rows {
+            if row.pid == context.appPID {
+                appResidentBytes = row.residentBytes
+            }
+
+            guard let tty = row.tty,
+                  let trackedPanel = trackedByTTY[tty] else {
+                continue
+            }
+            panelBytes[trackedPanel.panelId, default: 0] += row.residentBytes
+        }
+
+        var workspaceBytes: [UUID: Int64] = [:]
+        let topPanelConsumers = context.trackedPanels.compactMap { trackedPanel -> MemoryPanelConsumer? in
+            let bytes = panelBytes[trackedPanel.panelId] ?? 0
+            guard bytes > 0 else { return nil }
+            workspaceBytes[trackedPanel.workspaceId, default: 0] += bytes
+            return MemoryPanelConsumer(
+                panelId: trackedPanel.panelId,
+                workspaceId: trackedPanel.workspaceId,
+                workspaceTitle: trackedPanel.workspaceTitle,
+                panelTitle: trackedPanel.panelTitle,
+                bytes: bytes
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.bytes != rhs.bytes { return lhs.bytes > rhs.bytes }
+            return lhs.panelTitle.localizedCaseInsensitiveCompare(rhs.panelTitle) == .orderedAscending
+        }
+        .prefix(5)
+        .map { $0 }
+
+        let topSystemProcesses = rows
+            .filter { $0.pid != context.appPID && $0.residentBytes > 0 }
+            .sorted { lhs, rhs in
+                if lhs.residentBytes != rhs.residentBytes { return lhs.residentBytes > rhs.residentBytes }
+                return lhs.command.localizedCaseInsensitiveCompare(rhs.command) == .orderedAscending
+            }
+            .prefix(5)
+            .map {
+                MemoryProcessSummary(
+                    pid: $0.pid,
+                    name: displayProcessName(command: $0.command),
+                    bytes: $0.residentBytes
+                )
+            }
+
+        return MemoryUsageSnapshot(
+            appResidentBytes: appResidentBytes,
+            trackedTerminalResidentBytes: panelBytes.values.reduce(0, +),
+            workspaceResidentBytes: workspaceBytes,
+            panelResidentBytes: panelBytes,
+            topPanelConsumers: topPanelConsumers,
+            topSystemProcesses: topSystemProcesses
+        )
+    }
+
+    private func normalizedTTY(_ rawTTY: String) -> String? {
+        let trimmed = rawTTY.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "??", trimmed != "?" else { return nil }
+        if trimmed.hasPrefix("/dev/") {
+            return String(trimmed.dropFirst("/dev/".count))
+        }
+        return trimmed
+    }
+
+    private func displayProcessName(command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return String(localized: "memory.process.unknown", defaultValue: "Unknown Process")
+        }
+        return URL(fileURLWithPath: trimmed).lastPathComponent
     }
 }
 

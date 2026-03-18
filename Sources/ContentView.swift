@@ -8120,6 +8120,7 @@ struct VerticalTabsSidebar: View {
     let onSendFeedback: () -> Void
     @EnvironmentObject var tabManager: TabManager
     @EnvironmentObject var notificationStore: TerminalNotificationStore
+    @ObservedObject private var memoryUsageStore = MemoryUsageStore.shared
     @Binding var selection: SidebarSelection
     @Binding var selectedTabIds: Set<UUID>
     @Binding var lastSidebarSelectionIndex: Int?
@@ -8134,6 +8135,8 @@ struct VerticalTabsSidebar: View {
     private var sidebarShowNotificationMessage = SidebarWorkspaceDetailSettings.defaultShowNotificationMessage
     @AppStorage(WorkspacePresentationModeSettings.modeKey)
     private var workspacePresentationMode = WorkspacePresentationModeSettings.defaultMode.rawValue
+    @AppStorage(MemoryUsageDisplaySettings.showInSidebarKey)
+    private var memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
 
     /// Space at top of sidebar for traffic light buttons
     private let trafficLightPadding: CGFloat = 28
@@ -8193,6 +8196,12 @@ struct VerticalTabsSidebar: View {
                                         let text = notification.body.isEmpty ? notification.title : notification.body
                                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                                         return trimmed.isEmpty ? nil : trimmed
+                                    }(),
+                                    workspaceMemorySummary: {
+                                        guard memoryUsageShowInSidebar else { return nil }
+                                        return MemoryUsageFormatter.inlineBadgeString(
+                                            for: memoryUsageStore.snapshot.bytes(forWorkspace: tab.id)
+                                        )
                                     }(),
                                     rowSpacing: tabRowSpacing,
                                     setSelectionToTabs: { selection = .tabs },
@@ -9204,13 +9213,169 @@ private struct SidebarFooter: View {
 private struct SidebarFooterButtons: View {
     @ObservedObject var updateViewModel: UpdateViewModel
     let onSendFeedback: () -> Void
+    @AppStorage(MemoryUsageDisplaySettings.showInFooterKey)
+    private var memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
 
     var body: some View {
         HStack(spacing: 4) {
+            if memoryUsageShowInFooter {
+                SidebarMemoryUsageButton()
+            }
             SidebarHelpMenuButton(onSendFeedback: onSendFeedback)
             UpdatePill(model: updateViewModel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SidebarMemoryUsageButton: View {
+    @ObservedObject private var memoryUsageStore = MemoryUsageStore.shared
+    @State private var isPopoverPresented = false
+
+    private var appName: String {
+        if let displayName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
+           !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayName
+        }
+        if let bundleName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String,
+           !bundleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bundleName
+        }
+        return String(localized: "memory.footer.appFallback", defaultValue: "cmux")
+    }
+
+    private var footerValueText: String {
+        let bytes = memoryUsageStore.snapshot.appResidentBytes
+        guard bytes > 0 else {
+            return String(localized: "memory.footer.loading", defaultValue: "RAM --")
+        }
+        return String(localized: "memory.footer.prefix", defaultValue: "RAM") + " " +
+            MemoryUsageFormatter.footerLabel(for: bytes)
+    }
+
+    var body: some View {
+        Button {
+            isPopoverPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "memorychip")
+                    .font(.system(size: 10.5, weight: .medium))
+                Text(footerValueText)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color(nsColor: .secondaryLabelColor))
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+        }
+        .buttonStyle(SidebarFooterIconButtonStyle())
+        .background(ArrowlessPopoverAnchor(
+            isPresented: $isPopoverPresented,
+            preferredEdge: .maxY,
+            detachedGap: 4
+        ) {
+            popover
+        })
+        .safeHelp(String(localized: "memory.footer.tooltip", defaultValue: "Inspect app and terminal memory usage"))
+        .accessibilityLabel(String(localized: "memory.footer.accessibilityLabel", defaultValue: "Memory Usage"))
+        .accessibilityIdentifier("SidebarMemoryUsageButton")
+    }
+
+    private var popover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(localized: "memory.popover.title", defaultValue: "Memory Usage"))
+                .font(.system(size: 13, weight: .semibold))
+
+            SidebarMemoryUsagePopoverRow(
+                title: appName,
+                subtitle: String(localized: "memory.popover.thisApp", defaultValue: "This app"),
+                value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.appResidentBytes)
+            )
+
+            SidebarMemoryUsagePopoverSection(
+                title: String(localized: "memory.popover.tabsSection", defaultValue: "Terminal Tabs")
+            ) {
+                SidebarMemoryUsagePopoverRow(
+                    title: String(localized: "memory.popover.trackedTabsTotal", defaultValue: "Tracked tab total"),
+                    subtitle: String(localized: "memory.popover.trackedTabsSubtitle", defaultValue: "All live terminal tabs in this window set"),
+                    value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.trackedTerminalResidentBytes)
+                )
+
+                if memoryUsageStore.snapshot.topPanelConsumers.isEmpty {
+                    Text(String(localized: "memory.popover.noTrackedTabs", defaultValue: "No live terminal tabs are reporting RAM yet."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(memoryUsageStore.snapshot.topPanelConsumers) { consumer in
+                        SidebarMemoryUsagePopoverRow(
+                            title: consumer.panelTitle,
+                            subtitle: consumer.workspaceTitle,
+                            value: MemoryUsageFormatter.detailedString(for: consumer.bytes)
+                        )
+                    }
+                }
+            }
+
+            SidebarMemoryUsagePopoverSection(
+                title: String(localized: "memory.popover.systemSection", defaultValue: "Top Processes")
+            ) {
+                ForEach(memoryUsageStore.snapshot.topSystemProcesses) { process in
+                    SidebarMemoryUsagePopoverRow(
+                        title: process.name,
+                        subtitle: String(localized: "memory.popover.pidPrefix", defaultValue: "PID") + " \(process.pid)",
+                        value: MemoryUsageFormatter.detailedString(for: process.bytes)
+                    )
+                }
+            }
+        }
+        .padding(10)
+        .frame(minWidth: 320, alignment: .leading)
+    }
+}
+
+private struct SidebarMemoryUsagePopoverSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+}
+
+private struct SidebarMemoryUsagePopoverRow: View {
+    let title: String
+    let subtitle: String?
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
     }
 }
 
@@ -10568,6 +10733,7 @@ private struct TabItemView: View, Equatable {
         lhs.accessibilityWorkspaceCount == rhs.accessibilityWorkspaceCount &&
         lhs.unreadCount == rhs.unreadCount &&
         lhs.latestNotificationText == rhs.latestNotificationText &&
+        lhs.workspaceMemorySummary == rhs.workspaceMemorySummary &&
         lhs.rowSpacing == rhs.rowSpacing &&
         lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
         lhs.remoteContextMenuWorkspaceIds == rhs.remoteContextMenuWorkspaceIds &&
@@ -10589,6 +10755,7 @@ private struct TabItemView: View, Equatable {
     let accessibilityWorkspaceCount: Int
     let unreadCount: Int
     let latestNotificationText: String?
+    let workspaceMemorySummary: String?
     let rowSpacing: CGFloat
     let setSelectionToTabs: () -> Void
     @Binding var selectedTabIds: Set<UUID>
@@ -10874,6 +11041,23 @@ private struct TabItemView: View, Equatable {
                     .foregroundColor(activePrimaryTextColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
+
+                if let workspaceMemorySummary {
+                    Text(workspaceMemorySummary)
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(activeSecondaryColor(0.82))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(
+                                    usesInvertedActiveForeground
+                                        ? Color.white.opacity(0.14)
+                                        : Color.primary.opacity(0.06)
+                                )
+                        )
+                }
 
                 Spacer()
 

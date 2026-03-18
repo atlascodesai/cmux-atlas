@@ -4869,6 +4869,9 @@ final class Workspace: Identifiable, ObservableObject {
 
     /// Subscriptions for panel updates (e.g., browser title changes)
     private var panelSubscriptions: [UUID: AnyCancellable] = [:]
+    private var memoryUsageSnapshotCancellable: AnyCancellable?
+    private var memoryUsageDefaultsCancellable: AnyCancellable?
+    private var renderedPanelChromeTitles: [UUID: String] = [:]
 
     /// When true, suppresses auto-creation in didSplitPane (programmatic splits handle their own panels)
     private var isProgrammaticSplit = false
@@ -5176,7 +5179,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Create initial tab in bonsplit and store the mapping
         var initialTabId: TabID?
         if let tabId = bonsplitController.createTab(
-            title: title,
+            title: resolvedPanelChromeTitle(panelId: terminalPanel.id, fallback: title),
             icon: "terminal.fill",
             kind: SurfaceKind.terminal,
             isDirty: false,
@@ -5215,9 +5218,13 @@ final class Workspace: Identifiable, ObservableObject {
             }
             bonsplitController.selectTab(initialTabId)
         }
+
+        observeMemoryUsage()
     }
 
     deinit {
+        memoryUsageSnapshotCancellable?.cancel()
+        memoryUsageDefaultsCancellable?.cancel()
         activeRemoteSessionControllerID = nil
         remoteSessionController?.stop()
     }
@@ -5333,6 +5340,35 @@ final class Workspace: Identifiable, ObservableObject {
         surfaceIdToPanelId.first { $0.value == panelId }?.key
     }
 
+    private func observeMemoryUsage() {
+        memoryUsageSnapshotCancellable = MemoryUsageStore.shared.$snapshot
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshPanelChromeTitlesIfNeeded()
+            }
+        memoryUsageDefaultsCancellable = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshPanelChromeTitlesIfNeeded()
+            }
+    }
+
+    private func refreshPanelChromeTitlesIfNeeded() {
+        var nextRenderedTitles: [UUID: String] = [:]
+        for (panelId, panel) in panels {
+            guard let tabId = surfaceIdFromPanelId(panelId) else { continue }
+            let baseTitle = panelTitles[panelId] ?? panel.displayTitle
+            let renderedTitle = resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle)
+            nextRenderedTitles[panelId] = renderedTitle
+            guard renderedPanelChromeTitles[panelId] != renderedTitle else { continue }
+            bonsplitController.updateTab(
+                tabId,
+                title: renderedTitle,
+                hasCustomTitle: panelCustomTitles[panelId] != nil
+            )
+        }
+        renderedPanelChromeTitles = nextRenderedTitles
+    }
 
     private func installBrowserPanelSubscription(_ browserPanel: BrowserPanel) {
         let subscription = Publishers.CombineLatest3(
@@ -5351,7 +5387,7 @@ final class Workspace: Identifiable, ObservableObject {
             if self.panelTitles[browserPanel.id] != nextTitle {
                 self.panelTitles[browserPanel.id] = nextTitle
             }
-            let resolvedTitle = self.resolvedPanelTitle(panelId: browserPanel.id, fallback: nextTitle)
+            let resolvedTitle = self.resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: nextTitle)
             let titleUpdate: String? = existing.title == resolvedTitle ? nil : resolvedTitle
             let faviconUpdate: Data?? = existing.iconImageData == favicon ? nil : .some(favicon)
             let loadingUpdate: Bool? = existing.isLoading == isLoading ? nil : isLoading
@@ -5411,7 +5447,7 @@ final class Workspace: Identifiable, ObservableObject {
                 if self.panelTitles[markdownPanel.id] != newTitle {
                     self.panelTitles[markdownPanel.id] = newTitle
                 }
-                let resolvedTitle = self.resolvedPanelTitle(panelId: markdownPanel.id, fallback: newTitle)
+                let resolvedTitle = self.resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: newTitle)
                 guard existing.title != resolvedTitle else { return }
                 self.bonsplitController.updateTab(
                     tabId,
@@ -5478,6 +5514,20 @@ final class Workspace: Identifiable, ObservableObject {
             return custom
         }
         return fallbackTitle
+    }
+
+    private func resolvedPanelChromeTitle(panelId: UUID, fallback: String) -> String {
+        let baseTitle = resolvedPanelTitle(panelId: panelId, fallback: fallback)
+        guard MemoryUsageDisplaySettings.showsInPaneTabs(),
+              panels[panelId]?.panelType == .terminal else {
+            return baseTitle
+        }
+        guard let suffix = MemoryUsageFormatter.inlineBadgeString(
+            for: MemoryUsageStore.shared.snapshot.bytes(forPanel: panelId)
+        ) else {
+            return baseTitle
+        }
+        return "\(baseTitle) · \(suffix)"
     }
 
     private func syncPinnedStateForTab(_ tabId: TabID, panelId: UUID) {
@@ -5562,7 +5612,7 @@ final class Workspace: Identifiable, ObservableObject {
         let baseTitle = panelTitles[panelId] ?? panel.displayTitle
         bonsplitController.updateTab(
             tabId,
-            title: resolvedPanelTitle(panelId: panelId, fallback: baseTitle),
+            title: resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle),
             hasCustomTitle: panelCustomTitles[panelId] != nil
         )
     }
@@ -5909,7 +5959,7 @@ final class Workspace: Identifiable, ObservableObject {
            let tabId = surfaceIdFromPanelId(panelId),
            let panel = panels[panelId] {
             let baseTitle = panelTitles[panelId] ?? panel.displayTitle
-            let resolvedTitle = resolvedPanelTitle(panelId: panelId, fallback: baseTitle)
+            let resolvedTitle = resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle)
             bonsplitController.updateTab(
                 tabId,
                 title: resolvedTitle,
@@ -6617,7 +6667,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Pre-generate the bonsplit tab ID so we can install the panel mapping before bonsplit
         // mutates layout state (avoids transient "Empty Panel" flashes during split).
         let newTab = Bonsplit.Tab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -6705,7 +6755,7 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Create tab in bonsplit
         guard let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -6790,7 +6840,7 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Pre-generate the bonsplit tab ID so the mapping exists before the split lands.
         let newTab = Bonsplit.Tab(
-            title: browserPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: browserPanel.displayTitle),
             icon: browserPanel.displayIcon,
             kind: SurfaceKind.browser,
             isDirty: browserPanel.isDirty,
@@ -6868,7 +6918,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[browserPanel.id] = browserPanel.displayTitle
 
         guard let newTabId = bonsplitController.createTab(
-            title: browserPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: browserPanel.displayTitle),
             icon: browserPanel.displayIcon,
             kind: SurfaceKind.browser,
             isDirty: browserPanel.isDirty,
@@ -6934,7 +6984,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[markdownPanel.id] = markdownPanel.displayTitle
 
         let newTab = Bonsplit.Tab(
-            title: markdownPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: markdownPanel.displayTitle),
             icon: markdownPanel.displayIcon,
             kind: SurfaceKind.markdown,
             isDirty: markdownPanel.isDirty,
@@ -6987,7 +7037,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[markdownPanel.id] = markdownPanel.displayTitle
 
         guard let newTabId = bonsplitController.createTab(
-            title: markdownPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: markdownPanel.displayTitle),
             icon: markdownPanel.displayIcon,
             kind: SurfaceKind.markdown,
             isDirty: markdownPanel.isDirty,
@@ -7522,7 +7572,7 @@ final class Workspace: Identifiable, ObservableObject {
         }
 
         guard let newTabId = bonsplitController.createTab(
-            title: detached.title,
+            title: resolvedPanelChromeTitle(panelId: detached.panelId, fallback: detached.title),
             hasCustomTitle: detached.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
             icon: detached.icon,
             iconImageData: detached.iconImageData,
@@ -8002,7 +8052,7 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Create tab in bonsplit
         if let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -9746,7 +9796,7 @@ extension Workspace: BonsplitDelegate {
         seedTerminalInheritanceFontPoints(panelId: newPanel.id, configTemplate: inheritedConfig)
 
         guard let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
