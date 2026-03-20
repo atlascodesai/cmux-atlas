@@ -95,7 +95,7 @@ if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
     zig version
   fi
   cd "$REPO_ROOT/ghostty"
-  zig build -Demit-xcframework=true -Dxcframework-target=universal -Doptimize=ReleaseFast
+  zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast
   cd "$REPO_ROOT"
   test -d "$OUTPUT_DIR"
   echo "Built $OUTPUT_DIR from source"
