@@ -78,6 +78,10 @@ if [ "$BUILD_FROM_SOURCE" -eq 0 ]; then
 fi
 
 if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
+  # Ensure homebrew tools (msgfmt/gettext) are in PATH for zig subprocesses
+  if [ -d /opt/homebrew/bin ]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+  fi
   echo "Building GhosttyKit.xcframework from source..."
   if ! command -v zig >/dev/null 2>&1; then
     echo "zig not found — installing zig 0.15.2..."
