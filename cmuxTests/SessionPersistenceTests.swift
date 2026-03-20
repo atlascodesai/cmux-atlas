@@ -27,6 +27,7 @@ final class SessionPersistenceTests: XCTestCase {
             )
         )
         workspace.setCustomTitle("Docs")
+        workspace.setOrganizationName("Atlas")
         workspace.setPanelCustomTitle(panelId: panel.id, title: "Readme")
 
         let snapshot = workspace.sessionSnapshot(includeScrollback: false)
@@ -38,6 +39,7 @@ final class SessionPersistenceTests: XCTestCase {
         let restoredPanel = try XCTUnwrap(restored.markdownPanel(for: restoredPanelId))
         XCTAssertEqual(restoredPanel.filePath, markdownURL.path)
         XCTAssertEqual(restored.customTitle, "Docs")
+        XCTAssertEqual(restored.organizationName, "Atlas")
         XCTAssertEqual(restored.panelTitle(panelId: restoredPanelId), "Readme")
     }
 
@@ -83,6 +85,25 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(
             loaded?.windows.first?.tabManager.workspaces.first?.customColor,
             "#C0392B"
+        )
+    }
+
+    func testSaveAndLoadRoundTripPreservesOrganizationName() {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-session-tests-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshotURL = tempDir.appendingPathComponent("session.json", isDirectory: false)
+        var snapshot = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        snapshot.windows[0].tabManager.workspaces[0].organizationName = "Atlas"
+
+        XCTAssertTrue(SessionPersistenceStore.save(snapshot, fileURL: snapshotURL))
+
+        let loaded = SessionPersistenceStore.load(fileURL: snapshotURL)
+        XCTAssertEqual(
+            loaded?.windows.first?.tabManager.workspaces.first?.organizationName,
+            "Atlas"
         )
     }
 
@@ -996,10 +1017,71 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(decoded.restoredTerminalAction?.projectPath, "/tmp/project")
     }
 
+    func testWorkspaceOrganizationExportDataRoundTripsThroughEnvelope() throws {
+        let snapshot = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+            .windows[0]
+            .tabManager
+            .workspaces[0]
+        let organization = WorkspaceOrganization(name: "Atlas", snapshot: snapshot)
+
+        let data = try WorkspaceOrganizationStore.exportData(for: organization)
+        let imported = try WorkspaceOrganizationStore.importOrganization(from: data)
+
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["version"] as? Int, WorkspaceExportEnvelope.currentVersion)
+        XCTAssertEqual(imported.name, "Atlas")
+        XCTAssertEqual(imported.snapshot.organizationName, snapshot.organizationName)
+        XCTAssertEqual(imported.snapshot.customTitle, snapshot.customTitle)
+    }
+
+    func testWorkspaceOrganizationImportRejectsUnsupportedEnvelopeVersion() throws {
+        let snapshot = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+            .windows[0]
+            .tabManager
+            .workspaces[0]
+        let organization = WorkspaceOrganization(name: "Atlas", snapshot: snapshot)
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: WorkspaceOrganizationStore.exportData(for: organization)
+            ) as? [String: Any]
+        )
+        object["version"] = WorkspaceExportEnvelope.currentVersion + 1
+        let mutated = try JSONSerialization.data(withJSONObject: object, options: [])
+
+        XCTAssertThrowsError(try WorkspaceOrganizationStore.importOrganization(from: mutated)) { error in
+            XCTAssertEqual(error as? WorkspaceImportError, .unsupportedFormat)
+        }
+    }
+
+    func testWorkspaceOrganizationImportFromURLRoundTrips() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-org-import-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshot = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+            .windows[0]
+            .tabManager
+            .workspaces[0]
+        let organization = WorkspaceOrganization(name: "Atlas", snapshot: snapshot)
+        let url = tempDir.appendingPathComponent("atlas.cmuxworkspace")
+
+        try WorkspaceOrganizationStore.writeExportData(
+            WorkspaceOrganizationStore.exportData(for: organization),
+            to: url
+        )
+
+        let imported = try WorkspaceOrganizationStore.importOrganization(from: url)
+        XCTAssertEqual(imported.name, organization.name)
+        XCTAssertEqual(imported.snapshot.organizationName, organization.snapshot.organizationName)
+        XCTAssertEqual(imported.snapshot.currentDirectory, organization.snapshot.currentDirectory)
+    }
+
     private func makeSnapshot(version: Int) -> AppSessionSnapshot {
         let workspace = SessionWorkspaceSnapshot(
             processTitle: "Terminal",
             customTitle: "Restored",
+            organizationName: "Atlas",
             customColor: nil,
             isPinned: true,
             currentDirectory: "/tmp",

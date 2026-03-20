@@ -363,12 +363,14 @@ enum TerminalOpenURLTarget: Equatable {
     case external(URL)
     /// A local markdown file to render in a native markdown panel.
     case markdownFile(String)
+    /// A local file (relative path) to open in the browser via file:// URL.
+    case localFile(String)
 
     var url: URL {
         switch self {
         case let .embeddedBrowser(url), let .external(url):
             return url
-        case let .markdownFile(path):
+        case let .markdownFile(path), let .localFile(path):
             return URL(fileURLWithPath: path)
         }
     }
@@ -503,6 +505,21 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         dlog("link.resolve result=external(scheme=\(scheme)) url=\(parsed)")
         #endif
         return .external(parsed)
+    }
+
+    // Detect relative file paths (e.g. "output.html", "./report.pdf", "dir/file.txt")
+    // before falling through to web URL resolution which would prepend https://.
+    if !trimmed.contains("://"),
+       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil,
+       (trimmed.contains("/") || trimmed.contains(".")) {
+        // Check if it looks like a file extension (last component has a dot)
+        let lastComponent = NSString(string: trimmed).lastPathComponent
+        if lastComponent.contains(".") {
+            #if DEBUG
+            dlog("link.resolve result=localFile(relative) path=\(trimmed)")
+            #endif
+            return .localFile(trimmed)
+        }
     }
 
     if let webURL = resolveBrowserNavigableURL(trimmed) {
@@ -1928,6 +1945,21 @@ class GhosttyApp {
         return Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
     }
 
+    private func startSearchNeedle(_ action: ghostty_action_start_search_s) -> String? {
+        // Some Ghostty action payloads have arrived with a zero needle pointer even
+        // though the imported optional path still crashes inside `String(cString:)`.
+        // Read the raw pointer bits defensively and treat null/small addresses as
+        // "no initial search text" instead of taking the app down.
+        let rawPointerBits = withUnsafeBytes(of: action) { rawBuffer in
+            rawBuffer.load(as: UInt.self)
+        }
+        guard rawPointerBits > 0x1000,
+              let pointer = UnsafePointer<CChar>(bitPattern: rawPointerBits) else {
+            return nil
+        }
+        return String(validatingUTF8: pointer)
+    }
+
     private func handleAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
         if target.tag != GHOSTTY_TARGET_SURFACE {
             if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG ||
@@ -2157,7 +2189,7 @@ class GhosttyApp {
             return true
         case GHOSTTY_ACTION_START_SEARCH:
             guard let terminalSurface = surfaceView.terminalSurface else { return true }
-            let needle = action.action.start_search.needle.flatMap { String(cString: $0) }
+            let needle = startSearchNeedle(action.action.start_search)
             DispatchQueue.main.async {
                 if let searchState = terminalSurface.searchState {
                     if let needle, !needle.isEmpty {
@@ -2382,6 +2414,49 @@ class GhosttyApp {
                         filePath: standardized
                     )
                     return true
+                }
+            case let .localFile(relativePath):
+                // Resolve relative file paths against the workspace directory and
+                // open as file:// URL in the embedded browser.
+                let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
+                let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
+                #if DEBUG
+                dlog("link.openURL target=localFile path=\(relativePath)")
+                #endif
+                return performOnMain {
+                    guard let sourceWorkspaceId, let sourcePanelId,
+                          let app = AppDelegate.shared,
+                          let resolved = app.workspaceContainingPanel(
+                            panelId: sourcePanelId,
+                            preferredWorkspaceId: sourceWorkspaceId
+                          ) else {
+                        return false
+                    }
+                    let workspace = resolved.workspace
+                    let absolutePath: String
+                    if NSString(string: relativePath).isAbsolutePath {
+                        absolutePath = relativePath
+                    } else {
+                        let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
+                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                    }
+                    let standardized = NSString(string: absolutePath).standardizingPath
+                    guard FileManager.default.fileExists(atPath: standardized) else {
+                        #if DEBUG
+                        dlog("link.openURL localFile not found at \(standardized), falling back to web URL")
+                        #endif
+                        // File doesn't exist — fall back to treating as web URL
+                        if let webURL = resolveBrowserNavigableURL(relativePath) {
+                            return NSWorkspace.shared.open(webURL)
+                        }
+                        return false
+                    }
+                    let fileURL = URL(fileURLWithPath: standardized)
+                    if let targetPane = workspace.preferredBrowserTargetPane(fromPanelId: sourcePanelId) {
+                        return workspace.newBrowserSurface(inPane: targetPane, url: fileURL, focus: true) != nil
+                    } else {
+                        return workspace.newBrowserSplit(from: sourcePanelId, orientation: .horizontal, url: fileURL) != nil
+                    }
                 }
             case let .external(url):
                 #if DEBUG

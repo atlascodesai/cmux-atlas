@@ -2584,6 +2584,36 @@ final class TerminalOpenURLTargetResolutionTests: XCTestCase {
         }
     }
 
+    func testResolvesRelativeFileLikePathAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("./report.html"))
+        switch target {
+        case let .localFile(path):
+            XCTAssertEqual(path, "./report.html")
+        default:
+            XCTFail("Expected relative file-like path to route as a local file")
+        }
+    }
+
+    func testResolvesNestedRelativeFileLikePathAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("artifacts/output/report.pdf"))
+        switch target {
+        case let .localFile(path):
+            XCTAssertEqual(path, "artifacts/output/report.pdf")
+        default:
+            XCTFail("Expected nested relative file-like path to route as a local file")
+        }
+    }
+
+    func testPrefersBareDomainOverRelativeFileHeuristic() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("example.com/docs"))
+        switch target {
+        case let .embeddedBrowser(url):
+            XCTAssertEqual(url.host, "example.com")
+        default:
+            XCTFail("Expected bare domain to remain a browser URL")
+        }
+    }
+
     func testResolvesNonWebSchemeAsExternal() throws {
         let target = try XCTUnwrap(resolveTerminalOpenURLTarget("mailto:test@example.com"))
         switch target {

@@ -10,7 +10,7 @@ Users want to save and share workspace configurations (layout, panels, directori
 - **Scope**: Single workspace per file (multi-export deferred)
 - **Import placement**: Inserted after the currently selected workspace, then selected
 - **Path handling**: Keep absolute paths as-is — workspace restore already falls back to `~` for missing dirs
-- **Entry points**: Context menu only for v1 (command palette and File menu can follow)
+- **Entry points**: Workspace context menu plus File > Organizations (command palette can follow)
 - **Errors**: `NSAlert` for import failures (corrupt data, version mismatch)
 
 ## Implementation
@@ -54,7 +54,7 @@ Users want to save and share workspace configurations (layout, panels, directori
 - NSOpenPanel pattern: ContentView.swift:5363
 
 ## NOT in v1
-- File menu / command palette entries
+- Command palette entries
 - Multi-workspace export
 - Finder double-click-to-import (needs AppDelegate wiring)
 - Path rewriting for cross-machine portability

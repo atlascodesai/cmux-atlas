@@ -418,3 +418,17 @@ struct EditorSyncTitlebarButton: View {
             .foregroundStyle(.primary)
     }
 }
+
+// MARK: - Browser Link Toggle Context Menu
+
+struct BrowserLinkToggleContextMenu: View {
+    @AppStorage(BrowserLinkOpenSettings.openTerminalLinksInCmuxBrowserKey)
+    private var openLinksInternally = BrowserLinkOpenSettings.defaultOpenTerminalLinksInCmuxBrowser
+
+    var body: some View {
+        Toggle(
+            String(localized: "browser.linkToggle.internal", defaultValue: "Open Links in cmux Browser"),
+            isOn: $openLinksInternally
+        )
+    }
+}

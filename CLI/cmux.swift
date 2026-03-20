@@ -11000,10 +11000,10 @@ struct CMUXCLI {
 
         let logo = """
         \(c1)  ::\(reset)
-        \(c2)    ::::\(reset)              \(c1)c\(c2)m\(c3)u\(c7)x\(reset)
+        \(c2)    ::::\(reset)              \(c1)c\(c2)m\(c3)u\(c7)x\(reset) \(tagline)atlas\(reset)
         \(c3)      ::::::\(reset)
-        \(c4)        ::::::\(reset)        \(tagline)the open source terminal\(reset)
-        \(c5)      ::::::\(reset)          \(tagline)built for coding agents\(reset)
+        \(c4)        ::::::\(reset)        \(tagline)a fork of the open source terminal\(reset)
+        \(c5)      ::::::\(reset)          \(tagline)for coding agents, with extras\(reset)
         \(c6)    ::::\(reset)
         \(c7)  ::\(reset)
         """
@@ -11022,10 +11022,26 @@ struct CMUXCLI {
           \(bold)\u{2318}\u{21E7}U\(reset)\(subdued)                 Jump to latest unread\(reset)
         """
 
+        let atlasFeatures = """
+          \(bold)Atlas Additions\(reset)
+
+          \(subdued)•\(reset) \(subdued)AI session auto-resume — detect and restore Claude/Codex sessions on restart\(reset)
+          \(subdued)•\(reset) \(subdued)Editor sync — auto-open workspace dir in VS Code, Cursor, Zed, etc.\(reset)
+          \(subdued)•\(reset) \(subdued)Markdown link interception — render md files in a native panel\(reset)
+          \(subdued)•\(reset) \(subdued)AI quick launch buttons — one-click Claude/Codex from the titlebar\(reset)
+          \(subdued)•\(reset) \(subdued)Crash autosave — preserve TUI scrollback on unexpected exits\(reset)
+          \(subdued)•\(reset) \(subdued)Per-workspace memory usage — see RAM by project in the sidebar\(reset)
+          \(subdued)•\(reset) \(subdued)Reveal in Finder — right-click any tab to open its working directory\(reset)
+
+          \(bold)Fork\(reset)\(subdued)                https://github.com/atlascodesai/cmux-atlas\(reset)
+        """
+
         print()
         print(logo)
         print()
         print(shortcuts)
+        print()
+        print(atlasFeatures)
         print()
         print("  \(bold)Docs\(reset)\(subdued)                https://cmux.com/docs\(reset)")
         print("  \(bold)Discord\(reset)\(subdued)             https://discord.gg/xsgFEVrWCZ\(reset)")

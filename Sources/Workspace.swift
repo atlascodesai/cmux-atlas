@@ -207,6 +207,7 @@ extension Workspace {
         return SessionWorkspaceSnapshot(
             processTitle: processTitle,
             customTitle: customTitle,
+            organizationName: organizationName,
             customColor: customColor,
             isPinned: isPinned,
             currentDirectory: currentDirectory,
@@ -247,6 +248,7 @@ extension Workspace {
 
         applyProcessTitle(snapshot.processTitle)
         setCustomTitle(snapshot.customTitle)
+        setOrganizationName(snapshot.organizationName)
         setCustomColor(snapshot.customColor)
         isPinned = snapshot.isPinned
 
@@ -4853,6 +4855,7 @@ final class Workspace: Identifiable, ObservableObject {
     let id: UUID
     @Published var title: String
     @Published var customTitle: String?
+    @Published var organizationName: String?
     @Published var isPinned: Bool = false
     @Published var customColor: String?  // hex string, e.g. "#C0392B"
     @Published var currentDirectory: String
@@ -5156,6 +5159,9 @@ final class Workspace: Identifiable, ObservableObject {
                     self?.launchQuickAIAgent(agent)
                 }
             )
+        )
+        bonsplitController.browserButtonContextMenu = AnyView(
+            BrowserLinkToggleContextMenu()
         )
         bonsplitController.contextMenuShortcuts = Self.buildContextMenuShortcuts()
 
@@ -5762,6 +5768,18 @@ final class Workspace: Identifiable, ObservableObject {
             customTitle = trimmed
             self.title = trimmed
         }
+    }
+
+    func setOrganizationName(_ name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let resolvedName = trimmed.isEmpty ? nil : trimmed
+        guard organizationName != resolvedName else { return }
+        organizationName = resolvedName
+        NotificationCenter.default.post(
+            name: .workspaceDidUpdatePresentationMetadata,
+            object: nil,
+            userInfo: [GhosttyNotificationKey.tabId: id]
+        )
     }
 
     // MARK: - Directory Updates

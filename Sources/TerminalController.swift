@@ -6726,6 +6726,18 @@ class TerminalController {
             var resolved = false
             var timedOut = false
             var result: T?
+            let timeoutTimer = CFRunLoopTimerCreateWithHandler(
+                nil,
+                CFAbsoluteTimeGetCurrent() + timeout,
+                0,
+                0,
+                0
+            ) { _ in
+                guard !resolved else { return }
+                resolved = true
+                timedOut = true
+                CFRunLoopStop(runLoop)
+            }
 
             let finish: (T) -> Void = { value in
                 guard !resolved else { return }
@@ -6737,14 +6749,9 @@ class TerminalController {
             start(finish)
             guard !resolved else { return result }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
-                guard !resolved else { return }
-                resolved = true
-                timedOut = true
-                CFRunLoopStop(runLoop)
-            }
-
+            CFRunLoopAddTimer(runLoop, timeoutTimer, .commonModes)
             CFRunLoopRun()
+            CFRunLoopTimerInvalidate(timeoutTimer)
             return timedOut ? nil : result
         }
 
