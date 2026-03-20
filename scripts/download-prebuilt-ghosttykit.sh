@@ -105,7 +105,12 @@ if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
   cd "$REPO_ROOT/ghostty"
   echo "Now in: $(pwd)"
   echo "ghostty dir contents: $(ls -la build.zig 2>&1 || echo 'no build.zig')"
-  zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast
+  zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast 2>&1 || {
+    echo "zig build failed with exit code $?"
+    echo "zig env:"
+    zig env 2>&1 || true
+    exit 1
+  }
   cd "$REPO_ROOT"
   test -d "$OUTPUT_DIR"
   echo "Built $OUTPUT_DIR from source"
