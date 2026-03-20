@@ -16,12 +16,6 @@ import Foundation
 //    over sessions that were already running (mid-file match = different PID was writing)
 // 7. Lowest score wins — this disambiguates multiple sessions in the same project dir
 
-/// Identifies the type of AI coding agent detected in a terminal.
-enum AIAgentType: String, Codable, Sendable {
-    case claudeCode = "claude_code"
-    case codex = "codex"
-}
-
 /// Snapshot of a detected AI agent session, persisted alongside the panel snapshot.
 struct AISessionSnapshot: Codable, Sendable, Equatable {
     /// The type of agent that was running.

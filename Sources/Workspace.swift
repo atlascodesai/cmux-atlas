@@ -4973,6 +4973,12 @@ final class Workspace: Identifiable, ObservableObject {
     /// PIDs associated with agent status entries (e.g. claude_code), keyed by status key.
     /// Used for stale-session detection: if the PID is dead, the status entry is cleared.
     var agentPIDs: [String: pid_t] = [:]
+    @Published private(set) var cachedAISessions: [UUID: AISessionSnapshot] = [:]
+    private var aiSessionRefreshGenerationByPanel: [UUID: UUID] = [:]
+    private let aiSessionRefreshQueue = DispatchQueue(
+        label: "com.cmux.ai-session-refresh",
+        qos: .utility
+    )
     private var restoredTerminalScrollbackByPanelId: [UUID: String] = [:]
     @Published var restoredTerminalActions: [UUID: RestoredTerminalActionSnapshot] = [:]
 
@@ -6012,7 +6018,87 @@ final class Workspace: Identifiable, ObservableObject {
         restoredTerminalActions = restoredTerminalActions.filter { validSurfaceIds.contains($0.key) }
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
         panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
+        cachedAISessions = cachedAISessions.filter { validSurfaceIds.contains($0.key) }
+        aiSessionRefreshGenerationByPanel = aiSessionRefreshGenerationByPanel.filter { validSurfaceIds.contains($0.key) }
         recomputeListeningPorts()
+    }
+
+    // MARK: - AI Session Cache
+
+    func scheduleAISessionRefreshForTerminalPanels() {
+        let terminalPanelIds = panels.compactMap { panelId, panel in
+            panel.panelType == .terminal ? panelId : nil
+        }
+        for panelId in terminalPanelIds {
+            scheduleAISessionRefresh(panelId: panelId)
+        }
+    }
+
+    func refreshAISessionCacheNowForTerminalPanels() {
+        let terminalPanelIds = panels.compactMap { panelId, panel in
+            panel.panelType == .terminal ? panelId : nil
+        }
+        for panelId in terminalPanelIds {
+            refreshAISessionCacheNow(panelId: panelId)
+        }
+    }
+
+    private func scheduleAISessionRefresh(panelId: UUID, delay: TimeInterval = 0.4) {
+        guard panels[panelId]?.panelType == .terminal else {
+            cachedAISessions.removeValue(forKey: panelId)
+            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+            return
+        }
+
+        let ttyName = surfaceTTYNames[panelId]
+        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
+        let generation = UUID()
+        aiSessionRefreshGenerationByPanel[panelId] = generation
+
+        aiSessionRefreshQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            let snapshot = AISessionDetector.detect(
+                ttyName: ttyName,
+                workingDirectory: workingDirectory
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.aiSessionRefreshGenerationByPanel[panelId] == generation else { return }
+                self.aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+
+                guard self.panels[panelId]?.panelType == .terminal else {
+                    self.cachedAISessions.removeValue(forKey: panelId)
+                    return
+                }
+
+                if let snapshot {
+                    self.cachedAISessions[panelId] = snapshot
+                } else {
+                    self.cachedAISessions.removeValue(forKey: panelId)
+                }
+            }
+        }
+    }
+
+    private func refreshAISessionCacheNow(panelId: UUID) {
+        guard panels[panelId]?.panelType == .terminal else {
+            cachedAISessions.removeValue(forKey: panelId)
+            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+            return
+        }
+
+        aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+        let ttyName = surfaceTTYNames[panelId]
+        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
+        let snapshot = AISessionDetector.detect(
+            ttyName: ttyName,
+            workingDirectory: workingDirectory
+        )
+        if let snapshot {
+            cachedAISessions[panelId] = snapshot
+        } else {
+            cachedAISessions.removeValue(forKey: panelId)
+        }
     }
 
     func recomputeListeningPorts() {

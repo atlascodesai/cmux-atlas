@@ -3288,11 +3288,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func scheduleAISessionCacheRefreshAcrossAllWorkspaces() {
-        // AI session cache refresh is handled by individual workspace restore paths
+        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
+            lhs.windowId.uuidString < rhs.windowId.uuidString
+        }
+        for context in contexts {
+            for workspace in context.tabManager.tabs {
+                workspace.scheduleAISessionRefreshForTerminalPanels()
+            }
+        }
     }
 
     private func refreshAISessionCachesNowAcrossAllWorkspaces() {
-        // AI session cache refresh is handled by individual workspace restore paths
+        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
+            lhs.windowId.uuidString < rhs.windowId.uuidString
+        }
+        for context in contexts {
+            for workspace in context.tabManager.tabs {
+                workspace.refreshAISessionCacheNowForTerminalPanels()
+            }
+        }
     }
 
     private func installLifecycleSnapshotObserversIfNeeded() {
