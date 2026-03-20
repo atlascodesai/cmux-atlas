@@ -19,7 +19,7 @@ fi
 if ! awk '
   /^  tests:/ { in_tests=1; next }
   in_tests && /^  [^[:space:]]/ { in_tests=0 }
-  in_tests && /runs-on: atlas-macos-arm64/ { saw_warp=1 }
+  in_tests && /atlas-macos-arm64/ { saw_warp=1 }
   in_tests && /github.event.pull_request.head.repo.full_name == github.repository/ { saw_guard=1 }
   END { exit !(saw_warp && saw_guard) }
 ' "$WORKFLOW_FILE"; then
@@ -31,7 +31,7 @@ fi
 if ! awk '
   /^  tests-build-and-lag:/ { in_tests=1; next }
   in_tests && /^  [^[:space:]]/ { in_tests=0 }
-  in_tests && /runs-on: atlas-macos-arm64/ { saw_warp=1 }
+  in_tests && /atlas-macos-arm64/ { saw_warp=1 }
   in_tests && /github.event.pull_request.head.repo.full_name == github.repository/ { saw_guard=1 }
   END { exit !(saw_warp && saw_guard) }
 ' "$WORKFLOW_FILE"; then
@@ -43,7 +43,7 @@ fi
 if ! awk '
   /^  ui-display-resolution-regression:/ { in_tests=1; next }
   in_tests && /^  [^[:space:]]/ { in_tests=0 }
-  in_tests && /runs-on: atlas-macos-arm64/ { saw_warp=1 }
+  in_tests && /atlas-macos-arm64/ { saw_warp=1 }
   in_tests && /github.event.pull_request.head.repo.full_name == github.repository/ { saw_guard=1 }
   END { exit !(saw_warp && saw_guard) }
 ' "$WORKFLOW_FILE"; then

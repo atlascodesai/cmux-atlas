@@ -43,29 +43,49 @@ EXPECTED_SHA256="$(
 )"
 
 if [ -z "$EXPECTED_SHA256" ]; then
-  echo "Missing pinned GhosttyKit checksum for ghostty $GHOSTTY_SHA in $CHECKSUMS_FILE" >&2
-  exit 1
+  echo "No pinned checksum for ghostty $GHOSTTY_SHA — building from source"
+  BUILD_FROM_SOURCE=1
+else
+  BUILD_FROM_SOURCE=0
 fi
 
-echo "Downloading $ARCHIVE_NAME for ghostty $GHOSTTY_SHA"
-curl --fail --show-error --location \
-  --retry "$DOWNLOAD_RETRIES" \
-  --retry-delay "$DOWNLOAD_RETRY_DELAY" \
-  --retry-all-errors \
-  -o "$ARCHIVE_NAME" \
-  "$DOWNLOAD_URL"
+if [ "$BUILD_FROM_SOURCE" -eq 0 ]; then
+  echo "Downloading $ARCHIVE_NAME for ghostty $GHOSTTY_SHA"
+  if curl --fail --show-error --location \
+    --retry "$DOWNLOAD_RETRIES" \
+    --retry-delay "$DOWNLOAD_RETRY_DELAY" \
+    --retry-all-errors \
+    -o "$ARCHIVE_NAME" \
+    "$DOWNLOAD_URL"; then
 
-ACTUAL_SHA256="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
-if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-  echo "$ARCHIVE_NAME checksum mismatch" >&2
-  echo "Expected: $EXPECTED_SHA256" >&2
-  echo "Actual:   $ACTUAL_SHA256" >&2
-  exit 1
+    ACTUAL_SHA256="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
+    if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+      echo "$ARCHIVE_NAME checksum mismatch" >&2
+      echo "Expected: $EXPECTED_SHA256" >&2
+      echo "Actual:   $ACTUAL_SHA256" >&2
+      exit 1
+    fi
+
+    rm -rf "$OUTPUT_DIR"
+    tar xzf "$ARCHIVE_NAME"
+    rm "$ARCHIVE_NAME"
+    test -d "$OUTPUT_DIR"
+    echo "Verified and extracted $OUTPUT_DIR"
+  else
+    echo "Download failed — falling back to build from source"
+    BUILD_FROM_SOURCE=1
+  fi
 fi
 
-rm -rf "$OUTPUT_DIR"
-tar xzf "$ARCHIVE_NAME"
-rm "$ARCHIVE_NAME"
-test -d "$OUTPUT_DIR"
-
-echo "Verified and extracted $OUTPUT_DIR"
+if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
+  echo "Building GhosttyKit.xcframework from source..."
+  if ! command -v zig >/dev/null 2>&1; then
+    echo "zig is required to build GhosttyKit from source" >&2
+    exit 1
+  fi
+  cd "$REPO_ROOT/ghostty"
+  zig build -Demit-xcframework=true -Dxcframework-target=universal -Doptimize=ReleaseFast
+  cd "$REPO_ROOT"
+  test -d "$OUTPUT_DIR"
+  echo "Built $OUTPUT_DIR from source"
+fi
