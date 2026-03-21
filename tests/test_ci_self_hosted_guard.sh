@@ -39,9 +39,18 @@ if ! awk '
   exit 1
 fi
 
-# ui-display-resolution-regression: currently disabled (needs automation permissions).
-# When re-enabled, it must use atlas-macos-arm64 runner with fork guard.
+# ui-display-resolution-regression: must use atlas-macos-arm64 runner with fork guard
+if ! awk '
+  /^  ui-display-resolution-regression:/ { in_tests=1; next }
+  in_tests && /^  [^[:space:]]/ { in_tests=0 }
+  in_tests && /atlas-macos-arm64/ { saw_warp=1 }
+  in_tests && /github.event.pull_request.head.repo.full_name == github.repository/ { saw_guard=1 }
+  END { exit !(saw_warp && saw_guard) }
+' "$WORKFLOW_FILE"; then
+  echo "FAIL: ui-display-resolution-regression block must keep both atlas-macos-arm64 runner and fork guard"
+  exit 1
+fi
 
 echo "PASS: tests WarpBuild runner fork guard is present"
 echo "PASS: tests-build-and-lag WarpBuild runner fork guard is present"
-echo "PASS: ui-display-resolution-regression is currently disabled (skipped)"
+echo "PASS: ui-display-resolution-regression WarpBuild runner fork guard is present"
