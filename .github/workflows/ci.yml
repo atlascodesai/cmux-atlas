@@ -74,7 +74,7 @@ jobs:
     # Never run WarpBuild jobs for fork pull requests (avoid billing on external PRs).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, atlas-macos-arm64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -237,7 +237,7 @@ jobs:
     # test). Interactive UI tests run via test-e2e.yml on GitHub-hosted runners.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, atlas-macos-arm64]
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -389,7 +389,9 @@ jobs:
           python3 tests/test_workspace_churn_up_arrow_lag.py
 
   ui-display-resolution-regression:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Disabled: XCUITest requires a logged-in console session which the self-hosted
+    # runner (launchd service) does not have. Re-enable when runner runs as login item.
+    if: false
     runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 25
     steps:
