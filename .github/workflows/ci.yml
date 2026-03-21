@@ -497,15 +497,63 @@ jobs:
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           HELPER_PATH="/tmp/create-virtual-display"
           MANIFEST_PATH="/tmp/cmux-ui-test-display-harness.json"
+          READY_PATH="/tmp/cmux-ci-display.ready"
+          DISPLAY_ID_PATH="/tmp/cmux-ci-display.id"
+          START_PATH="/tmp/cmux-ci-display.start"
+          DONE_PATH="/tmp/cmux-ci-display.done"
+          HELPER_LOG="/tmp/cmux-ci-display-helper.log"
 
-          rm -f "$MANIFEST_PATH"
-          trap 'rm -f "$MANIFEST_PATH"' EXIT
+          rm -f "$MANIFEST_PATH" "$READY_PATH" "$DISPLAY_ID_PATH" "$START_PATH" "$DONE_PATH" "$HELPER_LOG"
+          trap 'kill %1 2>/dev/null; rm -f "$MANIFEST_PATH" "$READY_PATH" "$DISPLAY_ID_PATH" "$START_PATH" "$DONE_PATH" "$HELPER_LOG"' EXIT
 
+          # Diagnostics: check display environment
+          echo "=== Display environment diagnostics ==="
+          sw_vers
+          echo "Session type: ${XPC_SERVICE_NAME:-unknown}"
+          echo "Display server: ${DISPLAY:-none}"
+          system_profiler SPDisplaysDataType 2>/dev/null | head -20 || true
+          echo "=== End diagnostics ==="
+
+          # Build helper
           clang -framework Foundation -framework CoreGraphics \
             -o "$HELPER_PATH" scripts/create-virtual-display.m
 
+          # Pre-launch helper so we can verify the display exists before running tests
+          "$HELPER_PATH" \
+            --modes "1920x1080,1728x1117,1600x900,1440x810" \
+            --ready-path "$READY_PATH" \
+            --display-id-path "$DISPLAY_ID_PATH" \
+            --start-path "$START_PATH" \
+            --done-path "$DONE_PATH" \
+            --iterations 40 \
+            --interval-ms 40 \
+            >"$HELPER_LOG" 2>&1 &
+
+          echo "Helper PID: $!"
+
+          # Wait for ready signal (up to 15s)
+          for i in $(seq 1 30); do
+            if [ -f "$READY_PATH" ]; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          echo "=== Helper output ==="
+          cat "$HELPER_LOG" || true
+          echo "=== End helper output ==="
+
+          if [ ! -f "$READY_PATH" ]; then
+            echo "FAIL: Virtual display helper did not become ready" >&2
+            exit 1
+          fi
+
+          DISPLAY_ID=$(cat "$DISPLAY_ID_PATH" | tr -d '[:space:]')
+          echo "Virtual display ID: $DISPLAY_ID"
+
+          # Write manifest pointing to pre-launched helper's paths
           cat >"$MANIFEST_PATH" <<EOF
-          {"helperBinaryPath":"$HELPER_PATH"}
+          {"readyPath":"$READY_PATH","displayIDPath":"$DISPLAY_ID_PATH","startPath":"$START_PATH","donePath":"$DONE_PATH","logPath":"$HELPER_LOG"}
           EOF
 
           xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
