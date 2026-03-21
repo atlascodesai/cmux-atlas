@@ -74,7 +74,7 @@ jobs:
     # Never run WarpBuild jobs for fork pull requests (avoid billing on external PRs).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, atlas-macos-arm64]
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -128,14 +128,26 @@ jobs:
             zig version
           fi
 
-      - name: Restore DerivedData cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/GhosttyTabs-*
-          key: deriveddata-tests-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ hashFiles('GhosttyTabs.xcodeproj/project.pbxproj') }}
-          restore-keys: |
-            deriveddata-tests-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
-            deriveddata-tests-
+      # DerivedData persists on-disk between runs on the self-hosted runner.
+      # Do NOT use actions/cache for DerivedData here — it overwrites newer
+      # local build artifacts with stale cached data, causing full recompiles.
+
+      - name: Clean stale DerivedData and report status
+        run: |
+          DD="$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 1 -name 'GhosttyTabs-*' -print -quit 2>/dev/null || true)"
+          if [ -n "$DD" ] && [ -d "$DD" ]; then
+            # Prior CI runs used actions/cache which restored incomplete DerivedData.
+            # If the Build/Products directory doesn't contain a successful build, wipe it.
+            if [ -d "$DD/Build/Products/Debug/cmux Atlas DEV.app" ]; then
+              echo "DerivedData has valid build at $DD"
+              du -sh "$DD" || true
+            else
+              echo "DerivedData looks stale/incomplete, cleaning for fresh build..."
+              rm -rf "$DD"
+            fi
+          else
+            echo "No DerivedData found (clean build)"
+          fi
 
       - name: Cache Swift packages
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
@@ -168,19 +180,23 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
+          OUTPUT_LOG="/tmp/cmux-unit-tests.log"
+
           run_unit_tests() {
             xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -disableAutomaticPackageResolution \
-              -destination "platform=macOS" test 2>&1
+              -destination "platform=macOS" test 2>&1 | tee "$OUTPUT_LOG"
           }
 
           # xcodebuild exits 65 even for expected failures (XCTExpectFailure).
-          # Capture output and fail only if there are unexpected failures.
+          # Use tee to stream output in real-time while also capturing for analysis.
           set +e
-          OUTPUT=$(run_unit_tests)
-          EXIT_CODE=$?
+          run_unit_tests
+          EXIT_CODE=${PIPESTATUS[0]}
           set -e
+
+          OUTPUT="$(cat "$OUTPUT_LOG")"
 
           # SwiftPM binary artifact resolution can occasionally fail on ephemeral
           # runners with "Could not resolve package dependencies". Retry once after
@@ -191,12 +207,12 @@ jobs:
             mkdir -p ~/Library/Caches/org.swift.swiftpm
             rm -rf ~/Library/Developer/Xcode/DerivedData/GhosttyTabs-*
             set +e
-            OUTPUT=$(run_unit_tests)
-            EXIT_CODE=$?
+            run_unit_tests
+            EXIT_CODE=${PIPESTATUS[0]}
             set -e
+            OUTPUT="$(cat "$OUTPUT_LOG")"
           fi
 
-          echo "$OUTPUT"
           if [ "$EXIT_CODE" -ne 0 ]; then
             SUMMARY=$(echo "$OUTPUT" | grep "Executed.*tests.*with.*failures" | tail -1)
             if echo "$SUMMARY" | grep -q "(0 unexpected)"; then
@@ -229,13 +245,6 @@ jobs:
           fi
 
           CMUX_CLI_BIN="$CLI_BIN" python3 tests/test_cli_version_memory_guard.py
-
-      - name: Save DerivedData cache
-        if: always()
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/GhosttyTabs-*
-          key: deriveddata-tests-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ hashFiles('GhosttyTabs.xcodeproj/project.pbxproj') }}
 
   tests-build-and-lag:
     # Build the full cmux scheme and run the lag regression on WarpBuild.
@@ -298,14 +307,7 @@ jobs:
             zig version
           fi
 
-      - name: Restore DerivedData cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/GhosttyTabs-*
-          key: deriveddata-build-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ hashFiles('GhosttyTabs.xcodeproj/project.pbxproj') }}
-          restore-keys: |
-            deriveddata-build-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
-            deriveddata-build-
+      # DerivedData persists on-disk between runs on the self-hosted runner.
 
       - name: Cache Swift packages
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
@@ -394,13 +396,6 @@ jobs:
           CMUX_LAG_MAX_CHURN_P95_MS=35 \
           CMUX_LAG_KEY_EVENTS=180 \
           python3 tests/test_workspace_churn_up_arrow_lag.py
-
-      - name: Save DerivedData cache
-        if: always()
-        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4
-        with:
-          path: ~/Library/Developer/Xcode/DerivedData/GhosttyTabs-*
-          key: deriveddata-build-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ hashFiles('GhosttyTabs.xcodeproj/project.pbxproj') }}
 
   ui-display-resolution-regression:
     # Disabled: XCUITest requires a logged-in console session which the self-hosted
