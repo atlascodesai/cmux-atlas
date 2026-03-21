@@ -182,28 +182,11 @@ jobs:
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           OUTPUT_LOG="/tmp/cmux-unit-tests.log"
 
-          # Skip test suites that require a window server (NSWindow/AppKit UI).
-          # The self-hosted runner runs as a launchd service without a console
-          # session, so these tests hang indefinitely waiting for window operations.
-          SKIP_WINDOW_TESTS=(
-            -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests
-            -skip-testing:cmuxTests/BrowserConfigTests
-            -skip-testing:cmuxTests/BrowserPanelTests
-            -skip-testing:cmuxTests/CJKIMEInputTests
-            -skip-testing:cmuxTests/GhosttyEnsureFocusWindowActivationTests
-            -skip-testing:cmuxTests/NotificationAndMenuBarTests
-            -skip-testing:cmuxTests/TerminalAndGhosttyTests
-            -skip-testing:cmuxTests/WindowAndDragTests
-            -skip-testing:cmuxTests/WorkspaceManualUnreadTests
-            -skip-testing:cmuxTests/WorkspaceUnitTests
-          )
-
           run_unit_tests() {
             xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -disableAutomaticPackageResolution \
               -destination "platform=macOS" \
-              "${SKIP_WINDOW_TESTS[@]}" \
               test 2>&1 | tee "$OUTPUT_LOG"
           }
 
