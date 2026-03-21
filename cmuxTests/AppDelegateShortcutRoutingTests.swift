@@ -21,10 +21,6 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         // from blocking the main thread on CI runners where no user can dismiss them.
         // Individual tests can override this with their own handler as needed.
         AppDelegate.shared?.debugCloseMainWindowConfirmationHandler = { _ in true }
-        // Force the app to the foreground so window focus/key-window routing works
-        // correctly on CI runners where the test runner process may be frontmost.
-        NSApp.activate(ignoringOtherApps: true)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
         actionsWithPersistedShortcut = Set(
             KeyboardShortcutSettings.Action.allCases.filter {
                 UserDefaults.standard.object(forKey: $0.defaultsKey) != nil
