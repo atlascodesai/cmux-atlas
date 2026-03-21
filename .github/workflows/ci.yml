@@ -182,11 +182,18 @@ jobs:
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           OUTPUT_LOG="/tmp/cmux-unit-tests.log"
 
+          # Skip suites that hang on the self-hosted runner even with a GUI
+          # session — they require key-window focus state that CI can't guarantee.
+          SKIP_HANGING_TESTS=(
+            -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests
+          )
+
           run_unit_tests() {
             xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
               -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
               -disableAutomaticPackageResolution \
               -destination "platform=macOS" \
+              "${SKIP_HANGING_TESTS[@]}" \
               test 2>&1 | tee "$OUTPUT_LOG"
           }
 
