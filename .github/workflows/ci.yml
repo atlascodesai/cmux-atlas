@@ -491,6 +491,11 @@ jobs:
           rm -f "$MANIFEST_PATH"
           trap 'rm -f "$MANIFEST_PATH"' EXIT
 
+          # Kill any leftover cmux instances from previous jobs
+          pkill -f "cmux Atlas DEV" 2>/dev/null || true
+          pkill -f "cmux Atlas" 2>/dev/null || true
+          sleep 1
+
           # Build helper binary for the test to launch
           clang -framework Foundation -framework CoreGraphics \
             -o "$HELPER_PATH" scripts/create-virtual-display.m
