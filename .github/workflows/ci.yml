@@ -416,7 +416,10 @@ jobs:
           python3 tests/test_workspace_churn_up_arrow_lag.py
 
   ui-display-resolution-regression:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Disabled: XCUITest requires Accessibility/Automation permissions on the runner.
+    # Error: "Timed out while enabling automation mode." Fix by enabling DevToolsSecurity
+    # and granting Accessibility access to the runner process, then remove `if: false`.
+    if: false
     runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 25
     steps:
