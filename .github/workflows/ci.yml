@@ -273,7 +273,7 @@ jobs:
           if [ "$EXIT_CODE" -ne 0 ]; then
             # Check all "Executed" summary lines from completed test suites.
             # When the watchdog kills a hung test, earlier suites still have summaries.
-            SUMMARIES=$(echo "$OUTPUT" | grep "Executed.*tests.*with.*failures" || true)
+            SUMMARIES=$(echo "$OUTPUT" | grep "Executed.*test.*with.*failure" || true)
             if [ -z "$SUMMARIES" ]; then
               echo "No test execution summary found — tests may not have started"
               exit 1
