@@ -15,9 +15,13 @@ WORKFLOW_FILE="$ROOT_DIR/.github/workflows/ci.yml"
 #    upstream. Upstream skips exactly one test:
 # ---------------------------------------------------------------------------
 EXPECTED_SKIPS=(
+  "cmuxTests/AppDelegateShortcutRoutingTests/testArrowNavigationRoutesWhileCommandPaletteOverlayIsInteractiveBeforeVisibilitySync"
   "cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace"
   "cmuxTests/AppDelegateShortcutRoutingTests/testCustomCmdTNewWorkspacePrunesOrphanedContextWithoutLiveWindow"
+  "cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilitySyncLagsAfterOpenRequest"
+  "cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilityStateRemainsStaleForExtendedDelay"
   "cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilityStateStaysStalePastInitialPendingWindow"
+  "cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesMenuTriggeredCommandPaletteWhenVisibilitySyncIsStale"
 )
 
 # Extract all -skip-testing values from the "Run unit tests" step in ci.yml

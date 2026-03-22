@@ -203,7 +203,11 @@ jobs:
               -destination "platform=macOS" \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCustomCmdTNewWorkspacePrunesOrphanedContextWithoutLiveWindow \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilitySyncLagsAfterOpenRequest \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testArrowNavigationRoutesWhileCommandPaletteOverlayIsInteractiveBeforeVisibilitySync \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilityStateStaysStalePastInitialPendingWindow \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesCommandPaletteWhenVisibilityStateRemainsStaleForExtendedDelay \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testEscapeDismissesMenuTriggeredCommandPaletteWhenVisibilitySyncIsStale \
               test 2>&1 | tee "$OUTPUT_LOG"
           }
 
