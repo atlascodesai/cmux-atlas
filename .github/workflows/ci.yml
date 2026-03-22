@@ -183,6 +183,7 @@ jobs:
               -destination "platform=macOS" \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace \
               -IDEBuildOperationMaxNumberOfConcurrentCompileTasks=2 \
+              -maximum-test-execution-time-allowance 120 \
               test 2>&1
           }
 
