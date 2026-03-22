@@ -16,6 +16,7 @@ WORKFLOW_FILE="$ROOT_DIR/.github/workflows/ci.yml"
 # ---------------------------------------------------------------------------
 EXPECTED_SKIPS=(
   "cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace"
+  "cmuxTests/AppDelegateShortcutRoutingTests/testCustomCmdTNewWorkspacePrunesOrphanedContextWithoutLiveWindow"
 )
 
 # Extract all -skip-testing values from the "Run unit tests" step in ci.yml

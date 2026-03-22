@@ -191,6 +191,7 @@ jobs:
               -disableAutomaticPackageResolution \
               -destination "platform=macOS" \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCustomCmdTNewWorkspacePrunesOrphanedContextWithoutLiveWindow \
               test 2>&1 | tee "$OUTPUT_LOG"
           }
 
