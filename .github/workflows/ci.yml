@@ -16,6 +16,9 @@ jobs:
       - name: Validate WarpBuild runner guards
         run: ./tests/test_ci_self_hosted_guard.sh
 
+      - name: Validate test skips match upstream
+        run: ./tests/test_ci_test_skips_match_upstream.sh
+
       - name: Validate create-dmg version pinning
         run: ./tests/test_ci_create_dmg_pinned.sh
 
