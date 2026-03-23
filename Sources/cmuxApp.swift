@@ -156,7 +156,6 @@ struct cmuxApp: App {
     @AppStorage(KeyboardShortcutSettings.Action.prevSurface.defaultsKey) private var prevSurfaceShortcutData = Data()
     @AppStorage(KeyboardShortcutSettings.Action.nextSidebarTab.defaultsKey) private var nextWorkspaceShortcutData = Data()
     @AppStorage(KeyboardShortcutSettings.Action.prevSidebarTab.defaultsKey) private var prevWorkspaceShortcutData = Data()
-    @AppStorage(KeyboardShortcutSettings.Action.selectWorkspaceByNumber.defaultsKey) private var selectWorkspaceByNumberShortcutData = Data()
     @AppStorage(KeyboardShortcutSettings.Action.splitRight.defaultsKey) private var splitRightShortcutData = Data()
     @AppStorage(KeyboardShortcutSettings.Action.splitDown.defaultsKey) private var splitDownShortcutData = Data()
     @AppStorage(BrowserToolbarAccessorySpacingDebugSettings.key) private var browserToolbarAccessorySpacingRaw = BrowserToolbarAccessorySpacingDebugSettings.defaultSpacing
@@ -593,6 +592,58 @@ struct cmuxApp: App {
                 splitCommandButton(title: String(localized: "menu.file.openFolder", defaultValue: "Open Folder…"), shortcut: openFolderMenuShortcut) {
                     AppDelegate.shared?.showOpenFolderPanel()
                 }
+
+                Divider()
+
+                Menu(String(localized: "menu.file.organizations", defaultValue: "Organizations")) {
+                    let orgs = WorkspaceOrganizationStore.loadAll()
+
+                    if !orgs.isEmpty {
+                        let recentOrgs = Array(orgs.prefix(5))
+                        ForEach(Array(recentOrgs.enumerated()), id: \.element.id) { index, org in
+                            Button(org.name) {
+                                WorkspaceOrganizationStore.touchLastUsed(org.id)
+                                activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+                            }
+                            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.control])
+                        }
+
+                        if orgs.count > 5 {
+                            Menu(String(localized: "menu.file.organizations.more", defaultValue: "More…")) {
+                                ForEach(orgs.dropFirst(5), id: \.id) { org in
+                                    Button(org.name) {
+                                        WorkspaceOrganizationStore.touchLastUsed(org.id)
+                                        activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        Menu(String(localized: "menu.file.organizations.remove", defaultValue: "Remove…")) {
+                            ForEach(orgs, id: \.id) { org in
+                                Button(String.localizedStringWithFormat(
+                                    String(localized: "menu.file.organizations.remove.named", defaultValue: "Remove \"%@\""),
+                                    org.name
+                                )) {
+                                    WorkspaceOrganizationStore.remove(org.id)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(String(localized: "menu.file.organizations.empty", defaultValue: "No saved organizations"))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    Button(String(localized: "menu.file.organizations.import", defaultValue: "Import Organization…")) {
+                        if let org = WorkspaceOrganizationStore.importWorkspace() {
+                            activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+                        }
+                    }
+                }
             }
 
             // Close tab/workspace
@@ -787,18 +838,15 @@ struct cmuxApp: App {
 
                 Divider()
 
-                // Numbered workspace selection (9 = last workspace)
+                // Cmd+1 through Cmd+9 for workspace selection (9 = last workspace)
                 ForEach(1...9, id: \.self) { number in
                     Button(String(localized: "menu.view.workspace", defaultValue: "Workspace \(number)")) {
                         let manager = activeTabManager
-                        if let targetIndex = WorkspaceShortcutMapper.workspaceIndex(forDigit: number, workspaceCount: manager.tabs.count) {
+                        if let targetIndex = WorkspaceShortcutMapper.workspaceIndex(forCommandDigit: number, workspaceCount: manager.tabs.count) {
                             manager.selectTab(at: targetIndex)
                         }
                     }
-                    .keyboardShortcut(
-                        KeyEquivalent(Character("\(number)")),
-                        modifiers: selectWorkspaceByNumberMenuShortcut.eventModifiers
-                    )
+                    .keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: .command)
                 }
 
                 Divider()
@@ -909,13 +957,6 @@ struct cmuxApp: App {
         decodeShortcut(
             from: prevWorkspaceShortcutData,
             fallback: KeyboardShortcutSettings.Action.prevSidebarTab.defaultShortcut
-        )
-    }
-
-    private var selectWorkspaceByNumberMenuShortcut: StoredShortcut {
-        decodeShortcut(
-            from: selectWorkspaceByNumberShortcutData,
-            fallback: KeyboardShortcutSettings.Action.selectWorkspaceByNumber.defaultShortcut
         )
     }
 
@@ -3898,6 +3939,16 @@ struct SettingsView: View {
     @AppStorage("sidebarShowLog") private var sidebarShowLog = true
     @AppStorage("sidebarShowProgress") private var sidebarShowProgress = true
     @AppStorage("sidebarShowStatusPills") private var sidebarShowMetadata = true
+    @AppStorage(MemoryUsageDisplaySettings.showInSidebarKey)
+    private var memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
+    @AppStorage(MemoryUsageDisplaySettings.showInPaneTabsKey)
+    private var memoryUsageShowInPaneTabs = MemoryUsageDisplaySettings.defaultShowInPaneTabs
+    @AppStorage(MemoryUsageDisplaySettings.showInFooterKey)
+    private var memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
+    @AppStorage(MemoryPressureKillSettings.enabledKey)
+    private var memoryPressureKillEnabled = MemoryPressureKillSettings.defaultEnabled
+    @AppStorage(MemoryPressureKillSettings.thresholdGBKey)
+    private var memoryPressureKillThresholdGB = MemoryPressureKillSettings.defaultThresholdGB
     @AppStorage("sidebarTintHex") private var sidebarTintHex = SidebarTintDefaults.hex
     @AppStorage("sidebarTintHexLight") private var sidebarTintHexLight: String?
     @AppStorage("sidebarTintHexDark") private var sidebarTintHexDark: String?
@@ -4878,6 +4929,72 @@ struct SettingsView: View {
                                 .controlSize(.small)
                         }
                         .disabled(sidebarHideAllDetails)
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInSidebar", defaultValue: "Show RAM in Sidebar"),
+                            subtitle: String(localized: "settings.app.showMemoryInSidebar.subtitle", defaultValue: "Add a compact workspace RAM badge in each sidebar row.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInSidebar)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInPaneTabs", defaultValue: "Show RAM in Pane Tabs"),
+                            subtitle: String(localized: "settings.app.showMemoryInPaneTabs.subtitle", defaultValue: "Append live terminal RAM usage to pane tab titles.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInPaneTabs)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.showMemoryInFooter", defaultValue: "Show RAM in Footer"),
+                            subtitle: String(localized: "settings.app.showMemoryInFooter.subtitle", defaultValue: "Show app RAM in the sidebar footer and open a memory breakdown popover.")
+                        ) {
+                            Toggle("", isOn: $memoryUsageShowInFooter)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.app.memoryPressureKill", defaultValue: "Kill on Critical Memory Pressure"),
+                            subtitle: String(localized: "settings.app.memoryPressureKill.subtitle", defaultValue: "When system memory is critically low, automatically kill the heaviest terminal process and close its workspace to prevent a system crash.")
+                        ) {
+                            Toggle("", isOn: $memoryPressureKillEnabled)
+                                .labelsHidden()
+                                .controlSize(.small)
+                        }
+
+                        if memoryPressureKillEnabled {
+                            SettingsCardDivider()
+
+                            SettingsCardRow(
+                                String(localized: "settings.app.memoryPressureKillThreshold", defaultValue: "Kill Threshold (GB)"),
+                                subtitle: String(localized: "settings.app.memoryPressureKillThreshold.subtitle", defaultValue: "A workspace is eligible for kill if it exceeds this amount or uses more than 50% of tracked terminal memory.")
+                            ) {
+                                HStack(spacing: 6) {
+                                    Slider(
+                                        value: $memoryPressureKillThresholdGB,
+                                        in: MemoryPressureKillSettings.minimumThresholdGB...MemoryPressureKillSettings.maximumThresholdGB,
+                                        step: 1.0
+                                    )
+                                    .frame(width: 120)
+                                    Text(String(format: "%.0f GB", memoryPressureKillThresholdGB))
+                                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                                        .monospacedDigit()
+                                        .frame(width: 40, alignment: .trailing)
+                                }
+                            }
+                        }
                     }
 
                     SettingsSectionHeader(title: String(localized: "settings.section.workspaceColors", defaultValue: "Workspace Colors"))
@@ -5790,6 +5907,11 @@ struct SettingsView: View {
         sidebarShowLog = true
         sidebarShowProgress = true
         sidebarShowMetadata = true
+        memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
+        memoryUsageShowInPaneTabs = MemoryUsageDisplaySettings.defaultShowInPaneTabs
+        memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
+        memoryPressureKillEnabled = MemoryPressureKillSettings.defaultEnabled
+        memoryPressureKillThresholdGB = MemoryPressureKillSettings.defaultThresholdGB
         sidebarTintHex = SidebarTintDefaults.hex
         sidebarTintHexLight = nil
         sidebarTintHexDark = nil
@@ -6336,12 +6458,7 @@ private struct ShortcutSettingRow: View {
     }
 
     var body: some View {
-        KeyboardShortcutRecorder(
-            label: action.label,
-            shortcut: $shortcut,
-            displayString: { action.displayedShortcutString(for: $0) },
-            transformRecordedShortcut: { action.normalizedRecordedShortcut($0) }
-        )
+        KeyboardShortcutRecorder(label: action.label, shortcut: $shortcut)
             .onChange(of: shortcut) { newValue in
                 KeyboardShortcutSettings.setShortcut(newValue, for: action)
             }

@@ -4,6 +4,8 @@ import Foundation
 import Bonsplit
 import CoreVideo
 import Combine
+import Darwin
+import UserNotifications
 
 // MARK: - Tab Type Alias for Backwards Compatibility
 // The old Tab class is replaced by Workspace
@@ -191,6 +193,755 @@ enum SidebarActiveTabIndicatorSettings {
 
     static func current(defaults: UserDefaults = .standard) -> SidebarActiveTabIndicatorStyle {
         resolvedStyle(rawValue: defaults.string(forKey: styleKey))
+    }
+}
+
+enum MemoryUsageDisplaySettings {
+    static let showInSidebarKey = "memoryUsageShowInSidebar"
+    static let showInPaneTabsKey = "memoryUsageShowInPaneTabs"
+    static let showInFooterKey = "memoryUsageShowInFooter"
+    static let defaultShowInSidebar = true
+    static let defaultShowInPaneTabs = true
+    static let defaultShowInFooter = true
+
+    static func showsInSidebar(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInSidebarKey) == nil {
+            return defaultShowInSidebar
+        }
+        return defaults.bool(forKey: showInSidebarKey)
+    }
+
+    static func showsInPaneTabs(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInPaneTabsKey) == nil {
+            return defaultShowInPaneTabs
+        }
+        return defaults.bool(forKey: showInPaneTabsKey)
+    }
+
+    static func showsInFooter(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: showInFooterKey) == nil {
+            return defaultShowInFooter
+        }
+        return defaults.bool(forKey: showInFooterKey)
+    }
+}
+
+enum MemoryPressureKillSettings {
+    static let enabledKey = "memoryPressureKillEnabled"
+    static let thresholdGBKey = "memoryPressureKillThresholdGB"
+    static let defaultEnabled = true
+    static let defaultThresholdGB: Double = 4.0
+    static let minimumThresholdGB: Double = 1.0
+    static let maximumThresholdGB: Double = 64.0
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: enabledKey) == nil {
+            return defaultEnabled
+        }
+        return defaults.bool(forKey: enabledKey)
+    }
+
+    static func thresholdBytes(defaults: UserDefaults = .standard) -> Int64 {
+        let gb: Double
+        if defaults.object(forKey: thresholdGBKey) == nil {
+            gb = defaultThresholdGB
+        } else {
+            gb = defaults.double(forKey: thresholdGBKey)
+        }
+        let clamped = max(minimumThresholdGB, min(maximumThresholdGB, gb))
+        return Int64(clamped * 1024 * 1024 * 1024)
+    }
+}
+
+struct MemoryPanelConsumer: Identifiable, Equatable {
+    let panelId: UUID
+    let workspaceId: UUID
+    let workspaceTitle: String
+    let panelTitle: String
+    let bytes: Int64
+
+    var id: UUID { panelId }
+}
+
+struct MemoryProcessSummary: Identifiable, Equatable {
+    let pid: Int32
+    let name: String
+    let bytes: Int64
+
+    var id: Int32 { pid }
+}
+
+struct MemoryWorkspaceProcessGroup: Identifiable, Equatable {
+    let workspaceId: UUID?
+    let workspaceTitle: String
+    let processes: [MemoryProcessSummary]
+    let totalBytes: Int64
+
+    var id: String { workspaceId?.uuidString ?? "other" }
+}
+
+enum SystemMemoryPressureLevel: Int, Equatable, Comparable {
+    case normal = 0
+    case warning = 1
+    case critical = 2
+
+    static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+struct MemoryUsageSnapshot: Equatable {
+    let appResidentBytes: Int64
+    let trackedTerminalResidentBytes: Int64
+    let workspaceResidentBytes: [UUID: Int64]
+    let panelResidentBytes: [UUID: Int64]
+    let topPanelConsumers: [MemoryPanelConsumer]
+    let topSystemProcesses: [MemoryProcessSummary]
+    let processGroups: [MemoryWorkspaceProcessGroup]
+    let systemPressureLevel: SystemMemoryPressureLevel
+    let systemTotalBytes: Int64
+    let systemAvailableBytes: Int64
+    let systemSwapUsedBytes: Int64
+    let systemCompressedBytes: Int64
+
+    static let empty = Self(
+        appResidentBytes: 0,
+        trackedTerminalResidentBytes: 0,
+        workspaceResidentBytes: [:],
+        panelResidentBytes: [:],
+        topPanelConsumers: [],
+        topSystemProcesses: [],
+        processGroups: [],
+        systemPressureLevel: .normal,
+        systemTotalBytes: 0,
+        systemAvailableBytes: 0,
+        systemSwapUsedBytes: 0,
+        systemCompressedBytes: 0
+    )
+
+    func bytes(forWorkspace workspaceId: UUID) -> Int64 {
+        workspaceResidentBytes[workspaceId] ?? 0
+    }
+
+    func bytes(forPanel panelId: UUID) -> Int64 {
+        panelResidentBytes[panelId] ?? 0
+    }
+}
+
+enum MemoryUsageFormatter {
+    static func compactString(for bytes: Int64) -> String {
+        guard bytes > 0 else { return "0B" }
+        let kilo = Double(1024)
+        let mega = kilo * 1024
+        let giga = mega * 1024
+
+        let value = Double(bytes)
+        if value >= giga {
+            return abbreviated(value / giga, unit: "G", threshold: 10)
+        }
+        if value >= mega {
+            return abbreviated(value / mega, unit: "M", threshold: 100)
+        }
+        if value >= kilo {
+            return abbreviated(value / kilo, unit: "K", threshold: 100)
+        }
+        return "\(bytes)B"
+    }
+
+    static func inlineBadgeString(for bytes: Int64) -> String? {
+        guard bytes > 0 else { return nil }
+        return compactString(for: bytes)
+    }
+
+    static func detailedString(for bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        formatter.countStyle = .memory
+        formatter.includesUnit = true
+        formatter.includesCount = true
+        formatter.isAdaptive = true
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    static func footerLabel(for bytes: Int64) -> String {
+        detailedString(for: bytes)
+    }
+
+    private static func abbreviated(_ value: Double, unit: String, threshold: Double) -> String {
+        if value >= threshold {
+            return "\(Int(value.rounded()))\(unit)"
+        }
+        return String(format: "%.1f%@", value, unit)
+    }
+}
+
+final class MemoryUsageStore: ObservableObject {
+    static let shared = MemoryUsageStore()
+
+    @Published private(set) var snapshot: MemoryUsageSnapshot = .empty
+
+    private struct TrackedPanel {
+        let panelId: UUID
+        let workspaceId: UUID
+        let workspaceTitle: String
+        let panelTitle: String
+        let ttyName: String
+    }
+
+    private struct PollContext {
+        let appPID: Int32
+        let trackedPanels: [TrackedPanel]
+    }
+
+    private struct PSRow {
+        let pid: Int32
+        let ppid: Int32
+        let tty: String?
+        let residentBytes: Int64
+        let command: String
+    }
+
+    private let pollQueue = DispatchQueue(
+        label: "com.cmuxterm.memoryUsage",
+        qos: .utility
+    )
+    private var timer: DispatchSourceTimer?
+
+    private init() {
+        startPolling()
+    }
+
+    deinit {
+        timer?.setEventHandler {}
+        timer?.cancel()
+    }
+
+    private func startPolling() {
+        let timer = DispatchSource.makeTimerSource(queue: pollQueue)
+        timer.schedule(deadline: .now() + 0.5, repeating: .seconds(3), leeway: .milliseconds(400))
+        timer.setEventHandler { [weak self] in
+            self?.pollOnce()
+        }
+        self.timer = timer
+        timer.resume()
+        pollQueue.async { [weak self] in
+            self?.pollOnce()
+        }
+    }
+
+    private func pollOnce() {
+        let context = capturePollContext()
+        let rows = loadProcessRows()
+        let systemStats = querySystemMemory()
+        let nextSnapshot = buildSnapshot(context: context, rows: rows, systemStats: systemStats)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard self.snapshot != nextSnapshot else { return }
+            self.snapshot = nextSnapshot
+        }
+    }
+
+    private func capturePollContext() -> PollContext {
+        DispatchQueue.main.sync {
+            let managers = AppDelegate.shared?.allTabManagers() ?? []
+            var trackedPanels: [TrackedPanel] = []
+
+            for tabManager in managers {
+                for workspace in tabManager.tabs {
+                    let workspaceTitle = workspace.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? String(localized: "memory.workspace.fallbackTitle", defaultValue: "Workspace")
+                        : workspace.title
+                    for (panelId, ttyName) in workspace.surfaceTTYNames {
+                        guard workspace.terminalPanel(for: panelId) != nil else { continue }
+                        let trimmedTTY = ttyName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmedTTY.isEmpty else { continue }
+                        let rawPanelTitle = workspace.panelTitle(panelId: panelId)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let panelTitle = rawPanelTitle?.isEmpty == false
+                            ? rawPanelTitle!
+                            : String(localized: "memory.panel.fallbackTitle", defaultValue: "Terminal")
+                        trackedPanels.append(
+                            TrackedPanel(
+                                panelId: panelId,
+                                workspaceId: workspace.id,
+                                workspaceTitle: workspaceTitle,
+                                panelTitle: panelTitle,
+                                ttyName: trimmedTTY
+                            )
+                        )
+                    }
+                }
+            }
+
+            return PollContext(appPID: getpid(), trackedPanels: trackedPanels)
+        }
+    }
+
+    private func loadProcessRows() -> [PSRow] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/ps")
+        process.arguments = ["-axo", "pid=,ppid=,tty=,rss=,comm="]
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0,
+              let output = String(data: data, encoding: .utf8) else {
+            return []
+        }
+
+        return output
+            .split(whereSeparator: \.isNewline)
+            .compactMap { parsePSRow(String($0)) }
+    }
+
+    private func parsePSRow(_ line: String) -> PSRow? {
+        let components = line.split(
+            maxSplits: 4,
+            whereSeparator: { $0.isWhitespace }
+        )
+        guard components.count >= 5,
+              let pid = Int32(components[0]),
+              let ppid = Int32(components[1]),
+              let residentKB = Int64(components[3]) else {
+            return nil
+        }
+
+        let tty = normalizedTTY(String(components[2]))
+        let command = String(components[4]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return PSRow(
+            pid: pid,
+            ppid: ppid,
+            tty: tty,
+            residentBytes: residentKB * 1024,
+            command: command
+        )
+    }
+
+    private struct SystemMemoryStats {
+        let totalBytes: Int64
+        let availableBytes: Int64
+        let swapUsedBytes: Int64
+        let compressedBytes: Int64
+        let pressureLevel: SystemMemoryPressureLevel
+    }
+
+    private func querySystemMemory() -> SystemMemoryStats {
+        let pageSize = Int64(vm_kernel_page_size)
+        let totalBytes = Int64(ProcessInfo.processInfo.physicalMemory)
+
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &stats) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPtr, &count)
+            }
+        }
+
+        guard result == KERN_SUCCESS else {
+            return SystemMemoryStats(
+                totalBytes: totalBytes, availableBytes: 0,
+                swapUsedBytes: 0, compressedBytes: 0, pressureLevel: .normal
+            )
+        }
+
+        let freeBytes = Int64(stats.free_count) * pageSize
+        let inactiveBytes = Int64(stats.inactive_count) * pageSize
+        let purgeableBytes = Int64(stats.purgeable_count) * pageSize
+        let compressedBytes = Int64(stats.compressor_page_count) * pageSize
+        let availableBytes = freeBytes + inactiveBytes + purgeableBytes
+
+        var swapUsage = xsw_usage()
+        var swapSize = MemoryLayout<xsw_usage>.size
+        let swapResult = sysctlbyname("vm.swapusage", &swapUsage, &swapSize, nil, 0)
+        let swapUsedBytes = swapResult == 0 ? Int64(swapUsage.xsu_used) : 0
+
+        let availableRatio = Double(availableBytes) / Double(max(totalBytes, 1))
+        let swapRatio = Double(swapUsedBytes) / Double(max(totalBytes, 1))
+
+        let level: SystemMemoryPressureLevel
+        if availableRatio < 0.05 || swapRatio > 0.5 {
+            level = .critical
+        } else if availableRatio < 0.12 || swapRatio > 0.25 {
+            level = .warning
+        } else {
+            level = .normal
+        }
+
+        return SystemMemoryStats(
+            totalBytes: totalBytes,
+            availableBytes: availableBytes,
+            swapUsedBytes: swapUsedBytes,
+            compressedBytes: compressedBytes,
+            pressureLevel: level
+        )
+    }
+
+    private func buildSnapshot(context: PollContext, rows: [PSRow], systemStats: SystemMemoryStats) -> MemoryUsageSnapshot {
+        let trackedByTTY = context.trackedPanels.reduce(into: [String: TrackedPanel]()) { partialResult, panel in
+            guard let normalizedTTY = normalizedTTY(panel.ttyName) else { return }
+            partialResult[normalizedTTY] = panel
+        }
+
+        var appResidentBytes: Int64 = 0
+        var panelBytes: [UUID: Int64] = [:]
+
+        for row in rows {
+            if row.pid == context.appPID {
+                appResidentBytes = row.residentBytes
+            }
+
+            guard let tty = row.tty,
+                  let trackedPanel = trackedByTTY[tty] else {
+                continue
+            }
+            panelBytes[trackedPanel.panelId, default: 0] += row.residentBytes
+        }
+
+        var workspaceBytes: [UUID: Int64] = [:]
+        let topPanelConsumers = context.trackedPanels.compactMap { trackedPanel -> MemoryPanelConsumer? in
+            let bytes = panelBytes[trackedPanel.panelId] ?? 0
+            guard bytes > 0 else { return nil }
+            workspaceBytes[trackedPanel.workspaceId, default: 0] += bytes
+            return MemoryPanelConsumer(
+                panelId: trackedPanel.panelId,
+                workspaceId: trackedPanel.workspaceId,
+                workspaceTitle: trackedPanel.workspaceTitle,
+                panelTitle: trackedPanel.panelTitle,
+                bytes: bytes
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.bytes != rhs.bytes { return lhs.bytes > rhs.bytes }
+            return lhs.panelTitle.localizedCaseInsensitiveCompare(rhs.panelTitle) == .orderedAscending
+        }
+        .prefix(5)
+        .map { $0 }
+
+        let topSystemProcesses = rows
+            .filter { $0.pid != context.appPID && $0.residentBytes > 0 }
+            .sorted { lhs, rhs in
+                if lhs.residentBytes != rhs.residentBytes { return lhs.residentBytes > rhs.residentBytes }
+                return lhs.command.localizedCaseInsensitiveCompare(rhs.command) == .orderedAscending
+            }
+            .prefix(5)
+            .map {
+                MemoryProcessSummary(
+                    pid: $0.pid,
+                    name: displayProcessName(command: $0.command),
+                    bytes: $0.residentBytes
+                )
+            }
+
+        // Build process tree: map each PID to its workspace by walking the PPID chain.
+        // A process belongs to a workspace if any ancestor's TTY matches a tracked panel.
+        let pidToRow = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Map TTY-owning PIDs directly to their workspace
+        var pidToWorkspace: [Int32: (id: UUID, title: String)] = [:]
+        for row in rows {
+            guard let tty = row.tty, let panel = trackedByTTY[tty] else { continue }
+            pidToWorkspace[row.pid] = (panel.workspaceId, panel.workspaceTitle)
+        }
+
+        // For each non-app process, walk PPID chain to find workspace ownership
+        func resolveWorkspace(for pid: Int32) -> (id: UUID, title: String)? {
+            var current = pid
+            var visited: Set<Int32> = []
+            while let row = pidToRow[current] {
+                if let ws = pidToWorkspace[current] { return ws }
+                if !visited.insert(current).inserted { break }
+                if row.ppid == 0 || row.ppid == current { break }
+                current = row.ppid
+            }
+            return nil
+        }
+
+        // Group top processes by workspace
+        var grouped: [UUID?: (title: String, procs: [MemoryProcessSummary])] = [:]
+        let significantProcesses = rows
+            .filter { $0.pid != context.appPID && $0.residentBytes > 1024 * 1024 }
+            .sorted { $0.residentBytes > $1.residentBytes }
+            .prefix(20)
+
+        for row in significantProcesses {
+            let summary = MemoryProcessSummary(
+                pid: row.pid,
+                name: displayProcessName(command: row.command),
+                bytes: row.residentBytes
+            )
+            if let ws = resolveWorkspace(for: row.pid) {
+                grouped[ws.id, default: (ws.title, [])].procs.append(summary)
+            } else {
+                grouped[nil, default: (String(localized: "memory.popover.otherProcesses", defaultValue: "Other"), [])].procs.append(summary)
+            }
+        }
+
+        let processGroups = grouped
+            .map { key, value in
+                MemoryWorkspaceProcessGroup(
+                    workspaceId: key,
+                    workspaceTitle: value.title,
+                    processes: Array(value.procs.prefix(5)),
+                    totalBytes: value.procs.reduce(0) { $0 + $1.bytes }
+                )
+            }
+            .sorted { $0.totalBytes > $1.totalBytes }
+
+        return MemoryUsageSnapshot(
+            appResidentBytes: appResidentBytes,
+            trackedTerminalResidentBytes: panelBytes.values.reduce(0, +),
+            workspaceResidentBytes: workspaceBytes,
+            panelResidentBytes: panelBytes,
+            topPanelConsumers: topPanelConsumers,
+            topSystemProcesses: topSystemProcesses,
+            processGroups: processGroups,
+            systemPressureLevel: systemStats.pressureLevel,
+            systemTotalBytes: systemStats.totalBytes,
+            systemAvailableBytes: systemStats.availableBytes,
+            systemSwapUsedBytes: systemStats.swapUsedBytes,
+            systemCompressedBytes: systemStats.compressedBytes
+        )
+    }
+
+    private func normalizedTTY(_ rawTTY: String) -> String? {
+        let trimmed = rawTTY.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "??", trimmed != "?" else { return nil }
+        if trimmed.hasPrefix("/dev/") {
+            return String(trimmed.dropFirst("/dev/".count))
+        }
+        return trimmed
+    }
+
+    private func displayProcessName(command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return String(localized: "memory.process.unknown", defaultValue: "Unknown Process")
+        }
+        return URL(fileURLWithPath: trimmed).lastPathComponent
+    }
+}
+
+// MARK: - System Memory Pressure Monitor
+
+final class SystemMemoryPressureMonitor {
+    static let shared = SystemMemoryPressureMonitor()
+
+    private let actionQueue = DispatchQueue(
+        label: "com.cmuxterm.memoryPressureAction",
+        qos: .userInitiated
+    )
+    private var pressureSource: DispatchSourceMemoryPressure?
+    private var snapshotObserver: AnyCancellable?
+    private var lastHandledLevel: SystemMemoryPressureLevel = .normal
+    private var lastKillTime: TimeInterval = 0
+    private let killCooldown: TimeInterval = 30
+    private var isActive = false
+
+    private init() {
+        setupKernelPressureSource()
+        observeSnapshotPressure()
+    }
+
+    deinit {
+        pressureSource?.cancel()
+        snapshotObserver?.cancel()
+    }
+
+    /// Call after session restore completes to enable defensive actions.
+    func activate() {
+        actionQueue.async { self.isActive = true }
+    }
+
+    // MARK: - Kernel Pressure Source
+
+    private func setupKernelPressureSource() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical],
+            queue: actionQueue
+        )
+        source.setEventHandler { [weak self] in
+            guard let self, self.isActive else { return }
+            let event = source.data
+            if event.contains(.critical) {
+                self.handlePressureLevel(.critical)
+            } else if event.contains(.warning) {
+                self.handlePressureLevel(.warning)
+            }
+        }
+        self.pressureSource = source
+        source.resume()
+    }
+
+    /// Also react to polled pressure level changes from MemoryUsageStore.
+    private func observeSnapshotPressure() {
+        snapshotObserver = MemoryUsageStore.shared.$snapshot
+            .map(\.systemPressureLevel)
+            .removeDuplicates()
+            .receive(on: actionQueue)
+            .sink { [weak self] level in
+                guard let self, self.isActive, level > .normal else { return }
+                self.handlePressureLevel(level)
+            }
+    }
+
+    // MARK: - Pressure Handling
+
+    private func handlePressureLevel(_ level: SystemMemoryPressureLevel) {
+        // Runs on actionQueue
+        let snapshot = MemoryUsageStore.shared.snapshot
+
+#if DEBUG
+        dlog(
+            "memory.pressure level=\(level) available=\(MemoryUsageFormatter.compactString(for: snapshot.systemAvailableBytes)) " +
+            "swap=\(MemoryUsageFormatter.compactString(for: snapshot.systemSwapUsedBytes)) " +
+            "compressed=\(MemoryUsageFormatter.compactString(for: snapshot.systemCompressedBytes))"
+        )
+#endif
+
+        switch level {
+        case .normal:
+            break
+        case .warning:
+            handleWarning()
+        case .critical:
+            handleCritical(snapshot: snapshot)
+        }
+
+        lastHandledLevel = level
+    }
+
+    private func handleWarning() {
+        DispatchQueue.main.async {
+            AppDelegate.shared?.emergencySessionSave(reason: "memory_pressure_warning")
+        }
+    }
+
+    private func handleCritical(snapshot: MemoryUsageSnapshot) {
+        // 1. Emergency save first
+        DispatchQueue.main.async {
+            AppDelegate.shared?.emergencySessionSave(reason: "memory_pressure_critical")
+        }
+
+        // 2. Check kill cooldown
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastKillTime > killCooldown else {
+#if DEBUG
+            dlog("memory.pressure.kill cooldown active, skipping")
+#endif
+            return
+        }
+
+        // 3. Find and kill heaviest workspace
+        guard let target = findKillTarget(snapshot: snapshot) else {
+#if DEBUG
+            dlog("memory.pressure.kill no target exceeds thresholds")
+#endif
+            return
+        }
+
+        lastKillTime = now
+        killAndCloseWorkspace(target)
+    }
+
+    // MARK: - Kill Logic
+
+    private struct KillTarget {
+        let workspaceId: UUID
+        let workspaceTitle: String
+        let totalBytes: Int64
+        let heaviestPID: Int32
+        let heaviestProcessName: String
+        let heaviestProcessBytes: Int64
+    }
+
+    private func findKillTarget(snapshot: MemoryUsageSnapshot) -> KillTarget? {
+        guard MemoryPressureKillSettings.isEnabled() else {
+            return nil
+        }
+
+        let trackedTotal = snapshot.trackedTerminalResidentBytes
+        let threshold50Pct = trackedTotal / 2
+        let absoluteThreshold = MemoryPressureKillSettings.thresholdBytes()
+
+        guard let heaviestGroup = snapshot.processGroups
+            .filter({ $0.workspaceId != nil })
+            .max(by: { $0.totalBytes < $1.totalBytes }),
+            let wsId = heaviestGroup.workspaceId else {
+            return nil
+        }
+
+        guard heaviestGroup.totalBytes > threshold50Pct || heaviestGroup.totalBytes > absoluteThreshold else {
+            return nil
+        }
+
+        guard let heaviestProc = heaviestGroup.processes.max(by: { $0.bytes < $1.bytes }) else {
+            return nil
+        }
+
+        return KillTarget(
+            workspaceId: wsId,
+            workspaceTitle: heaviestGroup.workspaceTitle,
+            totalBytes: heaviestGroup.totalBytes,
+            heaviestPID: heaviestProc.pid,
+            heaviestProcessName: heaviestProc.name,
+            heaviestProcessBytes: heaviestProc.bytes
+        )
+    }
+
+    private func killAndCloseWorkspace(_ target: KillTarget) {
+#if DEBUG
+        dlog(
+            "memory.pressure.kill workspace=\"\(target.workspaceTitle)\" pid=\(target.heaviestPID) " +
+            "process=\(target.heaviestProcessName) bytes=\(MemoryUsageFormatter.compactString(for: target.heaviestProcessBytes))"
+        )
+#endif
+
+        // SIGKILL the heaviest process
+        Darwin.kill(target.heaviestPID, SIGKILL)
+
+        // Close workspace on main thread
+        DispatchQueue.main.async {
+            guard let appDelegate = AppDelegate.shared else { return }
+            for tabManager in appDelegate.allTabManagers() {
+                if let workspace = tabManager.tabs.first(where: { $0.id == target.workspaceId }) {
+                    tabManager.closeWorkspace(workspace)
+                    break
+                }
+            }
+        }
+
+        // Post macOS user notification
+        postKillNotification(target: target)
+    }
+
+    private func postKillNotification(target: KillTarget) {
+        let content = UNMutableNotificationContent()
+        content.title = String(
+            localized: "memory.pressure.kill.notification.title",
+            defaultValue: "Memory Pressure: Workspace Closed"
+        )
+        let memString = MemoryUsageFormatter.compactString(for: target.heaviestProcessBytes)
+        content.body = String(
+            localized: "memory.pressure.kill.notification.body",
+            defaultValue: "Workspace \"\(target.workspaceTitle)\" was closed to prevent a system crash. Process \(target.heaviestProcessName) was using \(memString)."
+        )
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "cmux.memory.pressure.kill.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }
 
@@ -645,6 +1396,32 @@ fileprivate func cmuxVsyncIOSurfaceTimelineCallback(
 }
 #endif
 
+enum CloseConfirmationRuntimeState {
+    private static let lock = NSLock()
+    private static var titleStack: [String] = []
+
+    static func begin(title: String) {
+        lock.lock()
+        titleStack.append(title)
+        lock.unlock()
+    }
+
+    static func end() {
+        lock.lock()
+        if !titleStack.isEmpty {
+            _ = titleStack.removeLast()
+        }
+        lock.unlock()
+    }
+
+    static func snapshot() -> (isPresented: Bool, title: String?) {
+        lock.lock()
+        let title = titleStack.last
+        lock.unlock()
+        return (title != nil, title)
+    }
+}
+
 @MainActor
 class TabManager: ObservableObject {
     private enum WorkspacePullRequestSnapshot: Equatable {
@@ -698,7 +1475,6 @@ class TabManager: ObservableObject {
     /// Static so port ranges don't overlap across multiple windows (each window has its own TabManager).
     private static var nextPortOrdinal: Int = 0
     private static let initialWorkspaceGitProbeDelays: [TimeInterval] = [0, 0.5, 1.5, 3.0, 6.0, 10.0]
-    private static let workspaceGitMetadataPollInterval: TimeInterval = 30
     private nonisolated static let workspacePullRequestProbeTimeout: TimeInterval = 5.0
     @Published var selectedTabId: UUID? {
         willSet {
@@ -758,7 +1534,15 @@ class TabManager: ObservableObject {
                 self.focusSelectedTabPanel(previousTabId: previousTabId)
                 self.updateWindowTitleForSelectedTab()
                 if let selectedTabId = self.selectedTabId {
-                    self.dismissFocusedPanelNotificationIfActive(tabId: selectedTabId)
+                    self.markFocusedPanelReadIfActive(tabId: selectedTabId)
+                }
+                // Sync external editor to the newly selected workspace's directory
+                if let workspace = self.selectedWorkspace {
+                    EditorSyncController.shared.workspaceDidChange(directory: workspace.currentDirectory)
+                }
+                // Keep the directory hook up to date for immediate-open
+                EditorSyncController.shared.currentWorkspaceDirectory = { [weak self] in
+                    self?.selectedWorkspace?.currentDirectory
                 }
 #if DEBUG
                 let dtMs = self.debugWorkspaceSwitchStartTime > 0
@@ -800,26 +1584,19 @@ class TabManager: ObservableObject {
     private var pendingWorkspaceUnfocusTarget: (tabId: UUID, panelId: UUID)?
     private var sidebarSelectedWorkspaceIds: Set<UUID> = []
     var confirmCloseHandler: ((String, String, Bool) -> Bool)?
-    private struct WorkspaceCreationTabSnapshot {
-        let id: UUID
-        let isPinned: Bool
+#if DEBUG
+    var debugConfirmCloseResponseOverride: Bool?
+#endif
+    private struct WorkspaceCreationSnapshot {
+        let tabs: [Workspace]
+        let selectedTabId: UUID?
 
-        @MainActor
-        init(workspace: Workspace) {
-            self.id = workspace.id
-            self.isPinned = workspace.isPinned
+        var selectedWorkspace: Workspace? {
+            guard let selectedTabId else { return nil }
+            return tabs.first(where: { $0.id == selectedTabId })
         }
     }
-
-    private struct WorkspaceCreationSnapshot {
-        let tabs: [WorkspaceCreationTabSnapshot]
-        let selectedTabId: UUID?
-        let selectedTabWasPinned: Bool
-        let preferredWorkingDirectory: String?
-        let inheritedTerminalFontPoints: Float?
-    }
     private var agentPIDSweepTimer: DispatchSourceTimer?
-    private var workspaceGitMetadataPollTimer: DispatchSourceTimer?
 #if DEBUG
     private var debugWorkspaceSwitchCounter: UInt64 = 0
     private var debugWorkspaceSwitchId: UInt64 = 0
@@ -861,12 +1638,12 @@ class TabManager: ObservableObject {
                 guard let self else { return }
                 guard let tabId = notification.userInfo?[GhosttyNotificationKey.tabId] as? UUID else { return }
                 guard let surfaceId = notification.userInfo?[GhosttyNotificationKey.surfaceId] as? UUID else { return }
-                dismissPanelNotificationOnFocusIfActive(tabId: tabId, panelId: surfaceId)
+                markPanelReadOnFocusIfActive(tabId: tabId, panelId: surfaceId)
             }
         })
 
         startAgentPIDSweepTimer()
-        startWorkspaceGitMetadataPollTimer()
+
 #if DEBUG
         setupUITestFocusShortcutsIfNeeded()
         setupSplitCloseRightUITestIfNeeded()
@@ -878,7 +1655,6 @@ class TabManager: ObservableObject {
     deinit {
         workspaceCycleCooldownTask?.cancel()
         agentPIDSweepTimer?.cancel()
-        workspaceGitMetadataPollTimer?.cancel()
     }
 
     // MARK: - Agent PID Sweep
@@ -898,93 +1674,6 @@ class TabManager: ObservableObject {
         }
         timer.resume()
         agentPIDSweepTimer = timer
-    }
-
-    /// Periodically refreshes git/PR metadata for tracked workspace branches so
-    /// remote GitHub state changes (e.g. PR open -> merged) reach sidebar state
-    /// even when the local branch/directory does not change.
-    private func startWorkspaceGitMetadataPollTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        let interval = Self.workspaceGitMetadataPollInterval
-        timer.schedule(deadline: .now() + interval, repeating: interval)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.refreshTrackedWorkspaceGitMetadata()
-            }
-        }
-        timer.resume()
-        workspaceGitMetadataPollTimer = timer
-    }
-
-    private func refreshTrackedWorkspaceGitMetadata() {
-        let activeProbeKeys = Set(workspaceGitProbeGenerationByKey.keys)
-
-        for workspace in tabs {
-            for panelId in trackedWorkspaceGitMetadataPollCandidatePanelIds(
-                in: workspace,
-                activeProbeKeys: activeProbeKeys
-            ) {
-                scheduleWorkspaceGitMetadataRefreshIfPossible(
-                    workspaceId: workspace.id,
-                    panelId: panelId,
-                    reason: "periodicPoll"
-                )
-            }
-        }
-    }
-
-    func refreshTrackedWorkspaceGitMetadataForTesting() {
-        refreshTrackedWorkspaceGitMetadata()
-    }
-
-    func trackedWorkspaceGitMetadataPollCandidatePanelIdsForTesting(workspaceId: UUID) -> Set<UUID> {
-        let activeProbeKeys = Set(workspaceGitProbeGenerationByKey.keys)
-        guard let workspace = tabs.first(where: { $0.id == workspaceId }) else {
-            return []
-        }
-        return trackedWorkspaceGitMetadataPollCandidatePanelIds(
-            in: workspace,
-            activeProbeKeys: activeProbeKeys
-        )
-    }
-
-    private func trackedWorkspaceGitMetadataPollCandidatePanelIds(
-        in workspace: Workspace,
-        activeProbeKeys: Set<WorkspaceGitProbeKey>
-    ) -> Set<UUID> {
-        var candidatePanelIds = Set(workspace.panelGitBranches.keys)
-        candidatePanelIds.formUnion(workspace.panelPullRequests.keys)
-
-        if candidatePanelIds.isEmpty,
-           let focusedPanelId = workspace.focusedPanelId,
-           workspace.gitBranch != nil || workspace.pullRequest != nil {
-            candidatePanelIds.insert(focusedPanelId)
-        }
-
-        return Set(candidatePanelIds.filter { panelId in
-            let probeKey = WorkspaceGitProbeKey(workspaceId: workspace.id, panelId: panelId)
-            guard !activeProbeKeys.contains(probeKey) else { return false }
-            return shouldPollTrackedWorkspaceGitMetadata(in: workspace, panelId: panelId)
-        })
-    }
-
-    private func shouldPollTrackedWorkspaceGitMetadata(in workspace: Workspace, panelId: UUID) -> Bool {
-        guard let branch = trackedWorkspaceGitBranch(in: workspace, panelId: panelId) else {
-            return true
-        }
-        return !Self.shouldSkipWorkspacePullRequestLookup(branch: branch)
-    }
-
-    private func trackedWorkspaceGitBranch(in workspace: Workspace, panelId: UUID) -> String? {
-        if let branch = workspace.panelGitBranches[panelId]?.branch {
-            return branch
-        }
-        if workspace.focusedPanelId == panelId {
-            return workspace.gitBranch?.branch
-        }
-        return nil
     }
 
     private func sweepStaleAgentPIDs() {
@@ -1151,55 +1840,8 @@ class TabManager: ObservableObject {
         focusedBrowserPanel?.hideFind()
     }
 
-    func makeWorkspaceForCreation(
-        title: String,
-        workingDirectory: String?,
-        portOrdinal: Int,
-        configTemplate: CmuxSurfaceConfigTemplate?,
-        initialTerminalCommand: String?,
-        initialTerminalEnvironment: [String: String]
-    ) -> Workspace {
-        Workspace(
-            title: title,
-            workingDirectory: workingDirectory,
-            portOrdinal: portOrdinal,
-            configTemplate: configTemplate,
-            initialTerminalCommand: initialTerminalCommand,
-            initialTerminalEnvironment: initialTerminalEnvironment
-        )
-    }
-
-    /// Test seam for mutating live workspace state after the creation snapshot is captured.
-    func didCaptureWorkspaceCreationSnapshot() {}
-
-#if DEBUG
-    private func maybeMutateSelectionDuringWorkspaceCreationForDev(
-        snapshot: WorkspaceCreationSnapshot
-    ) {
-        let env = ProcessInfo.processInfo.environment
-        let isEnabled: Bool = {
-            if let raw = env["CMUX_DEV_MUTATE_WORKSPACE_SELECTION_DURING_CREATION"] {
-                return raw == "1" || raw.caseInsensitiveCompare("true") == .orderedSame
-            }
-            return UserDefaults.standard.bool(forKey: "cmuxDevMutateWorkspaceSelectionDuringCreation")
-        }()
-        guard isEnabled,
-              let selectedTabId = snapshot.selectedTabId,
-              let targetId = snapshot.tabs.lazy.map(\.id).first(where: { $0 != selectedTabId }),
-              tabs.contains(where: { $0.id == targetId }) else {
-            return
-        }
-        dlog(
-            "workspace.create.devSelectionMutation from=\(selectedTabId.uuidString.prefix(5)) " +
-            "to=\(targetId.uuidString.prefix(5))"
-        )
-        self.selectedTabId = targetId
-    }
-#endif
-
     @discardableResult
     func addWorkspace(
-        title: String? = nil,
         workingDirectory overrideWorkingDirectory: String? = nil,
         initialTerminalCommand: String? = nil,
         initialTerminalEnvironment: [String: String] = [:],
@@ -1208,106 +1850,121 @@ class TabManager: ObservableObject {
         placementOverride: NewWorkspacePlacement? = nil,
         autoWelcomeIfNeeded: Bool = true
     ) -> Workspace {
-        let sourceWorkspace = selectedWorkspace
-        let capturedTabs = tabs
-        // Snapshot the selected tab from the pinned workspace instead of rereading the
-        // @Published selectedTabId storage after the inheritance helpers. The arm64 Nightly
-        // Cmd+N crash is in PublishedSubject.value.getter on that second getter read.
-        let capturedSelectedTabId = sourceWorkspace?.id
-        // Keep both the source workspace and the pre-creation workspace array alive for the
-        // entire creation path. Release ARC can otherwise drop retains early across the
-        // helper/insertion chain, which reintroduces use-after-free crashes in optimized builds.
-        return withExtendedLifetime((capturedTabs, sourceWorkspace)) {
-            let dir = preferredWorkingDirectoryForNewTab(workspace: sourceWorkspace)
-            let font = inheritedTerminalFontPointsForNewWorkspace(workspace: sourceWorkspace)
-            let snapshot = workspaceCreationSnapshotLite(
-                currentTabs: capturedTabs,
-                currentSelectedTabId: capturedSelectedTabId,
-                preferredWorkingDirectory: dir,
-                inheritedTerminalFontPoints: font
-            )
-            didCaptureWorkspaceCreationSnapshot()
-#if DEBUG
-            maybeMutateSelectionDuringWorkspaceCreationForDev(snapshot: snapshot)
-#endif
-            let nextTabCount = snapshot.tabs.count + 1
-            sentryBreadcrumb("workspace.create", data: ["tabCount": nextTabCount])
-            let explicitWorkingDirectory = normalizedWorkingDirectory(overrideWorkingDirectory)
-            let workingDirectory = explicitWorkingDirectory ?? snapshot.preferredWorkingDirectory
-            let inheritedConfig = workspaceCreationConfigTemplate(
-                inheritedTerminalFontPoints: snapshot.inheritedTerminalFontPoints
-            )
-            // Resolve placement against the pre-creation snapshot before Workspace init
-            // boots terminal state. The ssh/new-workspace path can otherwise crash while
-            // reading @Published placement state from existing workspaces mid-creation.
-            let insertIndex = newTabInsertIndex(snapshot: snapshot, placementOverride: placementOverride)
-            let ordinal = Self.nextPortOrdinal
-            Self.nextPortOrdinal += 1
-            let newWorkspace = makeWorkspaceForCreation(
-                title: title ?? "Terminal \(nextTabCount)",
-                workingDirectory: workingDirectory,
-                portOrdinal: ordinal,
-                configTemplate: inheritedConfig,
-                initialTerminalCommand: initialTerminalCommand,
-                initialTerminalEnvironment: initialTerminalEnvironment
-            )
-            newWorkspace.owningTabManager = self
-            if title != nil {
-                newWorkspace.setCustomTitle(title)
-            }
-            wireClosedBrowserTracking(for: newWorkspace)
-            if eagerLoadTerminal && !select {
-                requestBackgroundWorkspaceLoad(for: newWorkspace.id)
-            }
-            // Apply insertion to the current live array so post-snapshot closes/reorders
-            // are preserved instead of reintroducing stale workspace instances.
-            var updatedTabs = tabs
-            if insertIndex >= 0 && insertIndex <= updatedTabs.count {
-                updatedTabs.insert(newWorkspace, at: insertIndex)
-            } else {
-                updatedTabs.append(newWorkspace)
-            }
-            tabs = updatedTabs
-            if let explicitWorkingDirectory,
-               let terminalPanel = newWorkspace.focusedTerminalPanel {
-                scheduleInitialWorkspaceGitMetadataRefresh(
-                    workspaceId: newWorkspace.id,
-                    panelId: terminalPanel.id,
-                    directory: explicitWorkingDirectory
-                )
-            }
-            if eagerLoadTerminal {
-                if select {
-                    newWorkspace.focusedTerminalPanel?.surface.requestBackgroundSurfaceStartIfNeeded()
-                }
-            }
-            if select {
-#if DEBUG
-                debugPrimeWorkspaceSwitchTrigger("create", to: newWorkspace.id)
-#endif
-                selectedTabId = newWorkspace.id
-                NotificationCenter.default.post(
-                    name: .ghosttyDidFocusTab,
-                    object: nil,
-                    userInfo: [GhosttyNotificationKey.tabId: newWorkspace.id]
-                )
-            }
-#if DEBUG
-            UITestRecorder.incrementInt("addTabInvocations")
-            UITestRecorder.record([
-                "tabCount": String(updatedTabs.count),
-                "selectedTabId": select ? newWorkspace.id.uuidString : (snapshot.selectedTabId?.uuidString ?? "")
-            ])
-#endif
-            if autoWelcomeIfNeeded && select && !UserDefaults.standard.bool(forKey: WelcomeSettings.shownKey) {
-                if let appDelegate = AppDelegate.shared {
-                    appDelegate.sendWelcomeCommandWhenReady(to: newWorkspace, markShownOnSend: true)
-                } else {
-                    sendWelcomeWhenReady(to: newWorkspace)
-                }
-            }
-            return newWorkspace
+        // Snapshot current published state once so workspace creation doesn't repeatedly
+        // bounce through Combine-backed accessors while we're preparing the new workspace.
+        let snapshot = workspaceCreationSnapshot()
+        let nextTabCount = snapshot.tabs.count + 1
+        sentryBreadcrumb("workspace.create", data: ["tabCount": nextTabCount])
+        let explicitWorkingDirectory = normalizedWorkingDirectory(overrideWorkingDirectory)
+        let workingDirectory = explicitWorkingDirectory ?? preferredWorkingDirectoryForNewTab(snapshot: snapshot)
+        let inheritedConfig = inheritedTerminalConfigForNewWorkspace(snapshot: snapshot)
+        let ordinal = Self.nextPortOrdinal
+        Self.nextPortOrdinal += 1
+        let newWorkspace = Workspace(
+            title: "Terminal \(nextTabCount)",
+            workingDirectory: workingDirectory,
+            portOrdinal: ordinal,
+            configTemplate: inheritedConfig,
+            initialTerminalCommand: initialTerminalCommand,
+            initialTerminalEnvironment: initialTerminalEnvironment
+        )
+        newWorkspace.owningTabManager = self
+        wireClosedBrowserTracking(for: newWorkspace)
+        let insertIndex = newTabInsertIndex(snapshot: snapshot, placementOverride: placementOverride)
+        if eagerLoadTerminal && !select {
+            requestBackgroundWorkspaceLoad(for: newWorkspace.id)
         }
+        var updatedTabs = snapshot.tabs
+        if insertIndex >= 0 && insertIndex <= updatedTabs.count {
+            updatedTabs.insert(newWorkspace, at: insertIndex)
+        } else {
+            updatedTabs.append(newWorkspace)
+        }
+        tabs = updatedTabs
+        if let explicitWorkingDirectory,
+           let terminalPanel = newWorkspace.focusedTerminalPanel {
+            scheduleInitialWorkspaceGitMetadataRefresh(
+                workspaceId: newWorkspace.id,
+                panelId: terminalPanel.id,
+                directory: explicitWorkingDirectory
+            )
+        }
+        if eagerLoadTerminal {
+            if select {
+                newWorkspace.focusedTerminalPanel?.surface.requestBackgroundSurfaceStartIfNeeded()
+            }
+        }
+        if select {
+#if DEBUG
+            debugPrimeWorkspaceSwitchTrigger("create", to: newWorkspace.id)
+#endif
+            selectedTabId = newWorkspace.id
+            NotificationCenter.default.post(
+                name: .ghosttyDidFocusTab,
+                object: nil,
+                userInfo: [GhosttyNotificationKey.tabId: newWorkspace.id]
+            )
+        }
+#if DEBUG
+        UITestRecorder.incrementInt("addTabInvocations")
+        UITestRecorder.record([
+            "tabCount": String(updatedTabs.count),
+            "selectedTabId": select ? newWorkspace.id.uuidString : (snapshot.selectedTabId?.uuidString ?? "")
+        ])
+#endif
+        if autoWelcomeIfNeeded && select && !UserDefaults.standard.bool(forKey: WelcomeSettings.shownKey) {
+            if let appDelegate = AppDelegate.shared {
+                appDelegate.sendWelcomeCommandWhenReady(to: newWorkspace, markShownOnSend: true)
+            } else {
+                sendWelcomeWhenReady(to: newWorkspace)
+            }
+        }
+        return newWorkspace
+    }
+
+    @discardableResult
+    func addWorkspaceFromSnapshot(_ snapshot: SessionWorkspaceSnapshot, organizationName: String? = nil, select: Bool = true) -> Workspace {
+        let ordinal = Self.nextPortOrdinal
+        Self.nextPortOrdinal += 1
+        let workspace = Workspace(
+            title: snapshot.customTitle ?? snapshot.processTitle,
+            workingDirectory: snapshot.currentDirectory,
+            portOrdinal: ordinal
+        )
+        workspace.owningTabManager = self
+        workspace.restoreSessionSnapshot(snapshot)
+        workspace.setOrganizationName(organizationName ?? snapshot.organizationName)
+        wireClosedBrowserTracking(for: workspace)
+
+        let currentSnapshot = workspaceCreationSnapshot()
+        let insertIndex = newTabInsertIndex(snapshot: currentSnapshot, placementOverride: nil)
+        var updatedTabs = currentSnapshot.tabs
+        if insertIndex >= 0 && insertIndex <= updatedTabs.count {
+            updatedTabs.insert(workspace, at: insertIndex)
+        } else {
+            updatedTabs.append(workspace)
+        }
+        tabs = updatedTabs
+
+        if select {
+            selectedTabId = workspace.id
+            NotificationCenter.default.post(
+                name: .ghosttyDidFocusTab,
+                object: nil,
+                userInfo: [GhosttyNotificationKey.tabId: workspace.id]
+            )
+        }
+
+        let dir = snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !dir.isEmpty, let terminalPanel = workspace.focusedTerminalPanel {
+            scheduleInitialWorkspaceGitMetadataRefresh(
+                workspaceId: workspace.id,
+                panelId: terminalPanel.id,
+                directory: dir
+            )
+        }
+
+        return workspace
     }
 
     @MainActor
@@ -1585,10 +2242,6 @@ class TabManager: ObservableObject {
         directory: String,
         branch: String
     ) -> WorkspacePullRequestSnapshot {
-        guard !shouldSkipWorkspacePullRequestLookup(branch: branch) else {
-            return .notFound
-        }
-
         let repoSlugs = githubRepositorySlugs(directory: directory)
         guard !repoSlugs.isEmpty else {
             return .unsupportedRepository
@@ -1879,69 +2532,6 @@ class TabManager: ObservableObject {
         }
     }
 
-    private nonisolated static let fallbackCommandSearchDirectories: [String] = [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/opt/local/bin",
-    ]
-
-    nonisolated static func resolvedCommandPathForTesting(
-        executable: String,
-        environment: [String: String],
-        fallbackDirectories: [String]
-    ) -> String? {
-        resolvedCommandPath(
-            executable: executable,
-            environment: environment,
-            fallbackDirectories: fallbackDirectories
-        )
-    }
-
-    private nonisolated static func resolvedCommandPath(
-        executable: String,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        fallbackDirectories: [String] = fallbackCommandSearchDirectories
-    ) -> String? {
-        guard !executable.isEmpty else { return nil }
-        let fileManager = FileManager.default
-        if executable.contains("/") {
-            return fileManager.isExecutableFile(atPath: executable) ? executable : nil
-        }
-
-        var searchDirectories: [String] = []
-        var seenDirectories: Set<String> = []
-
-        func appendSearchPath(_ path: String?) {
-            guard let path else { return }
-            for rawComponent in path.split(separator: ":") {
-                let component = String(rawComponent).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !component.isEmpty,
-                      seenDirectories.insert(component).inserted else {
-                    continue
-                }
-                searchDirectories.append(component)
-            }
-        }
-
-        appendSearchPath(environment["PATH"])
-        appendSearchPath(getenv("PATH").map { String(cString: $0) })
-        if let bundledBinPath = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
-            appendSearchPath(bundledBinPath)
-        }
-        fallbackDirectories.forEach { appendSearchPath($0) }
-        appendSearchPath("/usr/bin:/bin:/usr/sbin:/sbin")
-
-        for directory in searchDirectories {
-            let candidate = URL(fileURLWithPath: directory, isDirectory: true)
-                .appendingPathComponent(executable)
-                .path
-            if fileManager.isExecutableFile(atPath: candidate) {
-                return candidate
-            }
-        }
-        return nil
-    }
-
     private nonisolated static func runCommand(
         directory: String,
         executable: String,
@@ -1971,13 +2561,8 @@ class TabManager: ObservableObject {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
-        if let resolvedExecutable = resolvedCommandPath(executable: executable) {
-            process.executableURL = URL(fileURLWithPath: resolvedExecutable)
-            process.arguments = arguments
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [executable] + arguments
-        }
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
         process.standardOutput = stdout
         process.standardError = stderr
@@ -2137,15 +2722,6 @@ class TabManager: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    nonisolated static func shouldSkipWorkspacePullRequestLookup(branch: String) -> Bool {
-        switch normalizedBranchName(branch) {
-        case "main", "master":
-            return true
-        default:
-            return false
-        }
-    }
-
     func requestBackgroundWorkspaceLoad(for workspaceId: UUID) {
         guard !pendingBackgroundWorkspaceLoadIds.contains(workspaceId) else { return }
         var updated = pendingBackgroundWorkspaceLoadIds
@@ -2194,157 +2770,52 @@ class TabManager: ObservableObject {
     }
 
     func terminalPanelForWorkspaceConfigInheritanceSource() -> TerminalPanel? {
-        terminalPanelForWorkspaceConfigInheritanceSource(workspace: selectedWorkspace)
-    }
-
-    /// Build a snapshot using pre-extracted value-type data. The caller is responsible
-    /// for obtaining `preferredWorkingDirectory` and `inheritedTerminalFontPoints` through
-    /// `self` (where `self.tabs` keeps all Workspace objects alive) so that no local
-    /// Workspace references are needed here.
-    private func workspaceCreationSnapshotLite(
-        currentTabs: [Workspace],
-        currentSelectedTabId: UUID?,
-        preferredWorkingDirectory: String?,
-        inheritedTerminalFontPoints: Float?
-    ) -> WorkspaceCreationSnapshot {
-        var tabSnapshots: [WorkspaceCreationTabSnapshot] = []
-        tabSnapshots.reserveCapacity(currentTabs.count)
-        for workspace in currentTabs {
-            // Keep each Workspace alive while copying the tiny value snapshot out of it.
-            // The optimized arm64 Nightly build can otherwise over-release during
-            // Collection.map, crashing here in swift_release / snapshot creation.
-            let snapshot = withExtendedLifetime(workspace) {
-                WorkspaceCreationTabSnapshot(workspace: workspace)
-            }
-            tabSnapshots.append(snapshot)
-        }
-        let selectedTabSnapshot = currentSelectedTabId.flatMap { selectedTabId in
-            tabSnapshots.first(where: { $0.id == selectedTabId })
-        }
-
-        return WorkspaceCreationSnapshot(
-            tabs: tabSnapshots,
-            selectedTabId: currentSelectedTabId,
-            selectedTabWasPinned: selectedTabSnapshot?.isPinned ?? false,
-            preferredWorkingDirectory: preferredWorkingDirectory,
-            inheritedTerminalFontPoints: inheritedTerminalFontPoints
-        )
+        terminalPanelForWorkspaceConfigInheritanceSource(snapshot: workspaceCreationSnapshot())
     }
 
     private func workspaceCreationSnapshot() -> WorkspaceCreationSnapshot {
-        workspaceCreationSnapshotLite(
-            currentTabs: tabs,
-            currentSelectedTabId: selectedTabId,
-            preferredWorkingDirectory: preferredWorkingDirectoryForNewTab(),
-            inheritedTerminalFontPoints: inheritedTerminalFontPointsForNewWorkspace()
+        WorkspaceCreationSnapshot(
+            tabs: tabs,
+            selectedTabId: selectedTabId
         )
     }
 
-    private func orderedLiveWorkspaceCreationTabs(
-        from snapshot: WorkspaceCreationSnapshot
-    ) -> [WorkspaceCreationTabSnapshot]? {
-        let currentTabs = tabs
-        let snapshotTabsById = Dictionary(uniqueKeysWithValues: snapshot.tabs.map { ($0.id, $0) })
-        var orderedTabs: [WorkspaceCreationTabSnapshot] = []
-        orderedTabs.reserveCapacity(currentTabs.count)
-
-        for workspace in currentTabs {
-            guard let tabSnapshot = snapshotTabsById[workspace.id] else {
-#if DEBUG
-                dlog(
-                    "workspace.create.reentrantSnapshotFallback " +
-                    "snapshotCount=\(snapshot.tabs.count) liveCount=\(currentTabs.count)"
-                )
-#endif
-                return nil
-            }
-            orderedTabs.append(tabSnapshot)
-        }
-
-        return orderedTabs
-    }
-
     private func terminalPanelForWorkspaceConfigInheritanceSource(
-        workspace: Workspace?
+        snapshot: WorkspaceCreationSnapshot
     ) -> TerminalPanel? {
-        guard let workspace else { return nil }
-        // Prefer cached/published panel state here instead of walking live Bonsplit focus
-        // during Cmd+N; rapid workspace creation can observe transient pane/tab selection.
-        let panels = workspace.panels
-        var candidates: [TerminalPanel] = []
-        var seen: Set<UUID> = []
-
-        func appendCandidate(_ panel: TerminalPanel?) {
-            guard let panel, seen.insert(panel.id).inserted else { return }
-            candidates.append(panel)
+        guard let workspace = snapshot.selectedWorkspace else { return nil }
+        if let focusedTerminal = workspace.focusedTerminalPanel {
+            return focusedTerminal
         }
-
-        appendCandidate(workspace.lastRememberedTerminalPanelForConfigInheritance())
-        for terminalPanel in panels.values
-            .compactMap({ $0 as? TerminalPanel })
-            .sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
-            appendCandidate(terminalPanel)
+        if let rememberedTerminal = workspace.lastRememberedTerminalPanelForConfigInheritance() {
+            return rememberedTerminal
         }
-
-        if let livePanel = candidates.first(where: { $0.surface.hasLiveSurface && $0.surface.surface != nil }) {
-            return livePanel
+        if let focusedPaneId = workspace.bonsplitController.focusedPaneId,
+           let paneTerminal = workspace.terminalPanelForConfigInheritance(inPane: focusedPaneId) {
+            return paneTerminal
         }
-        return candidates.first
+        return workspace.terminalPanelForConfigInheritance()
     }
 
-    private func inheritedTerminalConfigForNewWorkspace() -> CmuxSurfaceConfigTemplate? {
-        inheritedTerminalConfigForNewWorkspace(workspace: selectedWorkspace)
+    private func inheritedTerminalConfigForNewWorkspace() -> ghostty_surface_config_s? {
+        inheritedTerminalConfigForNewWorkspace(snapshot: workspaceCreationSnapshot())
     }
 
-    private func cachedInheritedTerminalFontPointsForNewWorkspace(
-        workspace: Workspace?
-    ) -> Float? {
-        guard let workspace else { return nil }
-        // New workspace creation only seeds font size into a fresh Swift-owned template.
-        // Avoid reading live panel/surface state here; the arm64 Nightly Cmd+N crash path
-        // was repeatedly dereferencing pointer-backed terminal objects while preparing the
-        // new workspace. The workspace already caches the rooted font lineage we need.
-        return withExtendedLifetime(workspace) {
-            guard let fontPoints = workspace.lastRememberedTerminalFontPointsForConfigInheritance(),
-                  fontPoints > 0 else {
-                return nil
-            }
-            return fontPoints
+    private func inheritedTerminalConfigForNewWorkspace(
+        snapshot: WorkspaceCreationSnapshot
+    ) -> ghostty_surface_config_s? {
+        if let sourceSurface = terminalPanelForWorkspaceConfigInheritanceSource(snapshot: snapshot)?.surface.surface {
+            return cmuxInheritedSurfaceConfig(
+                sourceSurface: sourceSurface,
+                context: GHOSTTY_SURFACE_CONTEXT_TAB
+            )
         }
-    }
-
-    func inheritedTerminalConfigForNewWorkspace(
-        workspace: Workspace?
-    ) -> CmuxSurfaceConfigTemplate? {
-        guard let fontPoints = cachedInheritedTerminalFontPointsForNewWorkspace(workspace: workspace) else {
-            return nil
+        if let fallbackFontPoints = snapshot.selectedWorkspace?.lastRememberedTerminalFontPointsForConfigInheritance() {
+            var config = ghostty_surface_config_new()
+            config.font_size = fallbackFontPoints
+            return config
         }
-        var config = CmuxSurfaceConfigTemplate()
-        config.fontSize = fontPoints
-        return config
-    }
-
-    private func inheritedTerminalFontPointsForNewWorkspace() -> Float? {
-        inheritedTerminalFontPointsForNewWorkspace(workspace: selectedWorkspace)
-    }
-
-    private func inheritedTerminalFontPointsForNewWorkspace(
-        workspace: Workspace?
-    ) -> Float? {
-        cachedInheritedTerminalFontPointsForNewWorkspace(workspace: workspace)
-    }
-
-    private func workspaceCreationConfigTemplate(
-        inheritedTerminalFontPoints: Float?
-    ) -> CmuxSurfaceConfigTemplate? {
-        guard let inheritedTerminalFontPoints, inheritedTerminalFontPoints > 0 else {
-            return nil
-        }
-        // Rebuild a clean Swift-owned template instead of carrying over any pointer-backed
-        // inherited config state from the source workspace.
-        var config = CmuxSurfaceConfigTemplate()
-        config.fontSize = inheritedTerminalFontPoints
-        return config
+        return nil
     }
 
     private func normalizedWorkingDirectory(_ directory: String?) -> String? {
@@ -2363,52 +2834,47 @@ class TabManager: ObservableObject {
         placementOverride: NewWorkspacePlacement? = nil
     ) -> Int {
         let placement = placementOverride ?? WorkspacePlacementSettings.current()
-        let liveTabs = orderedLiveWorkspaceCreationTabs(from: snapshot) ?? snapshot.tabs
-        let pinnedCount = liveTabs.reduce(into: 0) { partial, tab in
+        let tabs = snapshot.tabs
+        var pinnedCount = 0
+        var selectedIndex: Int?
+        var selectedIsPinned = false
+        let selectedTabId = snapshot.selectedTabId
+
+        for (index, tab) in tabs.enumerated() {
             if tab.isPinned {
-                partial += 1
+                pinnedCount += 1
+            }
+            if selectedIndex == nil, tab.id == selectedTabId {
+                selectedIndex = index
+                selectedIsPinned = tab.isPinned
             }
         }
 
-        switch placement {
-        case .top:
-            return pinnedCount
-        case .end:
-            return liveTabs.count
-        case .afterCurrent:
-            if let selectedTabId = snapshot.selectedTabId,
-               let selectedIndex = liveTabs.firstIndex(where: { $0.id == selectedTabId }) {
-                return WorkspacePlacementSettings.insertionIndex(
-                    placement: placement,
-                    selectedIndex: selectedIndex,
-                    selectedIsPinned: snapshot.selectedTabWasPinned,
-                    pinnedCount: pinnedCount,
-                    totalCount: liveTabs.count
-                )
-            }
-            return snapshot.selectedTabWasPinned ? pinnedCount : liveTabs.count
-        }
+        return WorkspacePlacementSettings.insertionIndex(
+            placement: placement,
+            selectedIndex: selectedIndex,
+            selectedIsPinned: selectedIsPinned,
+            pinnedCount: pinnedCount,
+            totalCount: tabs.count
+        )
     }
 
     private func preferredWorkingDirectoryForNewTab() -> String? {
-        preferredWorkingDirectoryForNewTab(workspace: selectedWorkspace)
+        preferredWorkingDirectoryForNewTab(snapshot: workspaceCreationSnapshot())
     }
 
     private func preferredWorkingDirectoryForNewTab(
-        workspace: Workspace?
+        snapshot: WorkspaceCreationSnapshot
     ) -> String? {
-        guard let workspace else {
+        guard let tab = snapshot.selectedWorkspace else {
             return nil
         }
-        // Use cached directory state only; avoiding live focus traversal keeps workspace
-        // creation resilient when Bonsplit is in the middle of a rapid Cmd+N churn.
-        if let currentDirectory = normalizedWorkingDirectory(workspace.currentDirectory) {
-            return currentDirectory
-        }
-
-        return workspace.panelDirectories.values.lazy.compactMap { directory in
-            self.normalizedWorkingDirectory(directory)
-        }.first
+        let focusedDirectory = tab.focusedPanelId
+            .flatMap { tab.panelDirectories[$0] }
+        let candidate = focusedDirectory ?? tab.currentDirectory
+        let normalized = normalizeDirectory(candidate)
+        let trimmed = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : normalized
     }
 
     func moveTabToTop(_ tabId: UUID) {
@@ -2587,6 +3053,7 @@ class TabManager: ObservableObject {
 
     func closeWorkspace(_ workspace: Workspace) {
         guard tabs.count > 1 else { return }
+        autoSaveOrganization(workspace)
         sentryBreadcrumb("workspace.close", data: ["tabCount": tabs.count - 1])
         clearWorkspaceGitProbes(workspaceId: workspace.id)
         sidebarSelectedWorkspaceIds.remove(workspace.id)
@@ -2766,13 +3233,43 @@ class TabManager: ObservableObject {
 #if DEBUG
         debugPrimeWorkspaceSwitchTrigger("select", to: workspace.id)
 #endif
+        // Auto-save the workspace we're switching away from
+        if let previous = tabs.first(where: { $0.id == selectedTabId }), previous.id != workspace.id {
+            autoSaveOrganization(previous)
+        }
         selectedTabId = workspace.id
     }
 
     // Keep selectTab as convenience alias
     func selectTab(_ tab: Workspace) { selectWorkspace(tab) }
 
+    // MARK: - Organization Auto-Save
+
+    private func autoSaveOrganization(_ workspace: Workspace) {
+        let name = workspace.organizationName
+            ?? (workspace.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? String(localized: "workspace.displayName.fallback", defaultValue: "Workspace")
+                : workspace.title)
+        let snapshot = workspace.sessionSnapshot(includeScrollback: false)
+        let existing = WorkspaceOrganizationStore.loadAll()
+        if existing.count >= WorkspaceOrganizationStore.maxOrganizations,
+           existing.first(where: {
+               $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame &&
+               $0.snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines) ==
+                   snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+           }) == nil,
+           let oldest = existing.last {
+            WorkspaceOrganizationStore.remove(oldest.id)
+        }
+        _ = WorkspaceOrganizationStore.upsertAutomaticSnapshot(name: name, snapshot: snapshot)
+    }
+
     private func confirmClose(title: String, message: String, acceptCmdD: Bool) -> Bool {
+#if DEBUG
+        if let debugConfirmCloseResponseOverride {
+            return debugConfirmCloseResponseOverride
+        }
+#endif
         if let confirmCloseHandler {
             return confirmCloseHandler(title, message, acceptCmdD)
         }
@@ -2799,6 +3296,8 @@ class TabManager: ObservableObject {
             NSApp.activate(ignoringOtherApps: true)
         }
 
+        CloseConfirmationRuntimeState.begin(title: title)
+        defer { CloseConfirmationRuntimeState.end() }
         return alert.runModal() == .alertFirstButtonReturn
     }
 
@@ -3042,26 +3541,13 @@ class TabManager: ObservableObject {
     func closePanelAfterChildExited(tabId: UUID, surfaceId: UUID) {
         guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
         guard tab.panels[surfaceId] != nil else { return }
-        let keepsRemoteWorkspaceOpen =
-            tab.panels.count <= 1 && tab.shouldDemoteWorkspaceAfterChildExit(surfaceId: surfaceId)
 
 #if DEBUG
         dlog(
             "surface.close.childExited tab=\(tabId.uuidString.prefix(5)) " +
-            "surface=\(surfaceId.uuidString.prefix(5)) panels=\(tab.panels.count) workspaces=\(tabs.count) " +
-            "remoteWorkspace=\(tab.isRemoteWorkspace ? 1 : 0) keepRemote=\(keepsRemoteWorkspaceOpen ? 1 : 0)"
+            "surface=\(surfaceId.uuidString.prefix(5)) panels=\(tab.panels.count) workspaces=\(tabs.count)"
         )
 #endif
-
-        // Exiting the last SSH surface should demote the workspace back to a local one.
-        // Route through Workspace close handling so remote teardown and replacement-panel
-        // logic run before TabManager considers removing the workspace itself, including
-        // session-end paths where remote configuration was cleared before Ghostty delivered
-        // the child-exit callback.
-        if keepsRemoteWorkspaceOpen {
-            closeRuntimeSurface(tabId: tabId, surfaceId: surfaceId)
-            return
-        }
 
         // Child-exit on the last panel should collapse the workspace, matching explicit close
         // semantics (and close the window when it was the last workspace).
@@ -3155,16 +3641,17 @@ class TabManager: ObservableObject {
         guard let selectedTabId,
               let tab = tabs.first(where: { $0.id == selectedTabId }) else { return }
 
-        let panelId: UUID
+        // Try to restore previous focus
         if let restoredPanelId = lastFocusedPanelByTab[selectedTabId],
-           tab.panels[restoredPanelId] != nil {
-            panelId = restoredPanelId
-        } else if let focusedPanelId = tab.focusedPanelId,
-                  tab.panels[focusedPanelId] != nil {
-            panelId = focusedPanelId
-        } else {
-            return
+           tab.panels[restoredPanelId] != nil,
+           tab.focusedPanelId != restoredPanelId {
+            tab.focusPanel(restoredPanelId)
         }
+
+        // Focus the panel via Workspace.focusPanel so browser tabs reuse the same
+        // activation path that restores blank-tab omnibar focus.
+        guard let panelId = tab.focusedPanelId,
+              tab.panels[panelId] != nil else { return }
 
         // Defer unfocusing the previous workspace's panel until ContentView confirms handoff
         // completion (new workspace has focus or timeout fallback), to avoid a visible freeze gap.
@@ -3177,8 +3664,6 @@ class TabManager: ObservableObject {
             )
         }
 
-        // Route workspace reactivation through the normal focus machinery so panel-local
-        // activation intents like browser find-field focus are restored on return.
         tab.focusPanel(panelId)
     }
 
@@ -3270,20 +3755,25 @@ class TabManager: ObservableObject {
         selectedTabId != pendingTabId
     }
 
-    private func dismissFocusedPanelNotificationIfActive(tabId: UUID) {
+    private func markFocusedPanelReadIfActive(tabId: UUID) {
         let shouldSuppressFlash = suppressFocusFlash
         suppressFocusFlash = false
         guard !shouldSuppressFlash else { return }
         guard AppFocusState.isAppActive() else { return }
         guard let panelId = focusedPanelId(for: tabId) else { return }
-        dismissPanelNotificationOnFocusIfActive(tabId: tabId, panelId: panelId)
+        markPanelReadOnFocusIfActive(tabId: tabId, panelId: panelId)
     }
 
-    private func dismissPanelNotificationOnFocusIfActive(tabId: UUID, panelId: UUID) {
+    private func markPanelReadOnFocusIfActive(tabId: UUID, panelId: UUID) {
         guard selectedTabId == tabId else { return }
         guard !suppressFocusFlash else { return }
         guard AppFocusState.isAppActive() else { return }
-        _ = dismissNotificationOnDirectInteraction(tabId: tabId, surfaceId: panelId)
+        guard let notificationStore = AppDelegate.shared?.notificationStore else { return }
+        guard notificationStore.hasUnreadNotification(forTabId: tabId, surfaceId: panelId) else { return }
+        if let tab = tabs.first(where: { $0.id == tabId }) {
+            tab.triggerNotificationFocusFlash(panelId: panelId, requiresSplit: false, shouldFocus: false)
+        }
+        notificationStore.markRead(forTabId: tabId, surfaceId: panelId)
     }
 
     @discardableResult
@@ -3291,17 +3781,12 @@ class TabManager: ObservableObject {
         guard selectedTabId == tabId else { return false }
         guard AppFocusState.isAppActive() else { return false }
         guard let notificationStore = AppDelegate.shared?.notificationStore else { return false }
-        let hasUnreadNotification = notificationStore.hasUnreadNotification(forTabId: tabId, surfaceId: surfaceId)
-        let hasFocusedIndicator = notificationStore.hasVisibleNotificationIndicator(forTabId: tabId, surfaceId: surfaceId)
-        guard hasUnreadNotification || hasFocusedIndicator else { return false }
-        if hasUnreadNotification {
-            notificationStore.markRead(forTabId: tabId, surfaceId: surfaceId)
-        }
-        notificationStore.clearFocusedReadIndicator(forTabId: tabId, surfaceId: surfaceId)
+        guard notificationStore.hasUnreadNotification(forTabId: tabId, surfaceId: surfaceId) else { return false }
         if let panelId = surfaceId,
            let tab = tabs.first(where: { $0.id == tabId }) {
-            tab.triggerNotificationDismissFlash(panelId: panelId)
+            tab.triggerNotificationFocusFlash(panelId: panelId, requiresSplit: false, shouldFocus: false)
         }
+        notificationStore.markRead(forTabId: tabId, surfaceId: surfaceId)
         return true
     }
 
@@ -3410,6 +3895,7 @@ class TabManager: ObservableObject {
 
     @discardableResult
     func focusTabFromNotification(_ tabId: UUID, surfaceId: UUID? = nil) -> Bool {
+        let wasSelected = selectedTabId == tabId
         guard let tab = tabs.first(where: { $0.id == tabId }) else {
 #if DEBUG
             dlog("notification.focus.fail tab=\(tabId.uuidString.prefix(5)) reason=missingTab")
@@ -3436,11 +3922,20 @@ class TabManager: ObservableObject {
         tab.clearSplitZoom()
         suppressFocusFlash = true
         focusTab(tabId, surfaceId: desiredPanelId, suppressFlash: true)
-        suppressFocusFlash = false
+        if wasSelected {
+            suppressFocusFlash = false
+        }
 
-        if let targetPanelId = desiredPanelId ?? tab.focusedPanelId,
-           tab.panels[targetPanelId] != nil {
-            _ = dismissNotificationOnDirectInteraction(tabId: tabId, surfaceId: targetPanelId)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self,
+                  let tab = self.tabs.first(where: { $0.id == tabId }) else { return }
+            let targetPanelId = desiredPanelId ?? tab.focusedPanelId
+            guard let targetPanelId,
+                  tab.panels[targetPanelId] != nil else { return }
+            guard let notificationStore = AppDelegate.shared?.notificationStore else { return }
+            guard notificationStore.hasUnreadNotification(forTabId: tabId, surfaceId: targetPanelId) else { return }
+            tab.triggerNotificationFocusFlash(panelId: targetPanelId, requiresSplit: false, shouldFocus: true)
+            notificationStore.markRead(forTabId: tabId, surfaceId: targetPanelId)
         }
         return true
     }
@@ -3779,36 +4274,9 @@ class TabManager: ObservableObject {
 
     /// Resize split - not directly supported by bonsplit, but we can adjust divider positions
     func resizeSplit(tabId: UUID, surfaceId: UUID, direction: ResizeDirection, amount: UInt16) -> Bool {
-        guard amount > 0,
-              let tab = tabs.first(where: { $0.id == tabId }),
-              let paneId = tab.paneId(forPanelId: surfaceId) else { return false }
-
-        let paneUUID = paneId.id
-        guard tab.bonsplitController.allPaneIds.contains(where: { $0.id == paneUUID }) else {
-            return false
-        }
-
-        var candidates: [ResizeSplitCandidate] = []
-        let trace = resizeSplitCollectCandidates(
-            node: tab.bonsplitController.treeSnapshot(),
-            targetPaneId: paneUUID.uuidString,
-            candidates: &candidates
-        )
-        guard trace.containsTarget else { return false }
-
-        let orientationMatches = candidates.filter { $0.orientation == direction.splitOrientation }
-        guard !orientationMatches.isEmpty else { return false }
-
-        guard let candidate = orientationMatches.first(where: {
-            $0.paneInFirstChild == direction.requiresPaneInFirstChild
-        }) else {
-            return false
-        }
-
-        let delta = CGFloat(amount) / candidate.axisPixels
-        let requested = candidate.dividerPosition + (direction.dividerDeltaSign * delta)
-        let clamped = min(max(requested, 0.1), 0.9)
-        return tab.bonsplitController.setDividerPosition(clamped, forSplit: candidate.splitId, fromExternal: true)
+        // Bonsplit handles resize through its own divider dragging
+        // This is a no-op for now as bonsplit manages divider positions internally
+        return false
     }
 
     /// Equalize splits - not directly supported by bonsplit
@@ -3872,68 +4340,6 @@ class TabManager: ObservableObject {
                 foundSplit: &foundSplit,
                 allSucceeded: &allSucceeded
             )
-        }
-    }
-
-    private struct ResizeSplitCandidate {
-        let splitId: UUID
-        let orientation: String
-        let paneInFirstChild: Bool
-        let dividerPosition: CGFloat
-        let axisPixels: CGFloat
-    }
-
-    private struct ResizeSplitTrace {
-        let containsTarget: Bool
-        let bounds: CGRect
-    }
-
-    private func resizeSplitCollectCandidates(
-        node: ExternalTreeNode,
-        targetPaneId: String,
-        candidates: inout [ResizeSplitCandidate]
-    ) -> ResizeSplitTrace {
-        switch node {
-        case .pane(let pane):
-            let bounds = CGRect(
-                x: pane.frame.x,
-                y: pane.frame.y,
-                width: pane.frame.width,
-                height: pane.frame.height
-            )
-            return ResizeSplitTrace(containsTarget: pane.id == targetPaneId, bounds: bounds)
-
-        case .split(let split):
-            let first = resizeSplitCollectCandidates(
-                node: split.first,
-                targetPaneId: targetPaneId,
-                candidates: &candidates
-            )
-            let second = resizeSplitCollectCandidates(
-                node: split.second,
-                targetPaneId: targetPaneId,
-                candidates: &candidates
-            )
-
-            let combinedBounds = first.bounds.union(second.bounds)
-            let containsTarget = first.containsTarget || second.containsTarget
-
-            if containsTarget,
-               let splitUUID = UUID(uuidString: split.id) {
-                let orientation = split.orientation.lowercased()
-                let axisPixels: CGFloat = orientation == "horizontal"
-                    ? combinedBounds.width
-                    : combinedBounds.height
-                candidates.append(ResizeSplitCandidate(
-                    splitId: splitUUID,
-                    orientation: orientation,
-                    paneInFirstChild: first.containsTarget,
-                    dividerPosition: CGFloat(split.dividerPosition),
-                    axisPixels: max(axisPixels, 1)
-                ))
-            }
-
-            return ResizeSplitTrace(containsTarget: containsTarget, bounds: combinedBounds)
         }
     }
 
@@ -5494,12 +5900,20 @@ extension TabManager {
         return hasher.finalize()
     }
 
-    func sessionSnapshot(includeScrollback: Bool) -> SessionTabManagerSnapshot {
+    func sessionSnapshot(
+        includeScrollback: Bool,
+        includeUnsafeTerminalScrollback: Bool = false
+    ) -> SessionTabManagerSnapshot {
         let restorableTabs = tabs
             .filter { !$0.isRemoteWorkspace }
             .prefix(SessionPersistencePolicy.maxWorkspacesPerWindow)
         let workspaceSnapshots = restorableTabs
-            .map { $0.sessionSnapshot(includeScrollback: includeScrollback) }
+            .map {
+                $0.sessionSnapshot(
+                    includeScrollback: includeScrollback,
+                    includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+                )
+            }
         let selectedWorkspaceIndex = selectedTabId.flatMap { selectedTabId in
             restorableTabs.firstIndex(where: { $0.id == selectedTabId })
         }
@@ -5509,19 +5923,8 @@ extension TabManager {
         )
     }
 
-    private func releaseRestoredAwayWorkspace(_ workspace: Workspace) {
-        // Session restore replaces the bootstrap workspace objects with freshly
-        // restored ones. Tear the old graph down after the atomic swap so late
-        // panel/socket callbacks cannot keep mutating hidden pre-restore state.
-        AppDelegate.shared?.notificationStore?.clearNotifications(forTabId: workspace.id)
-        workspace.teardownAllPanels()
-        workspace.teardownRemoteConnection()
-        workspace.owningTabManager = nil
-    }
-
     func restoreSessionSnapshot(_ snapshot: SessionTabManagerSnapshot) {
-        let previousTabs = tabs
-        for tab in previousTabs {
+        for tab in tabs {
             unwireClosedBrowserTracking(for: tab)
         }
         let existingProbeKeys = Set(workspaceGitProbeGenerationByKey.keys)
@@ -5585,12 +5988,6 @@ extension TabManager {
         // never see an intermediate state with empty tabs or nil selection.
         tabs = newTabs
         selectedTabId = newSelectedId
-        let existingIds = Set(newTabs.map(\.id))
-        pruneBackgroundWorkspaceLoads(existingIds: existingIds)
-        sidebarSelectedWorkspaceIds.formIntersection(existingIds)
-        for workspace in previousTabs {
-            releaseRestoredAwayWorkspace(workspace)
-        }
         for workspace in newTabs {
             let terminalPanels = workspace.panels.values.compactMap { $0 as? TerminalPanel }
             for terminalPanel in terminalPanels {
@@ -5639,31 +6036,6 @@ enum SplitDirection {
 /// Resize direction for backwards compatibility
 enum ResizeDirection {
     case left, right, up, down
-
-    var splitOrientation: String {
-        switch self {
-        case .left, .right:
-            return "horizontal"
-        case .up, .down:
-            return "vertical"
-        }
-    }
-
-    /// A split controls the target pane's right/bottom edge when the target is
-    /// the first child, and left/top edge when the target is the second child.
-    var requiresPaneInFirstChild: Bool {
-        switch self {
-        case .right, .down:
-            return true
-        case .left, .up:
-            return false
-        }
-    }
-
-    /// Positive values move the divider toward the second child (right/down).
-    var dividerDeltaSign: CGFloat {
-        requiresPaneInFirstChild ? 1 : -1
-    }
 }
 
 extension Notification.Name {
@@ -5679,6 +6051,7 @@ extension Notification.Name {
     static let commandPaletteRenameInputDeleteBackwardRequested = Notification.Name("cmux.commandPaletteRenameInputDeleteBackwardRequested")
     static let feedbackComposerRequested = Notification.Name("cmux.feedbackComposerRequested")
     static let ghosttyDidSetTitle = Notification.Name("ghosttyDidSetTitle")
+    static let workspaceDidUpdatePresentationMetadata = Notification.Name("cmux.workspaceDidUpdatePresentationMetadata")
     static let ghosttyDidFocusTab = Notification.Name("ghosttyDidFocusTab")
     static let ghosttyDidFocusSurface = Notification.Name("ghosttyDidFocusSurface")
     static let ghosttyDidBecomeFirstResponderSurface = Notification.Name("ghosttyDidBecomeFirstResponderSurface")

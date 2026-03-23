@@ -5738,17 +5738,51 @@ class TerminalController {
         return output
     }
 
+    nonisolated static func resolvedSnapshotTerminalText(
+        vtExportText: String?,
+        liveReadText: String?
+    ) -> String? {
+        struct Candidate {
+            let text: String
+            let sourceRank: Int
+
+            var lineCount: Int {
+                text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+            }
+
+            var byteCount: Int {
+                text.utf8.count
+            }
+        }
+
+        let candidates: [Candidate] = [
+            vtExportText.map { Candidate(text: $0, sourceRank: 1) },
+            liveReadText.map { Candidate(text: $0, sourceRank: 0) },
+        ].compactMap { $0 }
+
+        return candidates.max { lhs, rhs in
+            if lhs.lineCount != rhs.lineCount {
+                return lhs.lineCount < rhs.lineCount
+            }
+            if lhs.byteCount != rhs.byteCount {
+                return lhs.byteCount < rhs.byteCount
+            }
+            return lhs.sourceRank < rhs.sourceRank
+        }?.text
+    }
+
     func readTerminalTextForSnapshot(
         terminalPanel: TerminalPanel,
         includeScrollback: Bool = false,
         lineLimit: Int? = nil
     ) -> String? {
-        if includeScrollback,
-           let vtOutput = readTerminalTextFromVTExportForSnapshot(
-               terminalPanel: terminalPanel,
-               lineLimit: lineLimit
-           ) {
-            return vtOutput
+        let vtOutput: String? = if includeScrollback {
+            readTerminalTextFromVTExportForSnapshot(
+                terminalPanel: terminalPanel,
+                lineLimit: lineLimit
+            )
+        } else {
+            nil
         }
 
         let response = readTerminalTextBase64(
@@ -5756,16 +5790,27 @@ class TerminalController {
             includeScrollback: includeScrollback,
             lineLimit: lineLimit
         )
-        guard response.hasPrefix("OK ") else { return nil }
-        let base64 = String(response.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-        if base64.isEmpty {
-            return ""
+        let decodedLiveRead: String? = {
+            guard response.hasPrefix("OK ") else { return nil }
+            let base64 = String(response.dropFirst(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if base64.isEmpty {
+                return ""
+            }
+            guard let data = Data(base64Encoded: base64),
+                  let decoded = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            return decoded
+        }()
+
+        if includeScrollback {
+            return Self.resolvedSnapshotTerminalText(
+                vtExportText: vtOutput,
+                liveReadText: decodedLiveRead
+            )
         }
-        guard let data = Data(base64Encoded: base64),
-              let decoded = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return decoded
+
+        return decodedLiveRead
     }
 
     func readTerminalTextForSessionSnapshot(
@@ -6882,6 +6927,18 @@ class TerminalController {
             var resolved = false
             var timedOut = false
             var result: T?
+            let timeoutTimer = CFRunLoopTimerCreateWithHandler(
+                nil,
+                CFAbsoluteTimeGetCurrent() + timeout,
+                0,
+                0,
+                0
+            ) { _ in
+                guard !resolved else { return }
+                resolved = true
+                timedOut = true
+                CFRunLoopStop(runLoop)
+            }
 
             let finish: (T) -> Void = { value in
                 guard !resolved else { return }
@@ -6893,14 +6950,9 @@ class TerminalController {
             start(finish)
             guard !resolved else { return result }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
-                guard !resolved else { return }
-                resolved = true
-                timedOut = true
-                CFRunLoopStop(runLoop)
-            }
-
+            CFRunLoopAddTimer(runLoop, timeoutTimer, .commonModes)
             CFRunLoopRun()
+            CFRunLoopTimerInvalidate(timeoutTimer)
             return timedOut ? nil : result
         }
 
@@ -11183,30 +11235,26 @@ class TerminalController {
         let name = parts[0].lowercased()
         let combo = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let action: KeyboardShortcutSettings.Action?
+        let defaultsKey: String?
         switch name {
         case "focus_left", "focusleft":
-            action = .focusLeft
+            defaultsKey = KeyboardShortcutSettings.focusLeftKey
         case "focus_right", "focusright":
-            action = .focusRight
+            defaultsKey = KeyboardShortcutSettings.focusRightKey
         case "focus_up", "focusup":
-            action = .focusUp
+            defaultsKey = KeyboardShortcutSettings.focusUpKey
         case "focus_down", "focusdown":
-            action = .focusDown
-        case "workspace_digits", "workspace_number", "select_workspace_by_number":
-            action = .selectWorkspaceByNumber
-        case "surface_digits", "surface_number", "select_surface_by_number":
-            action = .selectSurfaceByNumber
+            defaultsKey = KeyboardShortcutSettings.focusDownKey
         default:
-            action = nil
+            defaultsKey = nil
         }
 
-        guard let action else {
-            return "ERROR: Unknown shortcut name. Supported: focus_left, focus_right, focus_up, focus_down, workspace_digits, surface_digits"
+        guard let defaultsKey else {
+            return "ERROR: Unknown shortcut name. Supported: focus_left, focus_right, focus_up, focus_down"
         }
 
         if combo.lowercased() == "clear" || combo.lowercased() == "default" || combo.lowercased() == "reset" {
-            KeyboardShortcutSettings.resetShortcut(for: action)
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
             return "OK"
         }
 
@@ -11221,13 +11269,10 @@ class TerminalController {
             option: parsed.modifierFlags.contains(.option),
             control: parsed.modifierFlags.contains(.control)
         )
-        if action.usesNumberedDigitMatching,
-           action.normalizedRecordedShortcut(shortcut) == nil {
-            return "ERROR: Numbered shortcuts must use a digit key (1-9). Example: ctrl+1"
+        guard let data = try? JSONEncoder().encode(shortcut) else {
+            return "ERROR: Failed to encode shortcut"
         }
-
-        let storedShortcut = action.normalizedRecordedShortcut(shortcut) ?? shortcut
-        KeyboardShortcutSettings.setShortcut(storedShortcut, for: action)
+        UserDefaults.standard.set(data, forKey: defaultsKey)
         return "OK"
     }
 

@@ -78,7 +78,6 @@ func cmuxCurrentSurfaceFontSizePoints(_ surface: ghostty_surface_t) -> Float? {
     guard let quicklookFont = ghostty_surface_quicklook_font(surface) else {
         return nil
     }
-
     let ctFont = Unmanaged<CTFont>.fromOpaque(quicklookFont).takeUnretainedValue()
     let points = Float(CTFontGetSize(ctFont))
     guard points > 0 else { return nil }
@@ -232,7 +231,10 @@ extension Workspace {
         )
     }
 
-    func sessionSnapshot(includeScrollback: Bool) -> SessionWorkspaceSnapshot {
+    func sessionSnapshot(
+        includeScrollback: Bool,
+        includeUnsafeTerminalScrollback: Bool = false
+    ) -> SessionWorkspaceSnapshot {
         let tree = bonsplitController.treeSnapshot()
         let layout = sessionLayoutSnapshot(from: tree)
 
@@ -248,7 +250,13 @@ extension Workspace {
 
         let panelSnapshots = allPanelIds
             .prefix(SessionPersistencePolicy.maxPanelsPerWorkspace)
-            .compactMap { sessionPanelSnapshot(panelId: $0, includeScrollback: includeScrollback) }
+            .compactMap {
+                sessionPanelSnapshot(
+                    panelId: $0,
+                    includeScrollback: includeScrollback,
+                    includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+                )
+            }
 
         let statusSnapshots = statusEntries.values
             .sorted { lhs, rhs in lhs.key < rhs.key }
@@ -280,6 +288,7 @@ extension Workspace {
         return SessionWorkspaceSnapshot(
             processTitle: processTitle,
             customTitle: customTitle,
+            organizationName: organizationName,
             customColor: customColor,
             isPinned: isPinned,
             currentDirectory: currentDirectory,
@@ -295,6 +304,7 @@ extension Workspace {
 
     func restoreSessionSnapshot(_ snapshot: SessionWorkspaceSnapshot) {
         restoredTerminalScrollbackByPanelId.removeAll(keepingCapacity: false)
+        restoredTerminalActions.removeAll(keepingCapacity: false)
 
         let normalizedCurrentDirectory = snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalizedCurrentDirectory.isEmpty {
@@ -319,6 +329,7 @@ extension Workspace {
 
         applyProcessTitle(snapshot.processTitle)
         setCustomTitle(snapshot.customTitle)
+        setOrganizationName(snapshot.organizationName)
         setCustomColor(snapshot.customColor)
         isPinned = snapshot.isPinned
 
@@ -409,7 +420,11 @@ extension Workspace {
         return decoded.id
     }
 
-    private func sessionPanelSnapshot(panelId: UUID, includeScrollback: Bool) -> SessionPanelSnapshot? {
+    private func sessionPanelSnapshot(
+        panelId: UUID,
+        includeScrollback: Bool,
+        includeUnsafeTerminalScrollback: Bool
+    ) -> SessionPanelSnapshot? {
         guard let panel = panels[panelId] else { return nil }
 
         let panelTitle = panelTitle(panelId: panelId)
@@ -426,10 +441,13 @@ extension Workspace {
         let terminalSnapshot: SessionTerminalPanelSnapshot?
         let browserSnapshot: SessionBrowserPanelSnapshot?
         let markdownSnapshot: SessionMarkdownPanelSnapshot?
+        let restoredTerminalAction: RestoredTerminalActionSnapshot?
         switch panel.panelType {
         case .terminal:
             guard let terminalPanel = panel as? TerminalPanel else { return nil }
-            let shouldPersistScrollback = terminalPanel.shouldPersistScrollbackForSessionSnapshot()
+            let shouldPersistScrollback = terminalPanel.shouldPersistScrollbackForSessionSnapshot(
+                includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+            )
             let capturedScrollback = includeScrollback && shouldPersistScrollback
                 ? TerminalController.shared.readTerminalTextForSnapshot(
                     terminalPanel: terminalPanel,
@@ -449,6 +467,7 @@ extension Workspace {
             )
             browserSnapshot = nil
             markdownSnapshot = nil
+            restoredTerminalAction = currentRestoredTerminalAction(panelId: panelId)
         case .browser:
             guard let browserPanel = panel as? BrowserPanel else { return nil }
             terminalSnapshot = nil
@@ -463,11 +482,13 @@ extension Workspace {
                 forwardHistoryURLStrings: historySnapshot.forwardHistoryURLStrings
             )
             markdownSnapshot = nil
+            restoredTerminalAction = nil
         case .markdown:
             guard let markdownPanel = panel as? MarkdownPanel else { return nil }
             terminalSnapshot = nil
             browserSnapshot = nil
             markdownSnapshot = SessionMarkdownPanelSnapshot(filePath: markdownPanel.filePath)
+            restoredTerminalAction = nil
         }
 
         return SessionPanelSnapshot(
@@ -483,7 +504,15 @@ extension Workspace {
             ttyName: ttyName,
             terminal: terminalSnapshot,
             browser: browserSnapshot,
-            markdown: markdownSnapshot
+            markdown: markdownSnapshot,
+            restoredTerminalAction: restoredTerminalAction
+        )
+    }
+
+    private func currentRestoredTerminalAction(panelId: UUID) -> RestoredTerminalActionSnapshot? {
+        RestoredTerminalActionRegistry.latestAction(
+            workspaceId: id,
+            panelId: panelId
         )
     }
 
@@ -633,6 +662,11 @@ extension Workspace {
                 restoredTerminalScrollbackByPanelId[terminalPanel.id] = fallbackScrollback
             } else {
                 restoredTerminalScrollbackByPanelId.removeValue(forKey: terminalPanel.id)
+            }
+            if let restoredTerminalAction = snapshot.restoredTerminalAction {
+                restoredTerminalActions[terminalPanel.id] = restoredTerminalAction
+            } else {
+                restoredTerminalActions.removeValue(forKey: terminalPanel.id)
             }
             applySessionPanelMetadata(snapshot, toPanelId: terminalPanel.id)
             return terminalPanel.id
@@ -5432,6 +5466,7 @@ final class Workspace: Identifiable, ObservableObject {
     let id: UUID
     @Published var title: String
     @Published var customTitle: String?
+    @Published var organizationName: String?
     @Published var isPinned: Bool = false
     @Published var customColor: String?  // hex string, e.g. "#C0392B"
     @Published var currentDirectory: String
@@ -5448,6 +5483,9 @@ final class Workspace: Identifiable, ObservableObject {
 
     /// Subscriptions for panel updates (e.g., browser title changes)
     private var panelSubscriptions: [UUID: AnyCancellable] = [:]
+    private var memoryUsageSnapshotCancellable: AnyCancellable?
+    private var memoryUsageDefaultsCancellable: AnyCancellable?
+    private var renderedPanelChromeTitles: [UUID: String] = [:]
 
     /// When true, suppresses auto-creation in didSplitPane (programmatic splits handle their own panels)
     private var isProgrammaticSplit = false
@@ -5503,10 +5541,6 @@ final class Workspace: Identifiable, ObservableObject {
     @Published private(set) var panelCustomTitles: [UUID: String] = [:]
     @Published private(set) var pinnedPanelIds: Set<UUID> = []
     @Published private(set) var manualUnreadPanelIds: Set<UUID> = []
-    @Published private(set) var tmuxLayoutSnapshot: LayoutSnapshot?
-    @Published private(set) var tmuxWorkspaceFlashPanelId: UUID?
-    @Published private(set) var tmuxWorkspaceFlashReason: WorkspaceAttentionFlashReason?
-    @Published private(set) var tmuxWorkspaceFlashToken: UInt64 = 0
     private var manualUnreadMarkedAt: [UUID: Date] = [:]
     nonisolated private static let manualUnreadFocusGraceInterval: TimeInterval = 0.2
     nonisolated private static let manualUnreadClearDelayAfterFocusFlash: TimeInterval = 0.2
@@ -5556,7 +5590,14 @@ final class Workspace: Identifiable, ObservableObject {
     /// PIDs associated with agent status entries (e.g. claude_code), keyed by status key.
     /// Used for stale-session detection: if the PID is dead, the status entry is cleared.
     var agentPIDs: [String: pid_t] = [:]
+    @Published private(set) var cachedAISessions: [UUID: AISessionSnapshot] = [:]
+    private var aiSessionRefreshGenerationByPanel: [UUID: UUID] = [:]
+    private let aiSessionRefreshQueue = DispatchQueue(
+        label: "com.cmux.ai-session-refresh",
+        qos: .utility
+    )
     private var restoredTerminalScrollbackByPanelId: [UUID: String] = [:]
+    @Published var restoredTerminalActions: [UUID: RestoredTerminalActionSnapshot] = [:]
 
     private static func isProxyOnlyRemoteError(_ detail: String) -> Bool {
         let lowered = detail.lowercased()
@@ -5734,6 +5775,17 @@ final class Workspace: Identifiable, ObservableObject {
             appearance: appearance
         )
         self.bonsplitController = BonsplitController(configuration: config)
+        bonsplitController.extraTabBarLeadingButtons = AnyView(
+            WorkspaceTabBarLeadingButtons(
+                config: nil,
+                launchAgent: { [weak self] agent in
+                    self?.launchQuickAIAgent(agent)
+                }
+            )
+        )
+        bonsplitController.browserButtonContextMenu = AnyView(
+            BrowserLinkToggleContextMenu()
+        )
         bonsplitController.contextMenuShortcuts = Self.buildContextMenuShortcuts()
 
         // Remove the default "Welcome" tab that bonsplit creates
@@ -5749,7 +5801,6 @@ final class Workspace: Identifiable, ObservableObject {
             initialCommand: initialTerminalCommand,
             initialEnvironmentOverrides: initialTerminalEnvironment
         )
-        configureTerminalPanel(terminalPanel)
         panels[terminalPanel.id] = terminalPanel
         panelTitles[terminalPanel.id] = terminalPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: terminalPanel.id, configTemplate: configTemplate)
@@ -5757,7 +5808,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Create initial tab in bonsplit and store the mapping
         var initialTabId: TabID?
         if let tabId = bonsplitController.createTab(
-            title: title,
+            title: resolvedPanelChromeTitle(panelId: terminalPanel.id, fallback: title),
             icon: "terminal.fill",
             kind: SurfaceKind.terminal,
             isDirty: false,
@@ -5775,7 +5826,6 @@ final class Workspace: Identifiable, ObservableObject {
         bonsplitController.onExternalTabDrop = { [weak self] request in
             self?.handleExternalTabDrop(request) ?? false
         }
-
         // Set ourselves as delegate
         bonsplitController.delegate = self
 
@@ -5797,10 +5847,13 @@ final class Workspace: Identifiable, ObservableObject {
             }
             bonsplitController.selectTab(initialTabId)
         }
-        tmuxLayoutSnapshot = bonsplitController.layoutSnapshot()
+
+        observeMemoryUsage()
     }
 
     deinit {
+        memoryUsageSnapshotCancellable?.cancel()
+        memoryUsageDefaultsCancellable?.cancel()
         activeRemoteSessionControllerID = nil
         remoteSessionController?.stop()
     }
@@ -5946,19 +5999,35 @@ final class Workspace: Identifiable, ObservableObject {
         surfaceIdToPanelId.first { $0.value == panelId }?.key
     }
 
-    private func configureTerminalPanel(_ terminalPanel: TerminalPanel) {
-        terminalPanel.onRequestWorkspacePaneFlash = { [weak self, weak terminalPanel] reason in
-            guard let self, let terminalPanel else { return }
-            self.triggerWorkspacePaneFlash(panelId: terminalPanel.id, reason: reason)
+    private func observeMemoryUsage() {
+        memoryUsageSnapshotCancellable = MemoryUsageStore.shared.$snapshot
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshPanelChromeTitlesIfNeeded()
+            }
+        memoryUsageDefaultsCancellable = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.refreshPanelChromeTitlesIfNeeded()
+            }
+    }
+
+    private func refreshPanelChromeTitlesIfNeeded() {
+        var nextRenderedTitles: [UUID: String] = [:]
+        for (panelId, panel) in panels {
+            guard let tabId = surfaceIdFromPanelId(panelId) else { continue }
+            let baseTitle = panelTitles[panelId] ?? panel.displayTitle
+            let renderedTitle = resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle)
+            nextRenderedTitles[panelId] = renderedTitle
+            guard renderedPanelChromeTitles[panelId] != renderedTitle else { continue }
+            bonsplitController.updateTab(
+                tabId,
+                title: renderedTitle,
+                hasCustomTitle: panelCustomTitles[panelId] != nil
+            )
         }
+        renderedPanelChromeTitles = nextRenderedTitles
     }
-
-    private func triggerWorkspacePaneFlash(panelId: UUID, reason: WorkspaceAttentionFlashReason) {
-        tmuxWorkspaceFlashPanelId = panelId
-        tmuxWorkspaceFlashReason = reason
-        tmuxWorkspaceFlashToken &+= 1
-    }
-
 
     private func installBrowserPanelSubscription(_ browserPanel: BrowserPanel) {
         let subscription = Publishers.CombineLatest3(
@@ -5977,7 +6046,7 @@ final class Workspace: Identifiable, ObservableObject {
             if self.panelTitles[browserPanel.id] != nextTitle {
                 self.panelTitles[browserPanel.id] = nextTitle
             }
-            let resolvedTitle = self.resolvedPanelTitle(panelId: browserPanel.id, fallback: nextTitle)
+            let resolvedTitle = self.resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: nextTitle)
             let titleUpdate: String? = existing.title == resolvedTitle ? nil : resolvedTitle
             let faviconUpdate: Data?? = existing.iconImageData == favicon ? nil : .some(favicon)
             let loadingUpdate: Bool? = existing.isLoading == isLoading ? nil : isLoading
@@ -6037,7 +6106,7 @@ final class Workspace: Identifiable, ObservableObject {
                 if self.panelTitles[markdownPanel.id] != newTitle {
                     self.panelTitles[markdownPanel.id] = newTitle
                 }
-                let resolvedTitle = self.resolvedPanelTitle(panelId: markdownPanel.id, fallback: newTitle)
+                let resolvedTitle = self.resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: newTitle)
                 guard existing.title != resolvedTitle else { return }
                 self.bonsplitController.updateTab(
                     tabId,
@@ -6106,6 +6175,20 @@ final class Workspace: Identifiable, ObservableObject {
         return fallbackTitle
     }
 
+    private func resolvedPanelChromeTitle(panelId: UUID, fallback: String) -> String {
+        let baseTitle = resolvedPanelTitle(panelId: panelId, fallback: fallback)
+        guard MemoryUsageDisplaySettings.showsInPaneTabs(),
+              panels[panelId]?.panelType == .terminal else {
+            return baseTitle
+        }
+        guard let suffix = MemoryUsageFormatter.inlineBadgeString(
+            for: MemoryUsageStore.shared.snapshot.bytes(forPanel: panelId)
+        ) else {
+            return baseTitle
+        }
+        return "\(baseTitle) · \(suffix)"
+    }
+
     private func syncPinnedStateForTab(_ tabId: TabID, panelId: UUID) {
         let isPinned = pinnedPanelIds.contains(panelId)
         if let panel = panels[panelId] {
@@ -6120,31 +6203,7 @@ final class Workspace: Identifiable, ObservableObject {
     }
 
     private func hasUnreadNotification(panelId: UUID) -> Bool {
-        AppDelegate.shared?.notificationStore?.hasVisibleNotificationIndicator(forTabId: id, surfaceId: panelId) ?? false
-    }
-
-    private func attentionPersistentState() -> WorkspaceAttentionPersistentState {
-        let notificationStore = AppDelegate.shared?.notificationStore
-        let unreadPanelIDs = Set(
-            panels.keys.filter {
-                notificationStore?.hasUnreadNotification(forTabId: id, surfaceId: $0) ?? false
-            }
-        )
-        return WorkspaceAttentionPersistentState(
-            unreadPanelIDs: unreadPanelIDs,
-            focusedReadPanelID: notificationStore?.focusedReadIndicatorSurfaceId(forTabId: id),
-            manualUnreadPanelIDs: manualUnreadPanelIds
-        )
-    }
-
-    private func requestAttentionFlash(panelId: UUID, reason: WorkspaceAttentionFlashReason) {
-        let decision = WorkspaceAttentionCoordinator.decideFlash(
-            targetPanelID: panelId,
-            reason: reason,
-            persistentState: attentionPersistentState()
-        )
-        guard decision.isAllowed else { return }
-        panels[panelId]?.triggerFlash(reason: reason)
+        AppDelegate.shared?.notificationStore?.hasUnreadNotification(forTabId: id, surfaceId: panelId) ?? false
     }
 
     private func syncUnreadBadgeStateForPanel(_ panelId: UUID) {
@@ -6212,7 +6271,7 @@ final class Workspace: Identifiable, ObservableObject {
         let baseTitle = panelTitles[panelId] ?? panel.displayTitle
         bonsplitController.updateTab(
             tabId,
-            title: resolvedPanelTitle(panelId: panelId, fallback: baseTitle),
+            title: resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle),
             hasCustomTitle: panelCustomTitles[panelId] != nil
         )
     }
@@ -6364,6 +6423,18 @@ final class Workspace: Identifiable, ObservableObject {
         }
     }
 
+    func setOrganizationName(_ name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let resolvedName = trimmed.isEmpty ? nil : trimmed
+        guard organizationName != resolvedName else { return }
+        organizationName = resolvedName
+        NotificationCenter.default.post(
+            name: .workspaceDidUpdatePresentationMetadata,
+            object: nil,
+            userInfo: [GhosttyNotificationKey.tabId: id]
+        )
+    }
+
     // MARK: - Directory Updates
 
     func updatePanelDirectory(panelId: UUID, directory: String) {
@@ -6375,6 +6446,8 @@ final class Workspace: Identifiable, ObservableObject {
         // Update current directory if this is the focused panel
         if panelId == focusedPanelId, currentDirectory != trimmed {
             currentDirectory = trimmed
+            // Sync editor to the new directory (e.g. after `cd`)
+            EditorSyncController.shared.workspaceDidChange(directory: trimmed)
         }
     }
 
@@ -6557,7 +6630,7 @@ final class Workspace: Identifiable, ObservableObject {
            let tabId = surfaceIdFromPanelId(panelId),
            let panel = panels[panelId] {
             let baseTitle = panelTitles[panelId] ?? panel.displayTitle
-            let resolvedTitle = resolvedPanelTitle(panelId: panelId, fallback: baseTitle)
+            let resolvedTitle = resolvedPanelChromeTitle(panelId: panelId, fallback: baseTitle)
             bonsplitController.updateTab(
                 tabId,
                 title: resolvedTitle,
@@ -6589,9 +6662,90 @@ final class Workspace: Identifiable, ObservableObject {
         manualUnreadMarkedAt = manualUnreadMarkedAt.filter { validSurfaceIds.contains($0.key) }
         surfaceListeningPorts = surfaceListeningPorts.filter { validSurfaceIds.contains($0.key) }
         surfaceTTYNames = surfaceTTYNames.filter { validSurfaceIds.contains($0.key) }
+        restoredTerminalActions = restoredTerminalActions.filter { validSurfaceIds.contains($0.key) }
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
         panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
+        cachedAISessions = cachedAISessions.filter { validSurfaceIds.contains($0.key) }
+        aiSessionRefreshGenerationByPanel = aiSessionRefreshGenerationByPanel.filter { validSurfaceIds.contains($0.key) }
         recomputeListeningPorts()
+    }
+
+    // MARK: - AI Session Cache
+
+    func scheduleAISessionRefreshForTerminalPanels() {
+        let terminalPanelIds = panels.compactMap { panelId, panel in
+            panel.panelType == .terminal ? panelId : nil
+        }
+        for panelId in terminalPanelIds {
+            scheduleAISessionRefresh(panelId: panelId)
+        }
+    }
+
+    func refreshAISessionCacheNowForTerminalPanels() {
+        let terminalPanelIds = panels.compactMap { panelId, panel in
+            panel.panelType == .terminal ? panelId : nil
+        }
+        for panelId in terminalPanelIds {
+            refreshAISessionCacheNow(panelId: panelId)
+        }
+    }
+
+    private func scheduleAISessionRefresh(panelId: UUID, delay: TimeInterval = 0.4) {
+        guard panels[panelId]?.panelType == .terminal else {
+            cachedAISessions.removeValue(forKey: panelId)
+            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+            return
+        }
+
+        let ttyName = surfaceTTYNames[panelId]
+        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
+        let generation = UUID()
+        aiSessionRefreshGenerationByPanel[panelId] = generation
+
+        aiSessionRefreshQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            let snapshot = AISessionDetector.detect(
+                ttyName: ttyName,
+                workingDirectory: workingDirectory
+            )
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.aiSessionRefreshGenerationByPanel[panelId] == generation else { return }
+                self.aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+
+                guard self.panels[panelId]?.panelType == .terminal else {
+                    self.cachedAISessions.removeValue(forKey: panelId)
+                    return
+                }
+
+                if let snapshot {
+                    self.cachedAISessions[panelId] = snapshot
+                } else {
+                    self.cachedAISessions.removeValue(forKey: panelId)
+                }
+            }
+        }
+    }
+
+    private func refreshAISessionCacheNow(panelId: UUID) {
+        guard panels[panelId]?.panelType == .terminal else {
+            cachedAISessions.removeValue(forKey: panelId)
+            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+            return
+        }
+
+        aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
+        let ttyName = surfaceTTYNames[panelId]
+        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
+        let snapshot = AISessionDetector.detect(
+            ttyName: ttyName,
+            workingDirectory: workingDirectory
+        )
+        if let snapshot {
+            cachedAISessions[panelId] = snapshot
+        } else {
+            cachedAISessions.removeValue(forKey: panelId)
+        }
     }
 
     func recomputeListeningPorts() {
@@ -7379,13 +7533,10 @@ final class Workspace: Identifiable, ObservableObject {
             preferredPanelId: preferredPanelId,
             inPane: preferredPaneId
         ) {
-            // Pin the panel and its TerminalSurface wrapper for the duration of
-            // this iteration. The raw ghostty_surface_t extracted below is owned
-            // by `surface` (the TerminalSurface) — ARC must not release it while
-            // ghostty_surface_inherited_config or cmuxCurrentSurfaceFontSizePoints
-            // is still reading through the pointer.
             let surface = terminalPanel.surface
-            guard let sourceSurface = surface.surface else { continue }
+            guard let sourceSurface = surface.liveSurfaceForGhosttyAccess(
+                reason: "workspace.inherit.terminalConfig"
+            ) else { continue }
             var config = cmuxInheritedSurfaceConfig(
                 sourceSurface: sourceSurface,
                 context: GHOSTTY_SURFACE_CONTEXT_SPLIT
@@ -7476,7 +7627,6 @@ final class Workspace: Identifiable, ObservableObject {
             portOrdinal: portOrdinal,
             initialCommand: remoteTerminalStartupCommand
         )
-        configureTerminalPanel(newPanel)
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         if remoteTerminalStartupCommand != nil {
@@ -7487,7 +7637,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Pre-generate the bonsplit tab ID so we can install the panel mapping before bonsplit
         // mutates layout state (avoids transient "Empty Panel" flashes during split).
         let newTab = Bonsplit.Tab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -7566,7 +7716,6 @@ final class Workspace: Identifiable, ObservableObject {
             initialCommand: remoteTerminalStartupCommand,
             additionalEnvironment: startupEnvironment
         )
-        configureTerminalPanel(newPanel)
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         if remoteTerminalStartupCommand != nil {
@@ -7576,7 +7725,7 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Create tab in bonsplit
         guard let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -7661,7 +7810,7 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Pre-generate the bonsplit tab ID so the mapping exists before the split lands.
         let newTab = Bonsplit.Tab(
-            title: browserPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: browserPanel.displayTitle),
             icon: browserPanel.displayIcon,
             kind: SurfaceKind.browser,
             isDirty: browserPanel.isDirty,
@@ -7739,7 +7888,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[browserPanel.id] = browserPanel.displayTitle
 
         guard let newTabId = bonsplitController.createTab(
-            title: browserPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: browserPanel.id, fallback: browserPanel.displayTitle),
             icon: browserPanel.displayIcon,
             kind: SurfaceKind.browser,
             isDirty: browserPanel.isDirty,
@@ -7805,7 +7954,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[markdownPanel.id] = markdownPanel.displayTitle
 
         let newTab = Bonsplit.Tab(
-            title: markdownPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: markdownPanel.displayTitle),
             icon: markdownPanel.displayIcon,
             kind: SurfaceKind.markdown,
             isDirty: markdownPanel.isDirty,
@@ -7858,7 +8007,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelTitles[markdownPanel.id] = markdownPanel.displayTitle
 
         guard let newTabId = bonsplitController.createTab(
-            title: markdownPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: markdownPanel.id, fallback: markdownPanel.displayTitle),
             icon: markdownPanel.displayIcon,
             kind: SurfaceKind.markdown,
             isDirty: markdownPanel.isDirty,
@@ -8408,7 +8557,7 @@ final class Workspace: Identifiable, ObservableObject {
         }
 
         guard let newTabId = bonsplitController.createTab(
-            title: detached.title,
+            title: resolvedPanelChromeTitle(panelId: detached.panelId, fallback: detached.title),
             hasCustomTitle: detached.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
             icon: detached.icon,
             iconImageData: detached.iconImageData,
@@ -8705,10 +8854,8 @@ final class Workspace: Identifiable, ObservableObject {
     }
 
     func moveFocus(direction: NavigationDirection) {
-        let previousFocusedPanelId = focusedPanelId
-
         // Unfocus the currently-focused panel before navigating.
-        if let prevPanelId = previousFocusedPanelId, let prev = panels[prevPanelId] {
+        if let prevPanelId = focusedPanelId, let prev = panels[prevPanelId] {
             prev.unfocus()
         }
 
@@ -8720,7 +8867,6 @@ final class Workspace: Identifiable, ObservableObject {
            let tabId = bonsplitController.selectedTab(inPane: paneId)?.id {
             applyTabSelection(tabId: tabId, inPane: paneId)
         }
-
     }
 
     // MARK: - Surface Navigation
@@ -8776,6 +8922,24 @@ final class Workspace: Identifiable, ObservableObject {
         return newTerminalSurface(inPane: focusedPaneId, focus: focus)
     }
 
+    func launchQuickAIAgent(_ agent: AIQuickLaunchAgent) {
+        let workingDirectory = focusedPanelId
+            .flatMap { panelDirectories[$0] }
+            ?? currentDirectory
+        let command = AIQuickLaunchController.shared.command(for: agent)
+
+        guard let targetPaneId = bonsplitController.focusedPaneId ?? bonsplitController.allPaneIds.first,
+              let terminalPanel = newTerminalSurface(
+                inPane: targetPaneId,
+                focus: true,
+                workingDirectory: workingDirectory
+              ) else {
+            return
+        }
+
+        terminalPanel.sendText(command + "\r")
+    }
+
     @discardableResult
     func clearSplitZoom() -> Bool {
         bonsplitController.clearPaneZoom()
@@ -8825,7 +8989,7 @@ final class Workspace: Identifiable, ObservableObject {
     // MARK: - Flash/Notification Support
 
     func triggerFocusFlash(panelId: UUID) {
-        requestAttentionFlash(panelId: panelId, reason: .navigation)
+        panels[panelId]?.triggerFlash()
     }
 
     func triggerNotificationFocusFlash(
@@ -8833,7 +8997,7 @@ final class Workspace: Identifiable, ObservableObject {
         requiresSplit: Bool = false,
         shouldFocus: Bool = true
     ) {
-        guard terminalPanel(for: panelId) != nil else { return }
+        guard let terminalPanel = terminalPanel(for: panelId) else { return }
         if shouldFocus {
             focusPanel(panelId)
         }
@@ -8841,18 +9005,11 @@ final class Workspace: Identifiable, ObservableObject {
         if requiresSplit && !isSplit {
             return
         }
-        requestAttentionFlash(panelId: panelId, reason: .notificationArrival)
-    }
-
-    func triggerNotificationDismissFlash(panelId: UUID) {
-        guard terminalPanel(for: panelId) != nil else { return }
-        requestAttentionFlash(panelId: panelId, reason: .notificationDismiss)
+        terminalPanel.triggerFlash()
     }
 
     func triggerDebugFlash(panelId: UUID) {
-        guard panels[panelId] != nil else { return }
-        focusPanel(panelId)
-        requestAttentionFlash(panelId: panelId, reason: .debug)
+        triggerNotificationFocusFlash(panelId: panelId, requiresSplit: false, shouldFocus: true)
     }
 
     // MARK: - Portal Lifecycle
@@ -8890,14 +9047,13 @@ final class Workspace: Identifiable, ObservableObject {
             configTemplate: inheritedConfig,
             portOrdinal: portOrdinal
         )
-        configureTerminalPanel(newPanel)
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: newPanel.id, configTemplate: inheritedConfig)
 
         // Create tab in bonsplit
         if let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -10337,6 +10493,7 @@ extension Workspace: BonsplitDelegate {
         panelShellActivityStates.removeValue(forKey: panelId)
         surfaceTTYNames.removeValue(forKey: panelId)
         restoredTerminalScrollbackByPanelId.removeValue(forKey: panelId)
+        restoredTerminalActions.removeValue(forKey: panelId)
         PortScanner.shared.unregisterPanel(workspaceId: id, panelId: panelId)
         terminalInheritanceFontPointsByPanelId.removeValue(forKey: panelId)
         if lastTerminalConfigInheritancePanelId == panelId {
@@ -10490,6 +10647,7 @@ extension Workspace: BonsplitDelegate {
                 surfaceTTYNames.removeValue(forKey: panelId)
                 surfaceListeningPorts.removeValue(forKey: panelId)
                 restoredTerminalScrollbackByPanelId.removeValue(forKey: panelId)
+                restoredTerminalActions.removeValue(forKey: panelId)
                 PortScanner.shared.unregisterPanel(workspaceId: id, panelId: panelId)
             }
 
@@ -10617,7 +10775,6 @@ extension Workspace: BonsplitDelegate {
                         configTemplate: inheritedConfig,
                         portOrdinal: portOrdinal
                     )
-                    configureTerminalPanel(replacementPanel)
                     panels[replacementPanel.id] = replacementPanel
                     panelTitles[replacementPanel.id] = replacementPanel.displayTitle
                     seedTerminalInheritanceFontPoints(panelId: replacementPanel.id, configTemplate: inheritedConfig)
@@ -10684,13 +10841,12 @@ extension Workspace: BonsplitDelegate {
             configTemplate: inheritedConfig,
             portOrdinal: portOrdinal
         )
-        configureTerminalPanel(newPanel)
         panels[newPanel.id] = newPanel
         panelTitles[newPanel.id] = newPanel.displayTitle
         seedTerminalInheritanceFontPoints(panelId: newPanel.id, configTemplate: inheritedConfig)
 
         guard let newTabId = bonsplitController.createTab(
-            title: newPanel.displayTitle,
+            title: resolvedPanelChromeTitle(panelId: newPanel.id, fallback: newPanel.displayTitle),
             icon: newPanel.displayIcon,
             kind: SurfaceKind.terminal,
             isDirty: newPanel.isDirty,
@@ -10779,7 +10935,7 @@ extension Workspace: BonsplitDelegate {
     }
 
     func splitTabBar(_ controller: BonsplitController, didChangeGeometry snapshot: LayoutSnapshot) {
-        tmuxLayoutSnapshot = snapshot
+        _ = snapshot
         scheduleTerminalGeometryReconcile()
         if !isDetachingCloseTransaction {
             scheduleFocusReconcile()

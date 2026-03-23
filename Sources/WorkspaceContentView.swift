@@ -257,7 +257,6 @@ struct WorkspaceContentView: View {
         let appearance = PanelAppearance.fromConfig(config)
         let isSplit = workspace.bonsplitController.allPaneIds.count > 1 ||
             workspace.panels.count > 1
-        let usesWorkspacePaneOverlay = TmuxOverlayExperimentSettings.target().usesWorkspacePaneOverlay
 
         // Inactive workspaces are kept alive in a ZStack (for state preservation) but their
         // AppKit-backed views can still intercept drags. Disable drop acceptance for them.
@@ -288,11 +287,8 @@ struct WorkspaceContentView: View {
                     isSelectedInPane: isSelectedInPane,
                     isFocused: isFocused
                 )
-                let showsNotificationRing = Workspace.shouldShowUnreadIndicator(
-                    hasUnreadNotification: notificationStore.hasVisibleNotificationIndicator(
-                        forTabId: workspace.id,
-                        surfaceId: panel.id
-                    ),
+                let hasUnreadNotification = Workspace.shouldShowUnreadIndicator(
+                    hasUnreadNotification: notificationStore.hasUnreadNotification(forTabId: workspace.id, surfaceId: panel.id),
                     isManuallyUnread: workspace.manualUnreadPanelIds.contains(panel.id)
                 )
                 PanelContentView(
@@ -304,7 +300,7 @@ struct WorkspaceContentView: View {
                     portalPriority: workspacePortalPriority,
                     isSplit: isSplit,
                     appearance: appearance,
-                    hasUnreadNotification: showsNotificationRing && !usesWorkspacePaneOverlay,
+                    hasUnreadNotification: hasUnreadNotification,
                     onFocus: {
                         // Keep bonsplit focus in sync with the AppKit first responder for the
                         // active workspace. This prevents divergence between the blue focused-tab
@@ -318,7 +314,26 @@ struct WorkspaceContentView: View {
                         guard workspace.panels[panel.id] != nil else { return }
                         workspace.focusPanel(panel.id)
                     },
-                    onTriggerFlash: { workspace.triggerDebugFlash(panelId: panel.id) }
+                    onTriggerFlash: { workspace.triggerDebugFlash(panelId: panel.id) },
+                    restoredTerminalAction: workspace.restoredTerminalActions[panel.id],
+                    onRunRestoredTerminalAction: { restoredAction in
+                        let permissiveModeEnabled: Bool
+                        switch restoredAction.agentType {
+                        case .claudeCode:
+                            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
+                        case .codex:
+                            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
+                        }
+                        guard let resumeCommand = restoredAction.resumeCommand(
+                                permissiveModeEnabled: permissiveModeEnabled
+                              ),
+                              let terminalPanel = panel as? TerminalPanel else { return }
+                        terminalPanel.sendCommand(resumeCommand)
+                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
+                    },
+                    onDismissRestoredTerminalAction: {
+                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
+                    }
                 )
                 .onTapGesture {
                     workspace.bonsplitController.focusPane(paneId)
@@ -387,6 +402,11 @@ struct WorkspaceContentView: View {
     }
 
     private func syncBonsplitNotificationBadges() {
+        let unreadFromNotifications: Set<UUID> = Set(
+            notificationStore.notifications
+                .filter { $0.tabId == workspace.id && !$0.isRead }
+                .compactMap { $0.surfaceId }
+        )
         let manualUnread = workspace.manualUnreadPanelIds
 
         for paneId in workspace.bonsplitController.allPaneIds {
@@ -394,10 +414,7 @@ struct WorkspaceContentView: View {
                 let panelId = workspace.panelIdFromSurfaceId(tab.id)
                 let expectedKind = panelId.flatMap { workspace.panelKind(panelId: $0) }
                 let expectedPinned = panelId.map { workspace.isPanelPinned($0) } ?? false
-                let shouldShow = panelId.map {
-                    notificationStore.hasVisibleNotificationIndicator(forTabId: workspace.id, surfaceId: $0) ||
-                        manualUnread.contains($0)
-                } ?? false
+                let shouldShow = panelId.map { unreadFromNotifications.contains($0) || manualUnread.contains($0) } ?? false
                 let kindUpdate: String?? = expectedKind.map { .some($0) }
 
                 if tab.showsNotificationBadge != shouldShow ||
@@ -416,176 +433,6 @@ struct WorkspaceContentView: View {
 
     private var splitZoomRenderIdentity: String {
         workspace.bonsplitController.zoomedPaneId.map { "zoom:\($0.id.uuidString)" } ?? "unzoomed"
-    }
-
-    private static let tmuxWorkspacePaneTopChromeHeight: CGFloat = 30
-
-    private enum TmuxWorkspacePaneOverlayTrimMode {
-        case workspaceLocal
-        case windowContent
-    }
-
-    private static func tmuxWorkspacePaneContentRect(
-        _ rect: CGRect,
-        trimMode: TmuxWorkspacePaneOverlayTrimMode
-    ) -> CGRect {
-        let topInset = min(tmuxWorkspacePaneTopChromeHeight, max(0, rect.height - 1))
-        switch trimMode {
-        case .workspaceLocal, .windowContent:
-            return CGRect(
-                x: rect.origin.x,
-                y: rect.origin.y + topInset,
-                width: rect.width,
-                height: max(0, rect.height - topInset)
-            )
-        }
-    }
-
-    private static func tmuxWorkspacePaneRect(
-        layoutSnapshot: LayoutSnapshot?,
-        paneId: PaneID?,
-        includeContainerOffset: Bool,
-        trimMode: TmuxWorkspacePaneOverlayTrimMode
-    ) -> CGRect? {
-        guard let layoutSnapshot,
-              let paneId,
-              let paneRect = layoutSnapshot.panes
-                .first(where: { $0.paneId == paneId.id.uuidString })?
-                .frame
-                .cgRect else {
-            return nil
-        }
-
-        let rect: CGRect
-        if includeContainerOffset {
-            rect = paneRect.offsetBy(
-                dx: 0,
-                dy: -CGFloat(layoutSnapshot.containerFrame.y)
-            )
-        } else {
-            rect = paneRect.offsetBy(
-                dx: -CGFloat(layoutSnapshot.containerFrame.x),
-                dy: -CGFloat(layoutSnapshot.containerFrame.y)
-            )
-        }
-        return tmuxWorkspacePaneContentRect(rect, trimMode: trimMode)
-    }
-
-    private static func tmuxWorkspacePaneRects(
-        workspace: Workspace,
-        notificationStore: TerminalNotificationStore,
-        layoutSnapshot: LayoutSnapshot?,
-        includeContainerOffset: Bool,
-        trimMode: TmuxWorkspacePaneOverlayTrimMode
-    ) -> [CGRect] {
-        guard let layoutSnapshot else { return [] }
-
-        return layoutSnapshot.panes.compactMap { pane in
-            guard let selectedTabId = pane.selectedTabId,
-                  let tabUUID = UUID(uuidString: selectedTabId),
-                  let panelId = workspace.panelIdFromSurfaceId(TabID(uuid: tabUUID)) else {
-                return nil
-            }
-
-            let shouldShowUnread = Workspace.shouldShowUnreadIndicator(
-                hasUnreadNotification: notificationStore.hasVisibleNotificationIndicator(
-                    forTabId: workspace.id,
-                    surfaceId: panelId
-                ),
-                isManuallyUnread: workspace.manualUnreadPanelIds.contains(panelId)
-            )
-            guard shouldShowUnread else { return nil }
-
-            let paneRect = pane.frame.cgRect
-            let rect: CGRect
-            if includeContainerOffset {
-                rect = paneRect.offsetBy(
-                    dx: 0,
-                    dy: -CGFloat(layoutSnapshot.containerFrame.y)
-                )
-            } else {
-                rect = paneRect.offsetBy(
-                    dx: -CGFloat(layoutSnapshot.containerFrame.x),
-                    dy: -CGFloat(layoutSnapshot.containerFrame.y)
-                )
-            }
-            return tmuxWorkspacePaneContentRect(rect, trimMode: trimMode)
-        }
-    }
-
-    static func tmuxWorkspacePaneOverlayRect(
-        layoutSnapshot: LayoutSnapshot?,
-        paneId: PaneID?
-    ) -> CGRect? {
-        tmuxWorkspacePaneRect(
-            layoutSnapshot: layoutSnapshot,
-            paneId: paneId,
-            includeContainerOffset: false,
-            trimMode: .workspaceLocal
-        )
-    }
-
-    static func tmuxWorkspacePaneWindowOverlayRect(
-        layoutSnapshot: LayoutSnapshot?,
-        paneId: PaneID?
-    ) -> CGRect? {
-        tmuxWorkspacePaneRect(
-            layoutSnapshot: layoutSnapshot,
-            paneId: paneId,
-            includeContainerOffset: true,
-            trimMode: .windowContent
-        )
-    }
-
-    static func effectiveTmuxLayoutSnapshot(
-        cachedSnapshot: LayoutSnapshot?,
-        liveSnapshot: LayoutSnapshot?
-    ) -> LayoutSnapshot? {
-        if let liveSnapshot,
-           tmuxLayoutSnapshotHasRenderableGeometry(liveSnapshot) {
-            return liveSnapshot
-        }
-        if let cachedSnapshot,
-           tmuxLayoutSnapshotHasRenderableGeometry(cachedSnapshot) {
-            return cachedSnapshot
-        }
-        return cachedSnapshot ?? liveSnapshot
-    }
-
-    static func tmuxWorkspacePaneUnreadRects(
-        workspace: Workspace,
-        notificationStore: TerminalNotificationStore,
-        layoutSnapshot: LayoutSnapshot?
-    ) -> [CGRect] {
-        tmuxWorkspacePaneRects(
-            workspace: workspace,
-            notificationStore: notificationStore,
-            layoutSnapshot: layoutSnapshot,
-            includeContainerOffset: false,
-            trimMode: .workspaceLocal
-        )
-    }
-
-    static func tmuxWorkspacePaneWindowUnreadRects(
-        workspace: Workspace,
-        notificationStore: TerminalNotificationStore,
-        layoutSnapshot: LayoutSnapshot?
-    ) -> [CGRect] {
-        tmuxWorkspacePaneRects(
-            workspace: workspace,
-            notificationStore: notificationStore,
-            layoutSnapshot: layoutSnapshot,
-            includeContainerOffset: true,
-            trimMode: .windowContent
-        )
-    }
-
-    private static func tmuxLayoutSnapshotHasRenderableGeometry(_ snapshot: LayoutSnapshot) -> Bool {
-        snapshot.containerFrame.width > 1 &&
-            snapshot.containerFrame.height > 1 &&
-            snapshot.panes.contains { pane in
-                pane.frame.width > 1 && pane.frame.height > 1
-            }
     }
 
     static func resolveGhosttyAppearanceConfig(
@@ -695,7 +542,7 @@ extension WorkspaceContentView {
             let logPath = "/tmp/cmux-panel-debug.log"
             if let handle = FileHandle(forWritingAtPath: logPath) {
                 handle.seekToEndOfFile()
-                handle.write(Data(line.utf8))
+                handle.write(line.data(using: .utf8)!)
                 handle.closeFile()
             } else {
                 FileManager.default.createFile(atPath: logPath, contents: line.data(using: .utf8))

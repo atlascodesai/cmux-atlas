@@ -1,5 +1,7 @@
+import AppKit
 import CoreGraphics
 import Foundation
+import UniformTypeIdentifiers
 import Bonsplit
 
 enum SessionSnapshotSchema {
@@ -221,6 +223,53 @@ struct SessionGitBranchSnapshot: Codable, Sendable {
     var isDirty: Bool
 }
 
+enum AIAgentType: String, Codable, Sendable {
+    case claudeCode = "claude_code"
+    case codex = "codex"
+}
+
+/// A generic post-restore terminal action. Today this is backed by agent
+/// session resume providers, but the workspace/UI layer only depends on this
+/// transport object rather than any specific CLI integration.
+struct RestoredTerminalActionSnapshot: Codable, Sendable, Equatable {
+    var agentType: AIAgentType
+    var sessionId: String?
+    var workingDirectory: String?
+    var projectPath: String?
+    var lastSeenActive: TimeInterval
+
+    var isResumable: Bool {
+        normalizedSessionId != nil
+    }
+
+    var resumeCommand: String? {
+        resumeCommand(permissiveModeEnabled: false)
+    }
+
+    func resumeCommand(permissiveModeEnabled: Bool) -> String? {
+        switch agentType {
+        case .claudeCode:
+            guard let sessionId = normalizedSessionId else { return nil }
+            if permissiveModeEnabled {
+                return "claude --dangerously-skip-permissions --resume \(sessionId)"
+            }
+            return "claude --resume \(sessionId)"
+        case .codex:
+            guard let sessionId = normalizedSessionId else { return nil }
+            if permissiveModeEnabled {
+                return "codex --dangerously-bypass-approvals-and-sandbox resume \(sessionId)"
+            }
+            return "codex resume \(sessionId)"
+        }
+    }
+
+    private var normalizedSessionId: String? {
+        guard let sessionId else { return nil }
+        let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 struct SessionTerminalPanelSnapshot: Codable, Sendable {
     var workingDirectory: String?
     var scrollback: String?
@@ -254,6 +303,208 @@ struct SessionPanelSnapshot: Codable, Sendable {
     var terminal: SessionTerminalPanelSnapshot?
     var browser: SessionBrowserPanelSnapshot?
     var markdown: SessionMarkdownPanelSnapshot?
+    var restoredTerminalAction: RestoredTerminalActionSnapshot?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case title
+        case customTitle
+        case directory
+        case isPinned
+        case isManuallyUnread
+        case gitBranch
+        case listeningPorts
+        case ttyName
+        case terminal
+        case browser
+        case markdown
+        case restoredTerminalAction = "aiSession"
+    }
+}
+
+protocol RestoredTerminalActionProvider {
+    static func restoredTerminalAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> RestoredTerminalActionSnapshot?
+}
+
+enum RestoredTerminalActionRegistry {
+    private static let providers: [RestoredTerminalActionProvider.Type] = [
+        ClaudeHookSessionSnapshotStore.self,
+        CodexHookSessionSnapshotStore.self
+    ]
+
+    static func latestAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> RestoredTerminalActionSnapshot? {
+        providers
+            .compactMap {
+                $0.restoredTerminalAction(
+                    workspaceId: workspaceId,
+                    panelId: panelId,
+                    processEnv: processEnv,
+                    fileManager: fileManager
+                )
+            }
+            .max(by: { $0.lastSeenActive < $1.lastSeenActive })
+    }
+}
+
+private struct ClaudeHookSessionRecord: Codable {
+    var sessionId: String
+    var workspaceId: String
+    var surfaceId: String
+    var cwd: String?
+    var pid: Int?
+    var lastSubtitle: String?
+    var lastBody: String?
+    var startedAt: TimeInterval
+    var updatedAt: TimeInterval
+}
+
+private struct ClaudeHookSessionStoreFile: Codable {
+    var version: Int = 1
+    var sessions: [String: ClaudeHookSessionRecord] = [:]
+}
+
+private struct CodexHookSessionRecord: Codable {
+    var sessionId: String
+    var workspaceId: String
+    var surfaceId: String
+    var cwd: String?
+    var transcriptPath: String?
+    var permissionMode: String?
+    var source: String?
+    var startedAt: TimeInterval
+    var updatedAt: TimeInterval
+}
+
+private struct CodexHookSessionStoreFile: Codable {
+    var version: Int = 1
+    var sessions: [String: CodexHookSessionRecord] = [:]
+}
+
+enum ClaudeHookSessionSnapshotStore: RestoredTerminalActionProvider {
+    private static let defaultStatePath = "~/.cmuxterm/claude-hook-sessions.json"
+
+    static func restoredTerminalAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> RestoredTerminalActionSnapshot? {
+        guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
+
+        let workspaceToken = workspaceId.uuidString.lowercased()
+        let panelToken = panelId.uuidString.lowercased()
+
+        guard let record = state.sessions.values
+            .filter({
+                $0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == workspaceToken &&
+                $0.surfaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == panelToken
+            })
+            .max(by: { $0.updatedAt < $1.updatedAt }) else {
+            return nil
+        }
+
+        let workingDirectory = normalizedOptional(record.cwd)
+
+        return RestoredTerminalActionSnapshot(
+            agentType: .claudeCode,
+            sessionId: normalizedOptional(record.sessionId),
+            workingDirectory: workingDirectory,
+            projectPath: workingDirectory,
+            lastSeenActive: record.updatedAt
+        )
+    }
+
+    private static func loadState(
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> ClaudeHookSessionStoreFile? {
+        let path = statePath(processEnv: processEnv)
+        guard fileManager.fileExists(atPath: path) else { return nil }
+        guard let data = fileManager.contents(atPath: path) else { return nil }
+        return try? JSONDecoder().decode(ClaudeHookSessionStoreFile.self, from: data)
+    }
+
+    private static func statePath(processEnv: [String: String]) -> String {
+        if let overridePath = normalizedOptional(processEnv["CMUX_CLAUDE_HOOK_STATE_PATH"]) {
+            return NSString(string: overridePath).expandingTildeInPath
+        }
+        return NSString(string: defaultStatePath).expandingTildeInPath
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+enum CodexHookSessionSnapshotStore: RestoredTerminalActionProvider {
+    private static let defaultStatePath = "~/.cmuxterm/codex-hook-sessions.json"
+
+    static func restoredTerminalAction(
+        workspaceId: UUID,
+        panelId: UUID,
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) -> RestoredTerminalActionSnapshot? {
+        guard let state = loadState(processEnv: processEnv, fileManager: fileManager) else { return nil }
+
+        let workspaceToken = workspaceId.uuidString.lowercased()
+        let panelToken = panelId.uuidString.lowercased()
+
+        guard let record = state.sessions.values
+            .filter({
+                $0.workspaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == workspaceToken &&
+                $0.surfaceId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == panelToken
+            })
+            .max(by: { $0.updatedAt < $1.updatedAt }) else {
+            return nil
+        }
+
+        let workingDirectory = normalizedOptional(record.cwd)
+
+        return RestoredTerminalActionSnapshot(
+            agentType: .codex,
+            sessionId: normalizedOptional(record.sessionId),
+            workingDirectory: workingDirectory,
+            projectPath: workingDirectory,
+            lastSeenActive: record.updatedAt
+        )
+    }
+
+    private static func loadState(
+        processEnv: [String: String],
+        fileManager: FileManager
+    ) -> CodexHookSessionStoreFile? {
+        let path = statePath(processEnv: processEnv)
+        guard fileManager.fileExists(atPath: path) else { return nil }
+        guard let data = fileManager.contents(atPath: path) else { return nil }
+        return try? JSONDecoder().decode(CodexHookSessionStoreFile.self, from: data)
+    }
+
+    private static func statePath(processEnv: [String: String]) -> String {
+        if let overridePath = normalizedOptional(processEnv["CMUX_CODEX_HOOK_STATE_PATH"]) {
+            return NSString(string: overridePath).expandingTildeInPath
+        }
+        return NSString(string: defaultStatePath).expandingTildeInPath
+    }
+
+    private static func normalizedOptional(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 enum SessionSplitOrientation: String, Codable, Sendable {
@@ -330,6 +581,7 @@ indirect enum SessionWorkspaceLayoutSnapshot: Codable, Sendable {
 struct SessionWorkspaceSnapshot: Codable, Sendable {
     var processTitle: String
     var customTitle: String?
+    var organizationName: String?
     var customColor: String?
     var isPinned: Bool
     var currentDirectory: String
@@ -422,6 +674,239 @@ enum SessionPersistenceStore {
         return resolvedAppSupport
             .appendingPathComponent(Branding.appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("session-\(safeBundleId).json", isDirectory: false)
+    }
+}
+
+// MARK: - Workspace Organizations
+
+struct WorkspaceOrganization: Codable, Identifiable {
+    var id: UUID
+    var name: String
+    var savedAt: TimeInterval
+    var lastUsedAt: TimeInterval
+    var snapshot: SessionWorkspaceSnapshot
+
+    init(name: String, snapshot: SessionWorkspaceSnapshot) {
+        self.id = UUID()
+        self.name = name
+        let now = Date().timeIntervalSinceReferenceDate
+        self.savedAt = now
+        self.lastUsedAt = now
+        self.snapshot = snapshot
+    }
+}
+
+struct WorkspaceExportEnvelope: Codable {
+    static let currentVersion = 1
+
+    var version: Int
+    var exportedAt: TimeInterval
+    var appVersion: String?
+    var organization: WorkspaceOrganization
+
+    init(organization: WorkspaceOrganization, appVersion: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) {
+        self.version = Self.currentVersion
+        self.exportedAt = Date().timeIntervalSinceReferenceDate
+        self.appVersion = appVersion
+        self.organization = organization
+    }
+}
+
+enum WorkspaceImportError: LocalizedError, Equatable {
+    case readFailed
+    case unsupportedFormat
+    case decodeFailed
+    case writeFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .readFailed:
+            return String(localized: "organization.error.readFailed", defaultValue: "cmux could not read that organization file.")
+        case .unsupportedFormat:
+            return String(localized: "organization.error.unsupportedFormat", defaultValue: "That organization file uses an unsupported format.")
+        case .decodeFailed:
+            return String(localized: "organization.error.decodeFailed", defaultValue: "cmux could not decode that organization file.")
+        case .writeFailed:
+            return String(localized: "organization.error.writeFailed", defaultValue: "cmux could not write the organization file.")
+        }
+    }
+}
+
+enum WorkspaceOrganizationStore {
+    static let maxOrganizations = 100
+    private static let directoryName = "workspace-organizations"
+    private static let workspaceExportType = UTType(exportedAs: "com.cmux.workspace-export")
+
+    static func directoryURL() -> URL? {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return appSupport
+            .appendingPathComponent(Branding.appSupportDirectoryName, isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
+    }
+
+    static func loadAll() -> [WorkspaceOrganization] {
+        guard let dir = directoryURL() else { return [] }
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
+        let decoder = JSONDecoder()
+        return files
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url -> WorkspaceOrganization? in
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? decoder.decode(WorkspaceOrganization.self, from: data)
+            }
+            .sorted { $0.lastUsedAt > $1.lastUsedAt }
+    }
+
+    @discardableResult
+    static func save(_ organization: WorkspaceOrganization) -> Bool {
+        guard let dir = directoryURL() else { return false }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(organization)
+            let fileURL = dir.appendingPathComponent("\(organization.id.uuidString).json")
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    static func upsertAutomaticSnapshot(name: String, snapshot: SessionWorkspaceSnapshot) -> Bool {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return false }
+
+        let normalizedDirectory = snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existing = loadAll().first {
+            $0.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame &&
+            $0.snapshot.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedDirectory
+        }
+
+        let now = Date().timeIntervalSinceReferenceDate
+        if var existing {
+            existing.name = trimmedName
+            existing.savedAt = now
+            existing.lastUsedAt = now
+            existing.snapshot = snapshot
+            return save(existing)
+        }
+
+        return save(WorkspaceOrganization(name: trimmedName, snapshot: snapshot))
+    }
+
+    static func touchLastUsed(_ organizationId: UUID) {
+        guard let dir = directoryURL() else { return }
+        let fileURL = dir.appendingPathComponent("\(organizationId.uuidString).json")
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        let decoder = JSONDecoder()
+        guard var org = try? decoder.decode(WorkspaceOrganization.self, from: data) else { return }
+        org.lastUsedAt = Date().timeIntervalSinceReferenceDate
+        save(org)
+    }
+
+    static func remove(_ organizationId: UUID) {
+        guard let dir = directoryURL() else { return }
+        let fileURL = dir.appendingPathComponent("\(organizationId.uuidString).json")
+        try? FileManager.default.removeItem(at: fileURL)
+    }
+
+    static func exportWorkspace(_ snapshot: SessionWorkspaceSnapshot, name: String) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = sanitizedExportFilename(name)
+        panel.allowedContentTypes = [workspaceExportType]
+        panel.canCreateDirectories = true
+        panel.title = String(localized: "organization.export.title", defaultValue: "Export Organization")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let wrapper = WorkspaceOrganization(name: name, snapshot: snapshot)
+        guard let data = try? exportData(for: wrapper) else {
+            showImportExportError(title: String(localized: "organization.export.error.title", defaultValue: "Export Failed"), error: .writeFailed)
+            return
+        }
+        do {
+            try writeExportData(data, to: url)
+        } catch {
+            showImportExportError(title: String(localized: "organization.export.error.title", defaultValue: "Export Failed"), error: .writeFailed)
+        }
+    }
+
+    static func importWorkspace() -> WorkspaceOrganization? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [workspaceExportType, .json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = String(localized: "organization.import.title", defaultValue: "Import Organization")
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        guard let data = try? Data(contentsOf: url) else {
+            showImportExportError(title: String(localized: "organization.import.error.title", defaultValue: "Import Failed"), error: .readFailed)
+            return nil
+        }
+        do {
+            return try importOrganization(from: data)
+        } catch let importError as WorkspaceImportError {
+            showImportExportError(title: String(localized: "organization.import.error.title", defaultValue: "Import Failed"), error: importError)
+            return nil
+        } catch {
+            showImportExportError(title: String(localized: "organization.import.error.title", defaultValue: "Import Failed"), error: .decodeFailed)
+            return nil
+        }
+    }
+
+    static func exportData(for organization: WorkspaceOrganization) throws -> Data {
+        let envelope = WorkspaceExportEnvelope(organization: organization)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(envelope)
+    }
+
+    static func writeExportData(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: .atomic)
+    }
+
+    static func importOrganization(from url: URL) throws -> WorkspaceOrganization {
+        guard let data = try? Data(contentsOf: url) else {
+            throw WorkspaceImportError.readFailed
+        }
+        return try importOrganization(from: data)
+    }
+
+    static func importOrganization(from data: Data) throws -> WorkspaceOrganization {
+        let decoder = JSONDecoder()
+
+        if let envelope = try? decoder.decode(WorkspaceExportEnvelope.self, from: data) {
+            guard envelope.version == WorkspaceExportEnvelope.currentVersion else {
+                throw WorkspaceImportError.unsupportedFormat
+            }
+            return envelope.organization
+        }
+
+        if let organization = try? decoder.decode(WorkspaceOrganization.self, from: data) {
+            return organization
+        }
+
+        throw WorkspaceImportError.decodeFailed
+    }
+
+    private static func sanitizedExportFilename(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = String(localized: "workspace.displayName.fallback", defaultValue: "Workspace")
+        let basename = trimmed.isEmpty ? fallback : trimmed
+        let sanitized = basename.replacingOccurrences(
+            of: #"[/:\u{0000}-\u{001F}]"#,
+            with: "-",
+            options: .regularExpression
+        )
+        return "\(sanitized).cmuxworkspace"
+    }
+
+    private static func showImportExportError(title: String, error: WorkspaceImportError) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = error.errorDescription ?? ""
+        alert.addButton(withTitle: String(localized: "common.ok", defaultValue: "OK"))
+        alert.runModal()
     }
 }
 
