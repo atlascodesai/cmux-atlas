@@ -166,8 +166,6 @@ int main(int argc, const char *argv[]) {
         NSString *intervalArgument = argumentValue(arguments, @"--interval-ms");
         NSInteger intervalMs = intervalArgument.length > 0 ? intervalArgument.integerValue : 40;
         useconds_t intervalMicros = (useconds_t)(MAX(1, intervalMs) * 1000);
-        NSString *startDelayArgument = argumentValue(arguments, @"--start-delay-ms");
-        NSInteger startDelayMs = startDelayArgument.length > 0 ? startDelayArgument.integerValue : 0;
 
         unsigned int width = 0;
         unsigned int height = 0;
@@ -223,17 +221,60 @@ int main(int argc, const char *argv[]) {
             return 1;
         }
 
-        printf("Virtual display created: %ux%u@60Hz (displayID: %u)\n", width, height, display.displayID);
+        CGDirectDisplayID createdDisplayID = display.displayID;
+        printf("Virtual display created: %ux%u@60Hz (displayID: %u)\n", width, height, createdDisplayID);
         printf("PID: %d\n", getpid());
         fflush(stdout);
-        writeString([NSString stringWithFormat:@"%u\n", display.displayID], displayIDPath);
-        writeString(@"ready\n", readyPath);
+
+        // Write displayID immediately so it's available when ready fires
+        writeString([NSString stringWithFormat:@"%u\n", createdDisplayID], displayIDPath);
+
+        // Defer ready signal until the display actually appears in the active display list.
+        // CGVirtualDisplay needs run loop processing before it registers with WindowServer.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            int maxWaitMs = 5000;
+            int waitedMs = 0;
+            BOOL found = NO;
+            while (waitedMs < maxWaitMs) {
+                CGDirectDisplayID displays[32];
+                uint32_t displayCount = 0;
+                CGError err = CGGetActiveDisplayList(32, displays, &displayCount);
+                if (err == kCGErrorSuccess) {
+                    for (uint32_t i = 0; i < displayCount; i++) {
+                        if (displays[i] == createdDisplayID) {
+                            found = YES;
+                            break;
+                        }
+                    }
+                }
+                if (found) break;
+                usleep(50 * 1000);
+                waitedMs += 50;
+            }
+
+            if (found) {
+                printf("Virtual display %u confirmed in active display list after %dms\n", createdDisplayID, waitedMs);
+            } else {
+                fprintf(stderr, "WARNING: Virtual display %u not found in active display list after %dms (proceeding anyway)\n", createdDisplayID, maxWaitMs);
+                // List active displays for diagnostics
+                CGDirectDisplayID displays[32];
+                uint32_t displayCount = 0;
+                CGGetActiveDisplayList(32, displays, &displayCount);
+                fprintf(stderr, "Active displays (%u):", displayCount);
+                for (uint32_t i = 0; i < displayCount; i++) {
+                    fprintf(stderr, " %u", displays[i]);
+                }
+                fprintf(stderr, "\n");
+            }
+            fflush(stdout);
+            fflush(stderr);
+
+            writeString(@"ready\n", readyPath);
+        });
 
         if (iterations > 0 && modeSpecs.count > 1) {
             dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-                if (startDelayMs > 0) {
-                    usleep((useconds_t)(startDelayMs * 1000));
-                } else if (startPath.length > 0) {
+                if (startPath.length > 0) {
                     while (![[NSFileManager defaultManager] fileExistsAtPath:startPath]) {
                         usleep(20 * 1000);
                     }

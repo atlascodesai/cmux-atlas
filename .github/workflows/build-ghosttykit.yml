@@ -14,7 +14,7 @@ jobs:
   build-ghosttykit:
     # Never run WarpBuild jobs for fork pull requests (avoid billing on external PRs).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: warp-macos-15-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -29,13 +29,29 @@ jobs:
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "Ghostty SHA: $SHA"
 
+      - name: Set up Homebrew PATH
+        run: |
+          if [ -d /opt/homebrew/bin ]; then
+            echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+            export PATH="/opt/homebrew/bin:$PATH"
+          fi
+
+      - name: Ensure gh CLI is available
+        run: |
+          export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "Installing gh CLI via brew..."
+            /opt/homebrew/bin/brew install gh
+          fi
+          gh --version
+
       - name: Check if xcframework release already exists
         id: check-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="xcframework-${{ steps.ghostty-sha.outputs.sha }}"
-          if gh release view "$TAG" --repo manaflow-ai/ghostty >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo ${{ github.repository }} >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release $TAG already exists, skipping build"
           else
@@ -73,10 +89,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             zig version
           fi
           cd ghostty && zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast
@@ -92,12 +109,12 @@ jobs:
       - name: Upload xcframework release
         if: steps.check-release.outputs.exists == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GHOSTTY_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="xcframework-${{ steps.ghostty-sha.outputs.sha }}"
           gh release create "$TAG" \
-            --repo manaflow-ai/ghostty \
+            --repo ${{ github.repository }} \
             --title "GhosttyKit xcframework (${{ steps.ghostty-sha.outputs.sha }})" \
             --notes "Pre-built GhosttyKit.xcframework for commit ${{ steps.ghostty-sha.outputs.sha }}" \
             GhosttyKit.xcframework.tar.gz

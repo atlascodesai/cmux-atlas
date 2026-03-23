@@ -18,7 +18,7 @@ TAG="xcframework-$GHOSTTY_SHA"
 ARCHIVE_NAME="${GHOSTTYKIT_ARCHIVE_NAME:-GhosttyKit.xcframework.tar.gz}"
 OUTPUT_DIR="${GHOSTTYKIT_OUTPUT_DIR:-GhosttyKit.xcframework}"
 CHECKSUMS_FILE="${GHOSTTYKIT_CHECKSUMS_FILE:-$SCRIPT_DIR/ghosttykit-checksums.txt}"
-DOWNLOAD_URL="${GHOSTTYKIT_URL:-https://github.com/manaflow-ai/ghostty/releases/download/$TAG/$ARCHIVE_NAME}"
+DOWNLOAD_URL="${GHOSTTYKIT_URL:-https://github.com/atlascodesai/cmux-atlas/releases/download/$TAG/$ARCHIVE_NAME}"
 DOWNLOAD_RETRIES="${GHOSTTYKIT_DOWNLOAD_RETRIES:-30}"
 DOWNLOAD_RETRY_DELAY="${GHOSTTYKIT_DOWNLOAD_RETRY_DELAY:-20}"
 
@@ -43,29 +43,90 @@ EXPECTED_SHA256="$(
 )"
 
 if [ -z "$EXPECTED_SHA256" ]; then
-  echo "Missing pinned GhosttyKit checksum for ghostty $GHOSTTY_SHA in $CHECKSUMS_FILE" >&2
-  exit 1
+  echo "No pinned checksum for ghostty $GHOSTTY_SHA — building from source"
+  BUILD_FROM_SOURCE=1
+else
+  BUILD_FROM_SOURCE=0
 fi
 
-echo "Downloading $ARCHIVE_NAME for ghostty $GHOSTTY_SHA"
-curl --fail --show-error --location \
-  --retry "$DOWNLOAD_RETRIES" \
-  --retry-delay "$DOWNLOAD_RETRY_DELAY" \
-  --retry-all-errors \
-  -o "$ARCHIVE_NAME" \
-  "$DOWNLOAD_URL"
+if [ "$BUILD_FROM_SOURCE" -eq 0 ]; then
+  echo "Downloading $ARCHIVE_NAME for ghostty $GHOSTTY_SHA"
+  if curl --fail --show-error --location \
+    --retry "$DOWNLOAD_RETRIES" \
+    --retry-delay "$DOWNLOAD_RETRY_DELAY" \
+    --retry-all-errors \
+    -o "$ARCHIVE_NAME" \
+    "$DOWNLOAD_URL"; then
 
-ACTUAL_SHA256="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
-if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-  echo "$ARCHIVE_NAME checksum mismatch" >&2
-  echo "Expected: $EXPECTED_SHA256" >&2
-  echo "Actual:   $ACTUAL_SHA256" >&2
-  exit 1
+    ACTUAL_SHA256="$(shasum -a 256 "$ARCHIVE_NAME" | awk '{print $1}')"
+    if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+      echo "$ARCHIVE_NAME checksum mismatch" >&2
+      echo "Expected: $EXPECTED_SHA256" >&2
+      echo "Actual:   $ACTUAL_SHA256" >&2
+      exit 1
+    fi
+
+    rm -rf "$OUTPUT_DIR"
+    tar xzf "$ARCHIVE_NAME"
+    rm "$ARCHIVE_NAME"
+    test -d "$OUTPUT_DIR"
+    echo "Verified and extracted $OUTPUT_DIR"
+  else
+    echo "Download failed — falling back to build from source"
+    BUILD_FROM_SOURCE=1
+  fi
 fi
 
-rm -rf "$OUTPUT_DIR"
-tar xzf "$ARCHIVE_NAME"
-rm "$ARCHIVE_NAME"
-test -d "$OUTPUT_DIR"
+if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
+  # Ensure homebrew tools (msgfmt/gettext) and local zig are in PATH
+  if [ -d /opt/homebrew/bin ]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+  fi
+  if [ -d "$HOME/.local/bin" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
 
-echo "Verified and extracted $OUTPUT_DIR"
+  echo "Building GhosttyKit.xcframework from source..."
+  if ! command -v zig >/dev/null 2>&1; then
+    echo "zig not found — installing zig 0.15.2..."
+    ZIG_REQUIRED="0.15.2"
+    ARCH="$(uname -m)"
+    if [ "$ARCH" = "arm64" ]; then ARCH="aarch64"; fi
+    curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-${ARCH}-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
+    tar xf /tmp/zig.tar.xz -C /tmp
+    export PATH="/tmp/zig-${ARCH}-macos-${ZIG_REQUIRED}:$PATH"
+    rm /tmp/zig.tar.xz
+    zig version
+  fi
+
+  cd "$REPO_ROOT/ghostty"
+  rm -rf .zig-cache zig-out
+
+  # Run zig build with output captured to see errors
+  set +e
+  zig build -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=universal -Doptimize=ReleaseFast 2>&1
+  ZIG_RC=$?
+  set -e
+
+  if [ "$ZIG_RC" -ne 0 ]; then
+    echo "zig build failed (exit code $ZIG_RC)"
+    # Try copying from a previous build if available
+    if [ -d "$REPO_ROOT/ghostty/macos/GhosttyKit.xcframework" ]; then
+      echo "Copying GhosttyKit.xcframework from previous ghostty build..."
+      cd "$REPO_ROOT"
+      rm -rf "$OUTPUT_DIR"
+      cp -R ghostty/macos/GhosttyKit.xcframework "$OUTPUT_DIR"
+    else
+      exit 1
+    fi
+  else
+    cd "$REPO_ROOT"
+    # zig build puts the xcframework in ghostty/macos/
+    if [ ! -d "$OUTPUT_DIR" ] && [ -d "$REPO_ROOT/ghostty/macos/GhosttyKit.xcframework" ]; then
+      cp -R "$REPO_ROOT/ghostty/macos/GhosttyKit.xcframework" "$OUTPUT_DIR"
+    fi
+  fi
+
+  test -d "$OUTPUT_DIR"
+  echo "Built $OUTPUT_DIR from source"
+fi

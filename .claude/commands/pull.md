@@ -5,11 +5,11 @@ Pull latest main and update all submodules to their latest remote main. No commi
 ## Steps
 
 1. `git pull origin main`
-2. For each submodule (ghostty, homebrew-cmux, vendor/bonsplit):
+2. For each submodule (ghostty, vendor/bonsplit):
    - `cd <submodule>`
-   - `git fetch origin`
-   - Check if behind: `git rev-list HEAD..origin/main --count`
-   - If behind, merge: `git merge origin/main --no-edit`
+   - `git fetch atlas` (atlas remote = atlascodesai fork)
+   - Check if behind: `git rev-list HEAD..atlas/main --count`
+   - If behind, merge: `git merge atlas/main --no-edit`
    - Do NOT push. We only land submodule changes via PRs.
    - Go back to repo root
 3. `git submodule update --init --recursive`

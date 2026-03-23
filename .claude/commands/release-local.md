@@ -18,11 +18,11 @@ Full end-to-end release built locally. Bumps version, updates changelog, tags, t
 - If there are no user-facing changes, ask the user if they still want to release
 - **Collect contributors:** For each PR referenced in the commits, get the author:
   ```bash
-  gh pr view <N> --repo manaflow-ai/cmux --json author --jq '.author.login'
+  gh pr view <N> --repo atlascodesai/cmux-atlas --json author --jq '.author.login'
   ```
 - Also check for linked issue reporters (the person who filed the bug):
   ```bash
-  gh issue view <N> --repo manaflow-ai/cmux --json author --jq '.author.login'
+  gh issue view <N> --repo atlascodesai/cmux-atlas --json author --jq '.author.login'
   ```
 - Build a deduplicated list of all contributor `@handle`s for the release
 
@@ -55,10 +55,11 @@ This script handles: GhosttyKit build, xcodebuild, Sparkle key injection, codesi
 
 If the script fails, run `say "cmux release failed"`.
 
-### 7. Verify homebrew cask
-
+### 7. Verify homebrew cask *(skip — not yet set up for atlas fork)*
+<!-- Uncomment when homebrew-cmux-atlas cask is created:
 - Run `bash tests/test_homebrew_sha.sh` to confirm the cask SHA matches the release DMG
 - Update the homebrew-cmux submodule pointer: `git add homebrew-cmux && git commit -m "Update homebrew-cmux submodule to latest" && git push origin main`
+-->
 
 ## Changelog Guidelines
 

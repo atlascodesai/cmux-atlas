@@ -5,6 +5,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,6 +20,9 @@ jobs:
 
       - name: Validate WarpBuild runner guards
         run: ./tests/test_ci_self_hosted_guard.sh
+
+      - name: Validate test skips match upstream
+        run: ./tests/test_ci_test_skips_match_upstream.sh
 
       - name: Validate create-dmg version pinning
         run: ./tests/test_ci_create_dmg_pinned.sh
@@ -77,7 +81,7 @@ jobs:
   tests:
     # Never run WarpBuild jobs for fork pull requests (avoid billing on external PRs).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: warp-macos-15-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -124,10 +128,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
             zig version
           fi
 
@@ -242,7 +247,7 @@ jobs:
     # and performance regressions stay isolated. Broader interactive UI suites
     # still run via test-e2e.yml on GitHub-hosted runners.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: warp-macos-15-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -289,10 +294,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
             zig version
           fi
 
@@ -356,9 +362,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*/Build/Products/Debug/cmux DEV.app" -print -quit)"
+          APP="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*/Build/Products/Debug/cmux Atlas DEV.app" -print -quit)"
           if [ -z "${APP:-}" ] || [ ! -d "$APP" ]; then
-            echo "cmux DEV.app not found in DerivedData" >&2
+            echo "cmux Atlas DEV.app not found in DerivedData" >&2
             exit 1
           fi
 
@@ -366,14 +372,14 @@ jobs:
           SOCK="/tmp/cmux-debug-${TAG}.sock"
           BUNDLE_ID="$(
             /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist" 2>/dev/null \
-              || echo 'com.cmuxterm.app.debug'
+              || echo 'com.atlascodes.cmux-atlas.debug'
           )"
 
-          pkill -x "cmux DEV" || true
+          pkill -x "cmux Atlas DEV" || true
           rm -f "$SOCK" "/tmp/cmux-${TAG}.sock" || true
           defaults write "$BUNDLE_ID" socketControlMode -string full >/dev/null 2>&1 || true
 
-          CMUX_TAG="$TAG" CMUX_SOCKET_PATH="$SOCK" CMUX_UI_TEST_MODE=1 "$APP/Contents/MacOS/cmux DEV" >/tmp/cmux-ci-lag.log 2>&1 &
+          CMUX_TAG="$TAG" CMUX_SOCKET_PATH="$SOCK" CMUX_UI_TEST_MODE=1 "$APP/Contents/MacOS/cmux Atlas DEV" >/tmp/cmux-ci-lag.log 2>&1 &
           APP_PID=$!
           trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
 
@@ -405,7 +411,7 @@ jobs:
 
   ui-regressions:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: warp-macos-15-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -444,10 +450,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
             zig version
           fi
 
@@ -478,208 +485,29 @@ jobs:
             sleep $((attempt * 5))
           done
 
-      - name: Build for testing (display resolution)
-        run: |
-          set -euo pipefail
-          SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
-          xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
-            -disableAutomaticPackageResolution \
-            -destination "platform=macOS" \
-            build-for-testing
-
-      - name: Create persistent virtual display
-        run: |
-          set -euo pipefail
-          HELPER_PATH="/tmp/create-virtual-display"
-          clang -framework Foundation -framework CoreGraphics \
-            -o "$HELPER_PATH" scripts/create-virtual-display.m
-
-          VDISPLAY_READY="/tmp/cmux-vdisplay-persistent.ready"
-          VDISPLAY_ID_PATH="/tmp/cmux-vdisplay-persistent.id"
-          rm -f "$VDISPLAY_READY" "$VDISPLAY_ID_PATH"
-
-          "$HELPER_PATH" \
-            --modes "1920x1080" \
-            --ready-path "$VDISPLAY_READY" \
-            --display-id-path "$VDISPLAY_ID_PATH" \
-            > /tmp/cmux-vdisplay-persistent.log 2>&1 &
-          echo "VDISPLAY_PERSISTENT_PID=$!" >> "$GITHUB_ENV"
-
-          echo "Waiting for persistent virtual display..."
-          for i in $(seq 1 24); do
-            if [ -f "$VDISPLAY_READY" ]; then break; fi
-            sleep 0.5
-          done
-          if [ ! -f "$VDISPLAY_READY" ]; then
-            echo "ERROR: Persistent virtual display not ready after 12s" >&2
-            cat /tmp/cmux-vdisplay-persistent.log 2>/dev/null || true
-            exit 1
-          fi
-          echo "Persistent virtual display ready: ID=$(cat "$VDISPLAY_ID_PATH")"
-
       - name: Run display resolution churn UI regression
         run: |
           set -euo pipefail
           SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           HELPER_PATH="/tmp/create-virtual-display"
-          TOKEN="$(uuidgen)"
-          DIAG_PATH="/tmp/cmux-ui-test-display-churn-${TOKEN}.json"
-          DISPLAY_READY="/tmp/cmux-ui-test-display-${TOKEN}.ready"
-          DISPLAY_ID_PATH="/tmp/cmux-ui-test-display-${TOKEN}.id"
-          DISPLAY_START="/tmp/cmux-ui-test-display-${TOKEN}.start"
-          DISPLAY_DONE="/tmp/cmux-ui-test-display-${TOKEN}.done"
-          HELPER_LOG="/tmp/cmux-ui-test-display-${TOKEN}-helper.log"
+          MANIFEST_PATH="/tmp/cmux-ui-test-display-harness.json"
 
-          cleanup() {
-            pkill -x "cmux DEV" 2>/dev/null || true
-            rm -f "$DIAG_PATH" "$DISPLAY_READY" "$DISPLAY_ID_PATH" "$DISPLAY_START" "$DISPLAY_DONE" "$HELPER_LOG"
-            rm -f /tmp/cmux-ui-test-prelaunch.json /tmp/cmux-ui-test-display-harness.json
-          }
-          trap cleanup EXIT
+          rm -f "$MANIFEST_PATH"
+          trap 'rm -f "$MANIFEST_PATH"' EXIT
 
-          # Build display helper
           clang -framework Foundation -framework CoreGraphics \
             -o "$HELPER_PATH" scripts/create-virtual-display.m
 
-          # Find the app binary
-          APP_BINARY=$(find ~/Library/Developer/Xcode/DerivedData -path "*/Build/Products/Debug/cmux DEV.app/Contents/MacOS/cmux DEV" -print -quit 2>/dev/null || true)
-          if [ -z "$APP_BINARY" ]; then
-            echo "ERROR: App binary not found in DerivedData" >&2
-            exit 1
-          fi
-          echo "App binary: $APP_BINARY"
+          cat >"$MANIFEST_PATH" <<EOF
+          {"helperBinaryPath":"$HELPER_PATH"}
+          EOF
 
-          for attempt in 1 2; do
-            cleanup 2>/dev/null || true
-
-            # Launch display helper from shell (non-sandboxed).
-            # Use --start-delay-ms instead of --start-path because the XCTest
-            # runner is sandboxed and can't write to /tmp/ for the start signal.
-            # 10s delay gives the test time to capture baseline render stats.
-            "$HELPER_PATH" \
-              --modes "1920x1080,1728x1117,1600x900,1440x810" \
-              --ready-path "$DISPLAY_READY" \
-              --display-id-path "$DISPLAY_ID_PATH" \
-              --done-path "$DISPLAY_DONE" \
-              --iterations 40 \
-              --interval-ms 40 \
-              --start-delay-ms 10000 \
-              > "$HELPER_LOG" 2>&1 &
-            HELPER_PID=$!
-
-            # Wait for display ready
-            echo "Waiting for virtual display..."
-            for i in $(seq 1 24); do
-              if [ -f "$DISPLAY_READY" ]; then break; fi
-              sleep 0.5
-            done
-            if [ ! -f "$DISPLAY_READY" ]; then
-              echo "ERROR: Virtual display not ready after 12s" >&2
-              cat "$HELPER_LOG" 2>/dev/null || true
-              continue
-            fi
-            DISPLAY_ID=$(cat "$DISPLAY_ID_PATH")
-            echo "Virtual display ready: ID=$DISPLAY_ID"
-
-            # Launch app from shell (non-sandboxed, outside XCTest sandbox)
-            CMUX_UI_TEST_MODE=1 \
-            CMUX_UI_TEST_DIAGNOSTICS_PATH="$DIAG_PATH" \
-            CMUX_UI_TEST_DISPLAY_RENDER_STATS=1 \
-            CMUX_UI_TEST_TARGET_DISPLAY_ID="$DISPLAY_ID" \
-            CMUX_TAG="ui-tests-display-resolution" \
-            "$APP_BINARY" > /tmp/cmux-ui-test-app.log 2>&1 &
-            APP_PID=$!
-            echo "App launched: PID=$APP_PID"
-
-            # Wait for app diagnostics
-            echo "Waiting for app diagnostics..."
-            APP_READY=false
-            for i in $(seq 1 30); do
-              if [ -f "$DIAG_PATH" ]; then
-                if python3 -c "import json; d=json.load(open('$DIAG_PATH')); assert d.get('pid')" 2>/dev/null; then
-                  APP_READY=true
-                  break
-                fi
-              fi
-              if ! kill -0 "$APP_PID" 2>/dev/null; then
-                echo "ERROR: App crashed during startup"
-                cat /tmp/cmux-ui-test-app.log 2>/dev/null | tail -30 || true
-                break
-              fi
-              sleep 0.5
-            done
-
-            if [ "$APP_READY" != "true" ]; then
-              echo "Attempt $attempt: App not ready after 15s"
-              pkill -x "cmux DEV" 2>/dev/null || true
-              kill "$HELPER_PID" 2>/dev/null || true
-              if [ "$attempt" -eq 2 ]; then
-                echo "Display resolution UI regression failed after 2 attempts" >&2
-                echo "--- App log ---"
-                cat /tmp/cmux-ui-test-app.log 2>/dev/null | tail -50 || true
-                echo "--- Helper log ---"
-                cat "$HELPER_LOG" 2>/dev/null | tail -20 || true
-                echo "--- Diagnostics ---"
-                cat "$DIAG_PATH" 2>/dev/null || echo "(not found)"
-                exit 1
-              fi
-              sleep 3
-              continue
-            fi
-
-            echo "App started. Diagnostics:"
-            cat "$DIAG_PATH"
-
-            # Wait for render stats (terminal surface initialization)
-            echo "Waiting for render stats..."
-            RENDER_READY=false
-            for i in $(seq 1 40); do
-              if python3 -c "import json; d=json.load(open('$DIAG_PATH')); assert d.get('renderStatsAvailable') == '1'" 2>/dev/null; then
-                RENDER_READY=true
-                echo "Render stats available after $((i / 2))s"
-                break
-              fi
-              sleep 0.5
-            done
-            if [ "$RENDER_READY" != "true" ]; then
-              echo "WARNING: Render stats not available after 20s. Diagnostics:"
-              cat "$DIAG_PATH" 2>/dev/null || true
-              echo "--- App log ---"
-              cat /tmp/cmux-ui-test-app.log 2>/dev/null | tail -30 || true
-            fi
-
-            # Write manifests so test can find the pre-launched state
-            MANIFEST_PATH="/tmp/cmux-ui-test-display-harness.json"
-            cat >"$MANIFEST_PATH" <<MANIFEST_EOF
-          {"readyPath":"$DISPLAY_READY","displayIDPath":"$DISPLAY_ID_PATH","donePath":"$DISPLAY_DONE","logPath":"$HELPER_LOG"}
-          MANIFEST_EOF
-
-            PRELAUNCH_PATH="/tmp/cmux-ui-test-prelaunch.json"
-            cat >"$PRELAUNCH_PATH" <<PRELAUNCH_EOF
-          {"diagnosticsPath":"$DIAG_PATH"}
-          PRELAUNCH_EOF
-
-            # Run test — app is already launched from shell
-            if xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
-              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
-              -disableAutomaticPackageResolution \
-              -destination "platform=macOS" \
-              -only-testing:cmuxUITests/DisplayResolutionRegressionUITests \
-              test-without-building; then
-              exit 0
-            fi
-
-            pkill -x "cmux DEV" 2>/dev/null || true
-            kill "$HELPER_PID" 2>/dev/null || true
-
-            if [ "$attempt" -eq 2 ]; then
-              echo "Display resolution UI regression failed after 2 attempts" >&2
-              exit 1
-            fi
-            echo "Attempt $attempt failed, retrying..."
-            sleep 3
-          done
+          xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+            -disableAutomaticPackageResolution \
+            -destination "platform=macOS" \
+            -only-testing:cmuxUITests/DisplayResolutionRegressionUITests \
+            test
 
       - name: Run browser find focus UI regression
         run: |
@@ -689,14 +517,6 @@ jobs:
             -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
             -disableAutomaticPackageResolution \
             -destination "platform=macOS" \
-            -maximum-test-execution-time-allowance 180 \
+            -maximum-test-execution-time-allowance 120 \
             -only-testing:cmuxUITests/BrowserPaneNavigationKeybindUITests/testCmdFFocusesBrowserFindFieldAfterCmdDCmdLNavigation \
-            test-without-building
-
-      - name: Cleanup persistent virtual display
-        if: always()
-        run: |
-          if [ -n "${VDISPLAY_PERSISTENT_PID:-}" ]; then
-            kill "$VDISPLAY_PERSISTENT_PID" >/dev/null 2>&1 || true
-          fi
-          rm -f /tmp/cmux-vdisplay-persistent.ready /tmp/cmux-vdisplay-persistent.id /tmp/cmux-vdisplay-persistent.log
+            test

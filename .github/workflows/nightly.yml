@@ -100,7 +100,7 @@ jobs:
   build-sign-notarize-nightly:
     needs: decide
     if: needs.decide.outputs.should_build == 'true'
-    runs-on: warp-macos-15-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 20
     steps:
       - name: Checkout build ref
@@ -160,10 +160,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             zig version
           fi
           npm install --global "create-dmg@${CREATE_DMG_VERSION}"

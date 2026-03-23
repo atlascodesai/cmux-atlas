@@ -100,10 +100,11 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             zig version
           fi
 
