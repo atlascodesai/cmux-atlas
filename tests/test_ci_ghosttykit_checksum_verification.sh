@@ -130,7 +130,7 @@ if (
   exit 1
 fi
 
-if ! grep -Fq "Missing pinned GhosttyKit checksum for ghostty $FIXTURE_SHA" "$MISSING_ENTRY_OUTPUT"; then
+if ! grep -Fq "No pinned checksum for ghostty $FIXTURE_SHA" "$MISSING_ENTRY_OUTPUT"; then
   echo "FAIL: verification helper did not report a missing pinned checksum entry"
   exit 1
 fi

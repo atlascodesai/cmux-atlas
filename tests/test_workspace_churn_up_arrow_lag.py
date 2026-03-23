@@ -373,6 +373,15 @@ def main() -> int:
         client.connect()
         print(f"Using socket: {client.socket_path}")
 
+        # Wait for the app to create its initial workspace/tab before proceeding.
+        def _has_workspaces() -> bool:
+            try:
+                return len(client.list_workspaces()) > 0
+            except cmuxError:
+                return False
+
+        wait_for(_has_workspaces, timeout_s=30.0, step_s=0.5)
+
         pid = get_cmux_pid_for_socket(client.socket_path)
         if pid is None:
             print("SKIP: cmux process not found for socket")

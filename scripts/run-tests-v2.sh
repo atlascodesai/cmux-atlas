@@ -13,6 +13,7 @@ cd "$(dirname "$0")/.."
 
 DERIVED_DATA_PATH="$HOME/Library/Developer/Xcode/DerivedData/cmux-tests-v2"
 APP="$DERIVED_DATA_PATH/Build/Products/Debug/cmux DEV.app"
+APP_BINARY="$APP/Contents/MacOS/cmux DEV"
 RUN_TAG="tests-v2"
 
 echo "== build =="
@@ -32,6 +33,10 @@ if [ ! -d "$APP" ]; then
   echo "ERROR: cmux DEV.app not found at expected path: $APP" >&2
   exit 1
 fi
+
+export CMUX_TEST_APP_BUNDLE="$APP"
+export CMUX_TEST_APP_BINARY="$APP_BINARY"
+export CMUX_TEST_RUN_TAG="$RUN_TAG"
 
 cleanup() {
   pkill -x "cmux DEV" || true

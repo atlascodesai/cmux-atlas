@@ -956,6 +956,15 @@ class cmux:
     def activate_app(self) -> None:
         self._call("debug.app.activate")
 
+    def quit_app(self) -> None:
+        self._call("debug.app.quit")
+
+    def ai_sessions(self, refresh: bool = False) -> dict:
+        return dict(self._call("debug.ai_sessions", {"refresh": bool(refresh)}) or {})
+
+    def resume_ai_session(self, surface_id: str) -> dict:
+        return dict(self._call("debug.ai_session.resume", {"surface_id": str(surface_id)}) or {})
+
     def open_command_palette_rename_tab_input(self, window_id: Optional[str] = None) -> None:
         params: Dict[str, Any] = {}
         if window_id is not None:

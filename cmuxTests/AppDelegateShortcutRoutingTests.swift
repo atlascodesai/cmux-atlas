@@ -17,6 +17,10 @@ final class AppDelegateShortcutRoutingTests: XCTestCase {
         super.setUp()
         // Prevent a single hanging test from consuming the entire CI timeout budget.
         executionTimeAllowance = 30
+        // Install a default confirmation handler to prevent modal NSAlert dialogs
+        // from blocking the main thread on CI runners where no user can dismiss them.
+        // Individual tests can override this with their own handler as needed.
+        AppDelegate.shared?.debugCloseMainWindowConfirmationHandler = { _ in true }
         actionsWithPersistedShortcut = Set(
             KeyboardShortcutSettings.Action.allCases.filter {
                 UserDefaults.standard.object(forKey: $0.defaultsKey) != nil

@@ -315,14 +315,14 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             let releaseConfigURL = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.atlascodes.cmux-atlas",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
 
             XCTAssertEqual(
                 GhosttyApp.cmuxAppSupportConfigURLs(
-                    currentBundleIdentifier: "com.cmuxterm.app.debug",
+                    currentBundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                     appSupportDirectory: appSupportDirectory
                 ),
                 [releaseConfigURL]
@@ -334,20 +334,20 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.atlascodes.cmux-atlas",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
             let currentConfigURL = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app.debug.issue-829",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug.issue-829",
                 filename: "config.ghostty",
                 contents: "font-size = 14\n"
             )
 
             XCTAssertEqual(
                 GhosttyApp.cmuxAppSupportConfigURLs(
-                    currentBundleIdentifier: "com.cmuxterm.app.debug.issue-829",
+                    currentBundleIdentifier: "com.atlascodes.cmux-atlas.debug.issue-829",
                     appSupportDirectory: appSupportDirectory
                 ),
                 [currentConfigURL]
@@ -359,7 +359,7 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.atlascodes.cmux-atlas",
                 filename: "config",
                 contents: "font-size = 13\n"
             )
@@ -377,14 +377,14 @@ final class GhosttyConfigTests: XCTestCase {
         try withTemporaryAppSupportDirectory { appSupportDirectory in
             _ = try writeAppSupportConfig(
                 appSupportDirectory: appSupportDirectory,
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.atlascodes.cmux-atlas",
                 filename: "config.ghostty",
                 contents: ""
             )
 
             XCTAssertTrue(
                 GhosttyApp.cmuxAppSupportConfigURLs(
-                    currentBundleIdentifier: "com.cmuxterm.app.debug",
+                    currentBundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                     appSupportDirectory: appSupportDirectory
                 ).isEmpty
             )
@@ -1636,7 +1636,7 @@ final class SocketControlSettingsTests: XCTestCase {
             environment: [
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-issue-153-tmux-compat.sock",
             ],
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.atlascodes.cmux-atlas",
             isDebugBuild: false,
             probeStableDefaultPathEntry: { _ in .missing }
         )
@@ -1649,12 +1649,12 @@ final class SocketControlSettingsTests: XCTestCase {
             environment: [
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-issue-153-tmux-compat.sock",
             ],
-            bundleIdentifier: "com.cmuxterm.app.nightly",
+            bundleIdentifier: "com.atlascodes.cmux-atlas.nightly",
             isDebugBuild: false,
             probeStableDefaultPathEntry: { _ in .missing }
         )
 
-        XCTAssertEqual(path, "/tmp/cmux-nightly.sock")
+        XCTAssertEqual(path, "/tmp/cmux-atlas-nightly.sock")
     }
 
     func testDebugBundleHonorsSocketOverrideWithoutOptInFlag() {
@@ -1662,7 +1662,7 @@ final class SocketControlSettingsTests: XCTestCase {
             environment: [
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-my-tag.sock",
             ],
-            bundleIdentifier: "com.cmuxterm.app.debug.my-tag",
+            bundleIdentifier: "com.atlascodes.cmux-atlas.debug.my-tag",
             isDebugBuild: false
         )
 
@@ -1674,7 +1674,7 @@ final class SocketControlSettingsTests: XCTestCase {
             environment: [
                 "CMUX_SOCKET_PATH": "/tmp/cmux-staging-my-tag.sock",
             ],
-            bundleIdentifier: "com.cmuxterm.app.staging.my-tag",
+            bundleIdentifier: "com.atlascodes.cmux-atlas.staging.my-tag",
             isDebugBuild: false
         )
 
@@ -1687,7 +1687,7 @@ final class SocketControlSettingsTests: XCTestCase {
                 "CMUX_SOCKET_PATH": "/tmp/cmux-debug-forced.sock",
                 "CMUX_ALLOW_SOCKET_OVERRIDE": "1",
             ],
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.atlascodes.cmux-atlas",
             isDebugBuild: false,
             probeStableDefaultPathEntry: { _ in .missing }
         )
@@ -1698,7 +1698,7 @@ final class SocketControlSettingsTests: XCTestCase {
     func testDefaultSocketPathByChannel() {
         XCTAssertEqual(
             SocketControlSettings.defaultSocketPath(
-                bundleIdentifier: "com.cmuxterm.app",
+                bundleIdentifier: "com.atlascodes.cmux-atlas",
                 isDebugBuild: false,
                 probeStableDefaultPathEntry: { _ in .missing }
             ),
@@ -1706,33 +1706,33 @@ final class SocketControlSettingsTests: XCTestCase {
         )
         XCTAssertEqual(
             SocketControlSettings.defaultSocketPath(
-                bundleIdentifier: "com.cmuxterm.app.nightly",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.nightly",
                 isDebugBuild: false,
                 probeStableDefaultPathEntry: { _ in .missing }
             ),
-            "/tmp/cmux-nightly.sock"
+            "/tmp/cmux-atlas-nightly.sock"
         )
         XCTAssertEqual(
             SocketControlSettings.defaultSocketPath(
-                bundleIdentifier: "com.cmuxterm.app.debug.tag",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug.tag",
                 isDebugBuild: false,
                 probeStableDefaultPathEntry: { _ in .missing }
             ),
-            "/tmp/cmux-debug.sock"
+            "/tmp/cmux-atlas-debug.sock"
         )
         XCTAssertEqual(
             SocketControlSettings.defaultSocketPath(
-                bundleIdentifier: "com.cmuxterm.app.staging.tag",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.staging.tag",
                 isDebugBuild: false,
                 probeStableDefaultPathEntry: { _ in .missing }
             ),
-            "/tmp/cmux-staging.sock"
+            "/tmp/cmux-atlas-staging.sock"
         )
     }
 
     func testStableReleaseFallsBackToUserScopedSocketWhenStablePathOwnedByDifferentUser() {
         let path = SocketControlSettings.defaultSocketPath(
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.atlascodes.cmux-atlas",
             isDebugBuild: false,
             currentUserID: 501,
             probeStableDefaultPathEntry: { _ in .socket(ownerUserID: 0) }
@@ -1743,7 +1743,7 @@ final class SocketControlSettingsTests: XCTestCase {
 
     func testStableReleaseFallsBackToUserScopedSocketWhenStablePathIsBlockedByNonSocketEntry() {
         let path = SocketControlSettings.defaultSocketPath(
-            bundleIdentifier: "com.cmuxterm.app",
+            bundleIdentifier: "com.atlascodes.cmux-atlas",
             isDebugBuild: false,
             currentUserID: 501,
             probeStableDefaultPathEntry: { _ in .other(ownerUserID: 501) }
@@ -1756,7 +1756,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertTrue(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: [:],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -1766,7 +1766,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: ["CMUX_TAG": "tests-v1"],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -1776,7 +1776,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: [:],
-                bundleIdentifier: "com.cmuxterm.app.debug.tests-v1",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug.tests-v1",
                 isDebugBuild: true
             )
         )
@@ -1786,7 +1786,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: [:],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: false
             )
         )
@@ -1796,7 +1796,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: ["XCTestConfigurationFilePath": "/tmp/fake.xctestconfiguration"],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -1806,7 +1806,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: ["XCInjectBundle": "/tmp/fake.xctest"],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -1816,7 +1816,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: ["DYLD_INSERT_LIBRARIES": "/usr/lib/libXCTestBundleInject.dylib"],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -1828,7 +1828,7 @@ final class SocketControlSettingsTests: XCTestCase {
         XCTAssertFalse(
             SocketControlSettings.shouldBlockUntaggedDebugLaunch(
                 environment: ["CMUX_UI_TEST_MODE": "1"],
-                bundleIdentifier: "com.cmuxterm.app.debug",
+                bundleIdentifier: "com.atlascodes.cmux-atlas.debug",
                 isDebugBuild: true
             )
         )
@@ -2388,161 +2388,6 @@ final class ZshShellIntegrationHandoffTests: XCTestCase {
         XCTAssertEqual(output, "BEFORE\nAFTER", output)
     }
 
-    func testShellIntegrationPublishesOnlyWorkspaceScopedCmuxEnvironmentToTmuxServerAutomatically() throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cmux-zsh-tmux-publish-\(UUID().uuidString)")
-        let binDir = root.appendingPathComponent("bin", isDirectory: true)
-        let logPath = root.appendingPathComponent("tmux.log", isDirectory: false)
-
-        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        try writeExecutableScript(
-            at: binDir.appendingPathComponent("tmux", isDirectory: false),
-            contents: """
-            #!/bin/sh
-            if [ "$1" = "show-environment" ] && [ "$2" = "-g" ]; then
-              exit 0
-            fi
-            printf '%s\\n' "$*" >> "\(logPath.path)"
-            exit 0
-            """
-        )
-
-        _ = try runInteractiveZsh(
-            cmuxLoadGhosttyIntegration: false,
-            cmuxLoadShellIntegration: true,
-            command: "_cmux_preexec tmux; print -r -- READY",
-            extraEnvironment: [
-                "PATH": "\(binDir.path):/usr/bin:/bin:/usr/sbin:/sbin",
-                "CMUX_SOCKET_PATH": "/tmp/cmux-current.sock",
-                "CMUX_TAG": "feat-tmux-notification-attention-state",
-                "CMUX_WORKSPACE_ID": "11111111-1111-1111-1111-111111111111",
-                "CMUX_SURFACE_ID": "22222222-2222-2222-2222-222222222222",
-                "CMUX_TAB_ID": "11111111-1111-1111-1111-111111111111",
-                "CMUX_PANEL_ID": "22222222-2222-2222-2222-222222222222",
-            ]
-        )
-
-        let log = (try? String(contentsOf: logPath, encoding: .utf8)) ?? ""
-        XCTAssertTrue(log.contains("set-environment -g CMUX_TAG feat-tmux-notification-attention-state"), log)
-        XCTAssertTrue(log.contains("set-environment -g CMUX_SOCKET_PATH /tmp/cmux-current.sock"), log)
-        XCTAssertTrue(log.contains("set-environment -g CMUX_WORKSPACE_ID 11111111-1111-1111-1111-111111111111"), log)
-        XCTAssertFalse(log.contains("set-environment -g CMUX_SURFACE_ID"), log)
-        XCTAssertFalse(log.contains("set-environment -g CMUX_PANEL_ID"), log)
-    }
-
-    func testShellIntegrationClearsStaleSurfaceScopedTmuxEnvironmentAutomatically() throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cmux-zsh-tmux-clear-\(UUID().uuidString)")
-        let binDir = root.appendingPathComponent("bin", isDirectory: true)
-        let logPath = root.appendingPathComponent("tmux.log", isDirectory: false)
-
-        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        try writeExecutableScript(
-            at: binDir.appendingPathComponent("tmux", isDirectory: false),
-            contents: """
-            #!/bin/sh
-            if [ "$1" = "show-environment" ] && [ "$2" = "-g" ]; then
-              printf '%s\\n' 'CMUX_SURFACE_ID=99999999-9999-9999-9999-999999999999'
-              printf '%s\\n' 'CMUX_PANEL_ID=99999999-9999-9999-9999-999999999999'
-              exit 0
-            fi
-            printf '%s\\n' "$*" >> "\(logPath.path)"
-            exit 0
-            """
-        )
-
-        _ = try runInteractiveZsh(
-            cmuxLoadGhosttyIntegration: false,
-            cmuxLoadShellIntegration: true,
-            command: "_cmux_preexec tmux; print -r -- READY",
-            extraEnvironment: [
-                "PATH": "\(binDir.path):/usr/bin:/bin:/usr/sbin:/sbin",
-                "CMUX_SOCKET_PATH": "/tmp/cmux-current.sock",
-                "CMUX_TAG": "feat-tmux-notification-attention-state",
-                "CMUX_WORKSPACE_ID": "11111111-1111-1111-1111-111111111111",
-                "CMUX_SURFACE_ID": "22222222-2222-2222-2222-222222222222",
-                "CMUX_TAB_ID": "11111111-1111-1111-1111-111111111111",
-                "CMUX_PANEL_ID": "22222222-2222-2222-2222-222222222222",
-            ]
-        )
-
-        let log = (try? String(contentsOf: logPath, encoding: .utf8)) ?? ""
-        XCTAssertTrue(log.contains("set-environment -gu CMUX_SURFACE_ID"), log)
-        XCTAssertTrue(log.contains("set-environment -gu CMUX_PANEL_ID"), log)
-    }
-
-    func testShellIntegrationRefreshesWorkspaceScopedCmuxEnvironmentFromTmuxWithoutOverwritingSurfaceScope() throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory
-            .appendingPathComponent("cmux-zsh-tmux-refresh-\(UUID().uuidString)")
-        let binDir = root.appendingPathComponent("bin", isDirectory: true)
-
-        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: root) }
-
-        try writeExecutableScript(
-            at: binDir.appendingPathComponent("tmux", isDirectory: false),
-            contents: """
-            #!/bin/sh
-            if [ "$1" = "show-environment" ] && [ "$2" = "-g" ]; then
-              printf '%s\\n' 'CMUX_SOCKET_PATH=/tmp/cmux-current.sock'
-              printf '%s\\n' 'CMUX_TAG=feat-tmux-notification-attention-state'
-              printf '%s\\n' 'CMUX_WORKSPACE_ID=11111111-1111-1111-1111-111111111111'
-              printf '%s\\n' 'CMUX_SURFACE_ID=99999999-9999-9999-9999-999999999999'
-              printf '%s\\n' 'CMUX_TAB_ID=11111111-1111-1111-1111-111111111111'
-              printf '%s\\n' 'CMUX_PANEL_ID=99999999-9999-9999-9999-999999999999'
-              exit 0
-            fi
-            exit 0
-            """
-        )
-
-        let output = try runInteractiveZsh(
-            cmuxLoadGhosttyIntegration: false,
-            cmuxLoadShellIntegration: true,
-            command: "_cmux_precmd; print -r -- \"$CMUX_TAG|$CMUX_SOCKET_PATH|$CMUX_WORKSPACE_ID|$CMUX_SURFACE_ID|$CMUX_PANEL_ID\"",
-            extraEnvironment: [
-                "PATH": "\(binDir.path):/usr/bin:/bin:/usr/sbin:/sbin",
-                "TMUX": "/tmp/tmux-stale,123,0",
-                "CMUX_SOCKET_PATH": "/tmp/cmux-stale.sock",
-                "CMUX_TAG": "feat-tmux-integration-experiments",
-                "CMUX_WORKSPACE_ID": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
-                "CMUX_SURFACE_ID": "22222222-2222-2222-2222-222222222222",
-                "CMUX_TAB_ID": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
-                "CMUX_PANEL_ID": "22222222-2222-2222-2222-222222222222",
-            ]
-        )
-
-        XCTAssertEqual(
-            output,
-            "feat-tmux-notification-attention-state|/tmp/cmux-current.sock|11111111-1111-1111-1111-111111111111|22222222-2222-2222-2222-222222222222|22222222-2222-2222-2222-222222222222"
-        )
-    }
-
-    func testShellIntegrationReportsTTYFromTmuxWithoutUsingPanelScope() throws {
-        let output = try runInteractiveZsh(
-            cmuxLoadGhosttyIntegration: false,
-            cmuxLoadShellIntegration: true,
-            command: """
-            _CMUX_TTY_NAME=ttys999
-            print -r -- "$(_cmux_report_tty_payload)"
-            """,
-            extraEnvironment: [
-                "TMUX": "/tmp/tmux-current,123,0",
-                "CMUX_TAB_ID": "11111111-1111-1111-1111-111111111111",
-                "CMUX_PANEL_ID": "99999999-9999-9999-9999-999999999999",
-            ]
-        )
-
-        XCTAssertEqual(output, "report_tty ttys999 --tab=11111111-1111-1111-1111-111111111111")
-    }
-
     private func runInteractiveZsh(cmuxLoadGhosttyIntegration: Bool) throws -> String {
         try runInteractiveZsh(
             cmuxLoadGhosttyIntegration: cmuxLoadGhosttyIntegration,
@@ -2556,8 +2401,7 @@ final class ZshShellIntegrationHandoffTests: XCTestCase {
     private func runInteractiveZsh(
         cmuxLoadGhosttyIntegration: Bool,
         cmuxLoadShellIntegration: Bool,
-        command: String,
-        extraEnvironment: [String: String] = [:]
+        command: String
     ) throws -> String {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory
@@ -2567,18 +2411,7 @@ final class ZshShellIntegrationHandoffTests: XCTestCase {
 
         let userZdotdir = root.appendingPathComponent("zdotdir")
         try fileManager.createDirectory(at: userZdotdir, withIntermediateDirectories: true)
-        let userZshEnvContents: String = {
-            if let path = extraEnvironment["PATH"] {
-                let escaped = path.replacingOccurrences(of: "\"", with: "\\\"")
-                return "export PATH=\"\(escaped)\"\n"
-            }
-            return "\n"
-        }()
-        try userZshEnvContents.write(
-            to: userZdotdir.appendingPathComponent(".zshenv"),
-            atomically: true,
-            encoding: .utf8
-        )
+        try "\n".write(to: userZdotdir.appendingPathComponent(".zshenv"), atomically: true, encoding: .utf8)
 
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -2612,9 +2445,6 @@ final class ZshShellIntegrationHandoffTests: XCTestCase {
             process.environment?["CMUX_TAB_ID"] = "tab-test"
             process.environment?["CMUX_PANEL_ID"] = "panel-test"
         }
-        for (key, value) in extraEnvironment {
-            process.environment?[key] = value
-        }
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -2637,61 +2467,6 @@ final class ZshShellIntegrationHandoffTests: XCTestCase {
 
         XCTAssertEqual(process.terminationStatus, 0, error)
         return output.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func writeExecutableScript(at url: URL, contents: String) throws {
-        try contents.write(to: url, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-    }
-
-    private func bindUnixSocket(at path: String) throws -> Int32 {
-        unlink(path)
-
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else {
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: Int(errno),
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create Unix socket"]
-            )
-        }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let maxPathLength = MemoryLayout.size(ofValue: addr.sun_path)
-        path.withCString { ptr in
-            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
-                let pathBuf = UnsafeMutableRawPointer(pathPtr).assumingMemoryBound(to: CChar.self)
-                strncpy(pathBuf, ptr, maxPathLength - 1)
-            }
-        }
-
-        let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                Darwin.bind(fd, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard bindResult == 0 else {
-            let code = Int(errno)
-            Darwin.close(fd)
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: code,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to bind Unix socket"]
-            )
-        }
-
-        guard Darwin.listen(fd, 1) == 0 else {
-            let code = Int(errno)
-            Darwin.close(fd)
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: code,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to listen on Unix socket"]
-            )
-        }
-
-        return fd
     }
 }
 

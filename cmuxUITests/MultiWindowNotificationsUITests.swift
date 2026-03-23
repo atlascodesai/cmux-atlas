@@ -766,6 +766,7 @@ final class MultiWindowNotificationsUITests: XCTestCase {
             appendCLIPathCandidates(fromProductsDirectory: productsDir, strategy: strategy, to: &candidates)
         }
 
+        candidates.append("/tmp/cmux-\(launchTag)/Build/Products/Debug/cmux Atlas DEV.app/Contents/Resources/bin/cmux")
         candidates.append("/tmp/cmux-\(launchTag)/Build/Products/Debug/cmux DEV.app/Contents/Resources/bin/cmux")
         candidates.append("/tmp/cmux-\(launchTag)/Build/Products/Debug/cmux.app/Contents/Resources/bin/cmux")
         if strategy == .any {
@@ -803,6 +804,7 @@ final class MultiWindowNotificationsUITests: XCTestCase {
         strategy: CmuxCLIStrategy,
         to candidates: inout [String]
     ) {
+        candidates.append("\(productsDir)/cmux Atlas DEV.app/Contents/Resources/bin/cmux")
         candidates.append("\(productsDir)/cmux DEV.app/Contents/Resources/bin/cmux")
         candidates.append("\(productsDir)/cmux.app/Contents/Resources/bin/cmux")
         if strategy == .any {
