@@ -1114,9 +1114,9 @@ final class ServeWebOutputCollector {
 }
 
 enum WorkspaceShortcutMapper {
-    /// Maps numbered workspace shortcuts to a zero-based workspace index.
-    /// 1...8 target fixed indices; 9 always targets the last workspace.
-    static func workspaceIndex(forDigit digit: Int, workspaceCount: Int) -> Int? {
+    /// Maps Cmd+digit workspace shortcuts to a zero-based workspace index.
+    /// Cmd+1...Cmd+8 target fixed indices; Cmd+9 always targets the last workspace.
+    static func workspaceIndex(forCommandDigit digit: Int, workspaceCount: Int) -> Int? {
         guard workspaceCount > 0 else { return nil }
         guard (1...9).contains(digit) else { return nil }
 
@@ -1128,12 +1128,12 @@ enum WorkspaceShortcutMapper {
         return index < workspaceCount ? index : nil
     }
 
-    /// Returns the primary digit badge to display for a workspace row.
+    /// Returns the primary Cmd+digit badge to display for a workspace row.
     /// Picks the lowest digit that maps to that row index.
-    static func digitForWorkspace(at index: Int, workspaceCount: Int) -> Int? {
+    static func commandDigitForWorkspace(at index: Int, workspaceCount: Int) -> Int? {
         guard index >= 0 && index < workspaceCount else { return nil }
         for digit in 1...9 {
-            if workspaceIndex(forDigit: digit, workspaceCount: workspaceCount) == index {
+            if workspaceIndex(forCommandDigit: digit, workspaceCount: workspaceCount) == index {
                 return digit
             }
         }
@@ -2137,6 +2137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var didAttemptStartupSessionRestore = false
     private var isApplyingStartupSessionRestore = false
     private var sessionAutosaveTimer: DispatchSourceTimer?
+    private var aiSessionCacheRefreshTimer: DispatchSourceTimer?
     private var sessionAutosaveTickInFlight = false
     private var sessionAutosaveDeferredRetryPending = false
     private let sessionPersistenceQueue = DispatchQueue(
@@ -2167,6 +2168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private static let commandPaletteRequestGraceInterval: TimeInterval = 1.25
     private static let commandPalettePendingOpenMaxAge: TimeInterval = 8.0
     private static let sessionAutosaveTypingQuietPeriod: TimeInterval = 0.65
+    private static let aiSessionCacheRefreshInterval: DispatchTimeInterval = .seconds(4)
 
     var updateViewModel: UpdateViewModel {
         updateController.viewModel
@@ -2390,11 +2392,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
                 self.moveUITestWindowToTargetDisplayIfNeeded()
                 NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-                // On headless CI runners, activate() silently fails (no GUI session).
-                // Force windows visible so the terminal surface starts rendering.
-                for window in NSApp.windows {
-                    window.orderFrontRegardless()
-                }
                 self.writeUITestDiagnosticsIfNeeded(stage: "afterForceWindow")
             }
             if env["CMUX_UI_TEST_BROWSER_IMPORT_HINT_OPEN_BLANK_BROWSER"] == "1" {
@@ -2643,13 +2640,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         isTerminatingApp = true
-        _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
+        _ = saveSessionSnapshot(
+            includeScrollback: true,
+            includeUnsafeTerminalScrollback: true,
+            removeWhenEmpty: false
+        )
         return .terminateNow
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         isTerminatingApp = true
-        _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
+        _ = saveSessionSnapshot(
+            includeScrollback: true,
+            includeUnsafeTerminalScrollback: true,
+            removeWhenEmpty: false
+        )
         stopSessionAutosaveTimer()
         TerminalController.shared.stop()
         VSCodeServeWebController.shared.stop()
@@ -2668,7 +2673,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func persistSessionForUpdateRelaunch() {
         isTerminatingApp = true
-        _ = saveSessionSnapshot(includeScrollback: true, removeWhenEmpty: false)
+        _ = saveSessionSnapshot(
+            includeScrollback: true,
+            includeUnsafeTerminalScrollback: true,
+            removeWhenEmpty: false
+        )
     }
 
     func configure(tabManager: TabManager, notificationStore: TerminalNotificationStore, sidebarState: SidebarState) {
@@ -2898,7 +2907,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func completeStartupSessionRestore() {
         startupSessionSnapshot = nil
         isApplyingStartupSessionRestore = false
+        refreshAISessionCachesNowAcrossAllWorkspaces()
         _ = saveSessionSnapshot(includeScrollback: false)
+        SystemMemoryPressureMonitor.shared.activate()
     }
 
     private func applySessionWindowSnapshot(
@@ -3256,13 +3267,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         sessionAutosaveTimer = timer
         timer.resume()
+
+        startAISessionCacheRefreshTimerIfNeeded()
     }
 
     private func stopSessionAutosaveTimer() {
         sessionAutosaveTimer?.cancel()
         sessionAutosaveTimer = nil
+        aiSessionCacheRefreshTimer?.cancel()
+        aiSessionCacheRefreshTimer = nil
         sessionAutosaveTickInFlight = false
         sessionAutosaveDeferredRetryPending = false
+    }
+
+    private func startAISessionCacheRefreshTimerIfNeeded() {
+        guard aiSessionCacheRefreshTimer == nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        let interval = Self.aiSessionCacheRefreshInterval
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.isTerminatingApp else { return }
+            self.scheduleAISessionCacheRefreshAcrossAllWorkspaces()
+        }
+        aiSessionCacheRefreshTimer = timer
+        timer.resume()
+    }
+
+    private func scheduleAISessionCacheRefreshAcrossAllWorkspaces() {
+        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
+            lhs.windowId.uuidString < rhs.windowId.uuidString
+        }
+        for context in contexts {
+            for workspace in context.tabManager.tabs {
+                workspace.scheduleAISessionRefreshForTerminalPanels()
+            }
+        }
+    }
+
+    private func refreshAISessionCachesNowAcrossAllWorkspaces() {
+        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
+            lhs.windowId.uuidString < rhs.windowId.uuidString
+        }
+        for context in contexts {
+            for workspace in context.tabManager.tabs {
+                workspace.refreshAISessionCacheNowForTerminalPanels()
+            }
+        }
     }
 
     private func installLifecycleSnapshotObserversIfNeeded() {
@@ -3379,8 +3430,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return hasher.finalize()
     }
 
+    /// Trigger an immediate session save from external callers (e.g. memory pressure monitor).
+    /// Must be called on the main thread.
+    func emergencySessionSave(reason: String) {
+#if DEBUG
+        dlog("session.emergencySave reason=\(reason)")
+#endif
+        _ = saveSessionSnapshot(
+            includeScrollback: true,
+            includeUnsafeTerminalScrollback: true
+        )
+    }
+
     @discardableResult
-    private func saveSessionSnapshot(includeScrollback: Bool, removeWhenEmpty: Bool = false) -> Bool {
+    private func saveSessionSnapshot(
+        includeScrollback: Bool,
+        includeUnsafeTerminalScrollback: Bool = false,
+        removeWhenEmpty: Bool = false
+    ) -> Bool {
         if Self.shouldSkipSessionSaveDuringStartupRestore(
             isApplyingStartupSessionRestore: isApplyingStartupSessionRestore,
             includeScrollback: includeScrollback
@@ -3401,12 +3468,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             CmuxTypingTiming.logDuration(
                 path: "session.saveSnapshot",
                 startedAt: timingStart,
-                extra: "includeScrollback=\(includeScrollback ? 1 : 0) removeWhenEmpty=\(removeWhenEmpty ? 1 : 0) sync=\(writeSynchronously ? 1 : 0)"
+                extra: "includeScrollback=\(includeScrollback ? 1 : 0) " +
+                    "includeUnsafe=\(includeUnsafeTerminalScrollback ? 1 : 0) " +
+                    "removeWhenEmpty=\(removeWhenEmpty ? 1 : 0) sync=\(writeSynchronously ? 1 : 0)"
             )
         }
 #endif
 
-        guard let snapshot = buildSessionSnapshot(includeScrollback: includeScrollback) else {
+        guard let snapshot = buildSessionSnapshot(
+            includeScrollback: includeScrollback,
+            includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+        ) else {
             persistSessionSnapshot(
                 nil,
                 removeWhenEmpty: removeWhenEmpty,
@@ -3525,13 +3597,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #if DEBUG
         let fingerprintStart = ProcessInfo.processInfo.systemUptime
 #endif
-        let autosaveFingerprint = sessionAutosaveFingerprint(includeScrollback: false)
+        let autosaveFingerprint = sessionAutosaveFingerprint(includeScrollback: true)
 #if DEBUG
         fingerprintMs = (ProcessInfo.processInfo.systemUptime - fingerprintStart) * 1000.0
 #endif
         if Self.shouldSkipSessionAutosaveForUnchangedFingerprint(
             isTerminatingApp: isTerminatingApp,
-            includeScrollback: false,
+            includeScrollback: true,
             previousFingerprint: lastSessionAutosaveFingerprint,
             currentFingerprint: autosaveFingerprint,
             lastPersistedAt: lastSessionAutosavePersistedAt,
@@ -3539,7 +3611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ) {
 #if DEBUG
             dlog(
-                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=0 source=\(source)"
+                "session.save.skipped reason=unchanged_autosave_fingerprint includeScrollback=1 source=\(source)"
             )
 #endif
             return
@@ -3548,12 +3620,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #if DEBUG
         let saveStart = ProcessInfo.processInfo.systemUptime
 #endif
-        _ = saveSessionSnapshot(includeScrollback: false)
+        _ = saveSessionSnapshot(
+            includeScrollback: true,
+            includeUnsafeTerminalScrollback: true
+        )
 #if DEBUG
         saveMs = (ProcessInfo.processInfo.systemUptime - saveStart) * 1000.0
 #endif
         updateSessionAutosaveSaveState(
-            includeScrollback: false,
+            includeScrollback: true,
             persistedAt: now,
             fingerprint: autosaveFingerprint
         )
@@ -3640,7 +3715,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    private func buildSessionSnapshot(includeScrollback: Bool) -> AppSessionSnapshot? {
+    private func buildSessionSnapshot(
+        includeScrollback: Bool,
+        includeUnsafeTerminalScrollback: Bool = false
+    ) -> AppSessionSnapshot? {
         let contexts = mainWindowContexts.values.sorted { lhs, rhs in
             let lhsWindow = lhs.window ?? windowForMainWindowId(lhs.windowId)
             let rhsWindow = rhs.window ?? windowForMainWindowId(rhs.windowId)
@@ -3661,7 +3739,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 return SessionWindowSnapshot(
                     frame: window.map { SessionRectSnapshot($0.frame) },
                     display: displaySnapshot(for: window),
-                    tabManager: context.tabManager.sessionSnapshot(includeScrollback: includeScrollback),
+                    tabManager: context.tabManager.sessionSnapshot(
+                        includeScrollback: includeScrollback,
+                        includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+                    ),
                     sidebar: SessionSidebarSnapshot(
                         isVisible: context.sidebarState.isVisible,
                         selection: SessionSidebarSelection(selection: context.sidebarSelectionState.selection),
@@ -4236,6 +4317,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         mainWindowContexts.values.first(where: { $0.windowId == windowId })?.tabManager
     }
 
+    func allTabManagers() -> [TabManager] {
+        Array(mainWindowContexts.values.map(\.tabManager))
+    }
+
     func windowId(for tabManager: TabManager) -> UUID? {
         mainWindowContexts.values.first(where: { $0.tabManager === tabManager })?.windowId
     }
@@ -4456,6 +4541,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
               let windowId = mainWindowId(for: window),
               commandPaletteEscapeSuppressionByWindowId.contains(windowId) else {
             return false
+        }
+        if event.isARepeat {
+            return true
         }
         let startedAt = commandPaletteEscapeSuppressionStartedAtByWindowId[windowId] ?? 0
         if ProcessInfo.processInfo.systemUptime - startedAt <= 0.35 {
@@ -8891,11 +8979,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func handleCustomShortcut(event: NSEvent) -> Bool {
         // `charactersIgnoringModifiers` can be nil for some synthetic NSEvents and certain special keys.
         // Treat nil as "" and rely on keyCode/layout-aware fallback logic where needed.
-        // When a non-Latin input source is active (Korean, Chinese, Japanese, etc.),
-        // charactersIgnoringModifiers returns non-ASCII characters that never match
-        // Latin shortcut keys. Normalize via KeyboardLayout so downstream comparisons
-        // (Cmd+1-9, Ctrl+1-9, omnibar N/P, command palette, etc.) work correctly.
-        let chars = KeyboardLayout.normalizedCharacters(for: event)
+        let chars = (event.charactersIgnoringModifiers ?? "").lowercased()
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let hasControl = flags.contains(.control)
         let hasCommand = flags.contains(.command)
@@ -9480,33 +9564,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return true
         }
 
-        // Numeric shortcuts for specific workspaces (9 = last workspace)
-        if let manager = tabManager,
-           let digit = numberedShortcutDigit(
-               event: event,
-               shortcut: KeyboardShortcutSettings.shortcut(for: .selectWorkspaceByNumber)
-           ),
-           let targetIndex = WorkspaceShortcutMapper.workspaceIndex(forDigit: digit, workspaceCount: manager.tabs.count) {
+        // Numeric shortcuts for specific sidebar tabs: Cmd+1-9 (9 = last workspace)
+        if flags == [.command],
+           let manager = tabManager,
+           let num = Int(chars),
+           let targetIndex = WorkspaceShortcutMapper.workspaceIndex(forCommandDigit: num, workspaceCount: manager.tabs.count) {
 #if DEBUG
             dlog(
-                "shortcut.action name=workspaceDigit digit=\(digit) targetIndex=\(targetIndex) manager=\(debugManagerToken(manager)) \(debugShortcutRouteSnapshot(event: event))"
+                "shortcut.action name=workspaceDigit digit=\(num) targetIndex=\(targetIndex) manager=\(debugManagerToken(manager)) \(debugShortcutRouteSnapshot(event: event))"
             )
 #endif
             manager.selectTab(at: targetIndex)
             return true
         }
 
-        // Numeric shortcuts for surfaces within the focused pane (9 = last)
-        if let digit = numberedShortcutDigit(
-            event: event,
-            shortcut: KeyboardShortcutSettings.shortcut(for: .selectSurfaceByNumber)
-        ) {
-            if digit == 9 {
-                tabManager?.selectLastSurface()
-            } else {
-                tabManager?.selectSurface(at: digit - 1)
+        // Numeric shortcuts for surfaces within pane: Ctrl+1-9 (9 = last)
+        if flags == [.control] {
+            if let num = Int(chars), num >= 1 && num <= 9 {
+                if num == 9 {
+                    tabManager?.selectLastSurface()
+                } else {
+                    tabManager?.selectSurface(at: num - 1)
+                }
+                return true
             }
-            return true
         }
 
         // Pane focus navigation (defaults to Cmd+Option+Arrow, but can be customized to letter/number keys).
@@ -10533,46 +10614,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return false
     }
 
-    private func numberedShortcutDigit(event: NSEvent, shortcut: StoredShortcut) -> Int? {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            .subtracting([.numericPad, .function, .capsLock])
-        guard flags == shortcut.modifierFlags else { return nil }
-
-        if let digit = numberedShortcutDigit(
-            eventCharacter: event.charactersIgnoringModifiers,
-            applyShiftSymbolNormalization: flags.contains(.shift),
-            eventKeyCode: event.keyCode
-        ) {
-            return digit
-        }
-
-        let layoutCharacter = shortcutLayoutCharacterProvider(event.keyCode, event.modifierFlags)
-        if let digit = numberedShortcutDigit(
-            eventCharacter: layoutCharacter,
-            applyShiftSymbolNormalization: false,
-            eventKeyCode: event.keyCode
-        ) {
-            return digit
-        }
-
-        return digitForNumberKeyCode(event.keyCode)
-    }
-
-    private func numberedShortcutDigit(
-        eventCharacter: String?,
-        applyShiftSymbolNormalization: Bool,
-        eventKeyCode: UInt16
-    ) -> Int? {
-        guard let eventCharacter, !eventCharacter.isEmpty else { return nil }
-        let normalized = normalizedShortcutEventCharacter(
-            eventCharacter,
-            applyShiftSymbolNormalization: applyShiftSymbolNormalization,
-            eventKeyCode: eventKeyCode
-        )
-        guard let digit = Int(normalized), (1...9).contains(digit) else { return nil }
-        return digit
-    }
-
     private func shouldRequireCharacterMatchForCommandShortcut(shortcutKey: String) -> Bool {
         guard shortcutKey.count == 1, let scalar = shortcutKey.unicodeScalars.first else {
             return false
@@ -10687,22 +10728,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         case "→": return 124 // kVK_RightArrow
         case "↓": return 125 // kVK_DownArrow
         case "↑": return 126 // kVK_UpArrow
-        default:
-            return nil
-        }
-    }
-
-    private func digitForNumberKeyCode(_ keyCode: UInt16) -> Int? {
-        switch keyCode {
-        case 18: return 1 // kVK_ANSI_1
-        case 19: return 2 // kVK_ANSI_2
-        case 20: return 3 // kVK_ANSI_3
-        case 21: return 4 // kVK_ANSI_4
-        case 23: return 5 // kVK_ANSI_5
-        case 22: return 6 // kVK_ANSI_6
-        case 26: return 7 // kVK_ANSI_7
-        case 28: return 8 // kVK_ANSI_8
-        case 25: return 9 // kVK_ANSI_9
         default:
             return nil
         }

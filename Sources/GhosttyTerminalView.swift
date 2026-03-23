@@ -414,11 +414,17 @@ func cmuxPasteboardImagePathForTesting(_ pasteboard: NSPasteboard) -> String? {
 enum TerminalOpenURLTarget: Equatable {
     case embeddedBrowser(URL)
     case external(URL)
+    /// A local markdown file to render in a native markdown panel.
+    case markdownFile(String)
+    /// A local file (relative path) to open in the browser via file:// URL.
+    case localFile(String)
 
     var url: URL {
         switch self {
         case let .embeddedBrowser(url), let .external(url):
             return url
+        case let .markdownFile(path), let .localFile(path):
+            return URL(fileURLWithPath: path)
         }
     }
 }
@@ -509,10 +515,29 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
     }
 
     if NSString(string: trimmed).isAbsolutePath {
+        // Absolute markdown files → native markdown panel
+        if trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown") {
+            #if DEBUG
+            dlog("link.resolve result=markdownFile(absolutePath) path=\(trimmed)")
+            #endif
+            return .markdownFile(trimmed)
+        }
         #if DEBUG
         dlog("link.resolve result=external(absolutePath) url=\(trimmed)")
         #endif
         return .external(URL(fileURLWithPath: trimmed))
+    }
+
+    // Relative paths to markdown files (e.g. "docs/story.md", "./README.md")
+    // These look like file paths but aren't absolute, so they'd otherwise be
+    // misinterpreted as URLs. Detect them early and mark for markdown rendering.
+    if (trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown")),
+       !trimmed.contains("://"),
+       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil {
+        #if DEBUG
+        dlog("link.resolve result=markdownFile(relativePath) path=\(trimmed)")
+        #endif
+        return .markdownFile(trimmed)
     }
 
     if let parsed = URL(string: trimmed),
@@ -533,6 +558,21 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         dlog("link.resolve result=external(scheme=\(scheme)) url=\(parsed)")
         #endif
         return .external(parsed)
+    }
+
+    // Detect relative file paths (e.g. "output.html", "./report.pdf", "dir/file.txt")
+    // before falling through to web URL resolution which would prepend https://.
+    if !trimmed.contains("://"),
+       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil,
+       (trimmed.contains("/") || trimmed.contains(".")) {
+        // Check if it looks like a file extension (last component has a dot)
+        let lastComponent = NSString(string: trimmed).lastPathComponent
+        if lastComponent.contains(".") {
+            #if DEBUG
+            dlog("link.resolve result=localFile(relative) path=\(trimmed)")
+            #endif
+            return .localFile(trimmed)
+        }
     }
 
     if let webURL = resolveBrowserNavigableURL(trimmed) {
@@ -888,7 +928,7 @@ private final class GhosttySurfaceCallbackContext {
 
 class GhosttyApp {
     static let shared = GhosttyApp()
-    private static let releaseBundleIdentifier = "com.cmuxterm.app"
+    private static let releaseBundleIdentifier = Branding.releaseBundleIdentifier
     private static let backgroundLogTimestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1040,7 +1080,7 @@ class GhosttyApp {
         let line = "[\(timestamp)] \(message)\n"
         if let handle = FileHandle(forWritingAtPath: initLogPath) {
             handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
+            handle.write(line.data(using: .utf8)!)
             handle.closeFile()
         } else {
             FileManager.default.createFile(atPath: initLogPath, contents: line.data(using: .utf8))
@@ -2041,6 +2081,21 @@ class GhosttyApp {
         return Unmanaged<GhosttySurfaceCallbackContext>.fromOpaque(userdata).takeUnretainedValue()
     }
 
+    private func startSearchNeedle(_ action: ghostty_action_start_search_s) -> String? {
+        // Some Ghostty action payloads have arrived with a zero needle pointer even
+        // though the imported optional path still crashes inside `String(cString:)`.
+        // Read the raw pointer bits defensively and treat null/small addresses as
+        // "no initial search text" instead of taking the app down.
+        let rawPointerBits = withUnsafeBytes(of: action) { rawBuffer in
+            rawBuffer.load(as: UInt.self)
+        }
+        guard rawPointerBits > 0x1000,
+              let pointer = UnsafePointer<CChar>(bitPattern: rawPointerBits) else {
+            return nil
+        }
+        return String(validatingUTF8: pointer)
+    }
+
     private func handleAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
         if target.tag != GHOSTTY_TARGET_SURFACE {
             if action.tag == GHOSTTY_ACTION_RELOAD_CONFIG ||
@@ -2249,32 +2304,28 @@ class GhosttyApp {
             }
         case GHOSTTY_ACTION_SCROLLBAR:
             let scrollbar = GhosttyScrollbar(c: action.action.scrollbar)
-            DispatchQueue.main.async {
-                surfaceView.scrollbar = scrollbar
-                NotificationCenter.default.post(
-                    name: .ghosttyDidUpdateScrollbar,
-                    object: surfaceView,
-                    userInfo: [GhosttyNotificationKey.scrollbar: scrollbar]
-                )
-            }
+            surfaceView.scrollbar = scrollbar
+            NotificationCenter.default.post(
+                name: .ghosttyDidUpdateScrollbar,
+                object: surfaceView,
+                userInfo: [GhosttyNotificationKey.scrollbar: scrollbar]
+            )
             return true
         case GHOSTTY_ACTION_CELL_SIZE:
             let cellSize = CGSize(
                 width: CGFloat(action.action.cell_size.width),
                 height: CGFloat(action.action.cell_size.height)
             )
-            DispatchQueue.main.async {
-                surfaceView.cellSize = cellSize
-                NotificationCenter.default.post(
-                    name: .ghosttyDidUpdateCellSize,
-                    object: surfaceView,
-                    userInfo: [GhosttyNotificationKey.cellSize: cellSize]
-                )
-            }
+            surfaceView.cellSize = cellSize
+            NotificationCenter.default.post(
+                name: .ghosttyDidUpdateCellSize,
+                object: surfaceView,
+                userInfo: [GhosttyNotificationKey.cellSize: cellSize]
+            )
             return true
         case GHOSTTY_ACTION_START_SEARCH:
             guard let terminalSurface = surfaceView.terminalSurface else { return true }
-            let needle = action.action.start_search.needle.flatMap { String(cString: $0) }
+            let needle = startSearchNeedle(action.action.start_search)
             DispatchQueue.main.async {
                 if let searchState = terminalSurface.searchState {
                     if let needle, !needle.isEmpty {
@@ -2367,7 +2418,7 @@ class GhosttyApp {
         case GHOSTTY_ACTION_COLOR_CHANGE:
             if action.action.color_change.kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND {
                 let change = action.action.color_change
-                let newColor = NSColor(
+                surfaceView.backgroundColor = NSColor(
                     red: CGFloat(change.r) / 255,
                     green: CGFloat(change.g) / 255,
                     blue: CGFloat(change.b) / 255,
@@ -2375,29 +2426,28 @@ class GhosttyApp {
                 )
                 if backgroundLogEnabled {
                     logBackground(
-                        "surface override set tab=\(surfaceView.tabId?.uuidString ?? "nil") surface=\(surfaceView.terminalSurface?.id.uuidString ?? "nil") override=\(newColor.hexString()) default=\(defaultBackgroundColor.hexString()) source=action.color_change.surface"
+                        "surface override set tab=\(surfaceView.tabId?.uuidString ?? "nil") surface=\(surfaceView.terminalSurface?.id.uuidString ?? "nil") override=\(surfaceView.backgroundColor?.hexString() ?? "nil") default=\(defaultBackgroundColor.hexString()) source=action.color_change.surface"
                     )
                 }
-                DispatchQueue.main.async { [self] in
-                    surfaceView.backgroundColor = newColor
-                    surfaceView.applySurfaceBackground()
-                    if backgroundLogEnabled {
-                        logBackground("OSC background change tab=\(surfaceView.tabId?.uuidString ?? "unknown") color=\(surfaceView.backgroundColor?.description ?? "nil")")
-                    }
+                surfaceView.applySurfaceBackground()
+                if backgroundLogEnabled {
+                    logBackground("OSC background change tab=\(surfaceView.tabId?.uuidString ?? "unknown") color=\(surfaceView.backgroundColor?.description ?? "nil")")
+                }
+                DispatchQueue.main.async {
                     surfaceView.applyWindowBackgroundIfActive()
                 }
             }
             return true
         case GHOSTTY_ACTION_CONFIG_CHANGE:
-            DispatchQueue.main.async { [self] in
-                if let staleOverride = surfaceView.backgroundColor {
-                    surfaceView.backgroundColor = nil
-                    if backgroundLogEnabled {
-                        logBackground(
-                            "surface override cleared tab=\(surfaceView.tabId?.uuidString ?? "nil") surface=\(surfaceView.terminalSurface?.id.uuidString ?? "nil") cleared=\(staleOverride.hexString()) source=action.config_change.surface"
-                        )
-                    }
-                    surfaceView.applySurfaceBackground()
+            if let staleOverride = surfaceView.backgroundColor {
+                surfaceView.backgroundColor = nil
+                if backgroundLogEnabled {
+                    logBackground(
+                        "surface override cleared tab=\(surfaceView.tabId?.uuidString ?? "nil") surface=\(surfaceView.terminalSurface?.id.uuidString ?? "nil") cleared=\(staleOverride.hexString()) source=action.config_change.surface"
+                    )
+                }
+                surfaceView.applySurfaceBackground()
+                DispatchQueue.main.async {
                     surfaceView.applyWindowBackgroundIfActive()
                 }
             }
@@ -2460,6 +2510,90 @@ class GhosttyApp {
                 }
             }
             switch target {
+            case let .markdownFile(relativePath):
+                // Resolve relative markdown paths against the workspace directory and
+                // open in a native markdown panel split beside the terminal.
+                let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
+                let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
+                #if DEBUG
+                dlog("link.openURL target=markdownFile path=\(relativePath)")
+                #endif
+                return performOnMain {
+                    guard let sourceWorkspaceId, let sourcePanelId,
+                          let app = AppDelegate.shared,
+                          let resolved = app.workspaceContainingPanel(
+                            panelId: sourcePanelId,
+                            preferredWorkspaceId: sourceWorkspaceId
+                          ) else {
+                        return false
+                    }
+                    let workspace = resolved.workspace
+                    let absolutePath: String
+                    if NSString(string: relativePath).isAbsolutePath {
+                        absolutePath = relativePath
+                    } else {
+                        let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
+                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                    }
+                    let standardized = NSString(string: absolutePath).standardizingPath
+                    guard FileManager.default.fileExists(atPath: standardized) else {
+                        #if DEBUG
+                        dlog("link.openURL markdownFile not found at \(standardized), falling back to external")
+                        #endif
+                        NSWorkspace.shared.open(URL(fileURLWithPath: standardized))
+                        return true
+                    }
+                    // Open as a markdown panel split to the right of the terminal
+                    let _ = workspace.newMarkdownSplit(
+                        from: sourcePanelId,
+                        orientation: .horizontal,
+                        filePath: standardized
+                    )
+                    return true
+                }
+            case let .localFile(relativePath):
+                // Resolve relative file paths against the workspace directory and
+                // open as file:// URL in the embedded browser.
+                let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
+                let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
+                #if DEBUG
+                dlog("link.openURL target=localFile path=\(relativePath)")
+                #endif
+                return performOnMain {
+                    guard let sourceWorkspaceId, let sourcePanelId,
+                          let app = AppDelegate.shared,
+                          let resolved = app.workspaceContainingPanel(
+                            panelId: sourcePanelId,
+                            preferredWorkspaceId: sourceWorkspaceId
+                          ) else {
+                        return false
+                    }
+                    let workspace = resolved.workspace
+                    let absolutePath: String
+                    if NSString(string: relativePath).isAbsolutePath {
+                        absolutePath = relativePath
+                    } else {
+                        let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
+                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                    }
+                    let standardized = NSString(string: absolutePath).standardizingPath
+                    guard FileManager.default.fileExists(atPath: standardized) else {
+                        #if DEBUG
+                        dlog("link.openURL localFile not found at \(standardized), falling back to web URL")
+                        #endif
+                        // File doesn't exist — fall back to treating as web URL
+                        if let webURL = resolveBrowserNavigableURL(relativePath) {
+                            return NSWorkspace.shared.open(webURL)
+                        }
+                        return false
+                    }
+                    let fileURL = URL(fileURLWithPath: standardized)
+                    if let targetPane = workspace.preferredBrowserTargetPane(fromPanelId: sourcePanelId) {
+                        return workspace.newBrowserSurface(inPane: targetPane, url: fileURL, focus: true) != nil
+                    } else {
+                        return workspace.newBrowserSplit(from: sourcePanelId, orientation: .horizontal, url: fileURL) != nil
+                    }
+                }
             case let .external(url):
                 #if DEBUG
                 dlog("link.openURL target=external, opening externally url=\(url)")
@@ -2682,15 +2816,6 @@ final class TerminalSurface: Identifiable, ObservableObject {
 
     private(set) var surface: ghostty_surface_t?
     private weak var attachedView: GhosttyNSView?
-
-    /// Whether the runtime Ghostty surface exists and has not begun teardown.
-    ///
-    /// Use this before passing `surface` to Ghostty C APIs that dereference the
-    /// pointer (e.g. `ghostty_surface_inherited_config`, `ghostty_surface_quicklook_font`).
-    /// A non-nil `surface` alone is not sufficient because the underlying native
-    /// state may already be closing or closed.
-    var hasLiveSurface: Bool { surface != nil && portalLifecycleState == .live }
-
     /// Whether the terminal surface view is currently attached to a window.
     ///
     /// Use the hosted view rather than the inner surface view, since the surface can be
@@ -3141,7 +3266,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         let line = "[\(timestamp)] \(message)\n"
         if let handle = FileHandle(forWritingAtPath: surfaceLogPath) {
             handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
+            handle.write(line.data(using: .utf8)!)
             handle.closeFile()
         } else {
             FileManager.default.createFile(atPath: surfaceLogPath, contents: line.data(using: .utf8))
@@ -3155,7 +3280,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
         let line = "[\(timestamp)] \(message)\n"
         if let handle = FileHandle(forWritingAtPath: sizeLogPath) {
             handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
+            handle.write(line.data(using: .utf8)!)
             handle.closeFile()
         } else {
             FileManager.default.createFile(atPath: sizeLogPath, contents: line.data(using: .utf8))
@@ -3717,6 +3842,12 @@ final class TerminalSurface: Identifiable, ObservableObject {
         writeTextData(data, to: surface)
     }
 
+    func sendCommand(_ command: String) {
+        guard !command.isEmpty else { return }
+        sendText(command)
+        sendText("\r")
+    }
+
     func requestBackgroundSurfaceStartIfNeeded() {
         if !Thread.isMainThread {
             DispatchQueue.main.async { [weak self] in
@@ -4015,9 +4146,7 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         return true
     }
 
-        // Visibility is used for focus gating. Explicit portal visibility transitions
-        // also drive Ghostty occlusion so hidden workspace/split surfaces pause and
-        // queue a redraw when they become visible again.
+        // Visibility is used for focus gating, not for libghostty occlusion.
         fileprivate var isVisibleInUI: Bool { visibleInUI }
         fileprivate func setVisibleInUI(_ visible: Bool) {
             visibleInUI = visible
@@ -4469,12 +4598,6 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
     fileprivate func pushTargetSurfaceSize(_ size: CGSize) -> Bool {
         updateSurfaceSize(size: size)
     }
-
-#if DEBUG
-    fileprivate func debugPendingSurfaceSize() -> CGSize? {
-        pendingSurfaceSize
-    }
-#endif
 
     /// Force a full size reconciliation for the current bounds.
     /// Keep the drawable-size cache intact so redundant refresh paths do not
@@ -5132,7 +5255,7 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
             if let lastPerformKeyEvent {
                 self.lastPerformKeyEvent = nil
                 if lastPerformKeyEvent == event.timestamp {
-                    equivalent = event.charactersIgnoringModifiers ?? ""
+                    equivalent = event.characters ?? ""
                     break
                 }
             }
@@ -5870,11 +5993,7 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
         }
         guard let surface = surface else { return }
         let point = convert(event.locationInWindow, from: nil)
-        // Only update mouse position on the first click to prevent unwanted cursor
-        // movement during double-click selection (issue #1698)
-        if event.clickCount == 1 {
-            ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modsFromEvent(event))
-        }
+        ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modsFromEvent(event))
         _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, modsFromEvent(event))
     }
 
@@ -6064,7 +6183,6 @@ class GhosttyNSView: NSView, NSUserInterfaceValidations {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        NotificationCenter.default.post(name: .ghosttyDidReceiveWheelScroll, object: self)
         guard let surface = surface else { return }
         lastScrollEventTime = CACurrentMediaTime()
         Self.focusLog("scrollWheel: surface=\(terminalSurface?.id.uuidString ?? "nil") firstResponder=\(String(describing: window?.firstResponder))")
@@ -6466,7 +6584,6 @@ enum GhosttyNotificationKey {
 extension Notification.Name {
     static let ghosttyDidUpdateScrollbar = Notification.Name("ghosttyDidUpdateScrollbar")
     static let ghosttyDidUpdateCellSize = Notification.Name("ghosttyDidUpdateCellSize")
-    static let ghosttyDidReceiveWheelScroll = Notification.Name("ghosttyDidReceiveWheelScroll")
     static let ghosttySearchFocus = Notification.Name("ghosttySearchFocus")
     static let ghosttyConfigDidReload = Notification.Name("ghosttyConfigDidReload")
     static let ghosttyDefaultBackgroundDidChange = Notification.Name("ghosttyDefaultBackgroundDidChange")
@@ -6538,32 +6655,13 @@ func shouldAllowEnsureFocusWindowActivation(
 
 final class GhosttySurfaceScrollView: NSView {
     enum FlashStyle {
-        case navigation
-        case notification
-    }
-
-    static func flashStyle(for reason: WorkspaceAttentionFlashReason) -> FlashStyle {
-        switch reason {
-        case .navigation:
-            return .navigation
-        case .notificationArrival, .notificationDismiss, .manualUnreadDismiss, .debug:
-            return .notification
-        }
-    }
-
-    private static func flashPresentation(for style: FlashStyle) -> WorkspaceAttentionFlashPresentation {
-        switch style {
-        case .navigation:
-            return WorkspaceAttentionCoordinator.flashStyle(for: .navigation)
-        case .notification:
-            return WorkspaceAttentionCoordinator.flashStyle(for: .notificationArrival)
-        }
+        case standardFocus
+        case notificationDismiss
     }
 
     private enum NotificationRingMetrics {
-        static let inset = PanelOverlayRingMetrics.inset
-        static let cornerRadius = PanelOverlayRingMetrics.cornerRadius
-        static let lineWidth = PanelOverlayRingMetrics.lineWidth
+        static let inset: CGFloat = 2
+        static let cornerRadius: CGFloat = 6
     }
 
     private let backgroundView: NSView
@@ -6576,11 +6674,11 @@ final class GhosttySurfaceScrollView: NSView {
     private let notificationRingLayer: CAShapeLayer
     private let flashOverlayView: GhosttyFlashOverlayView
     private let flashLayer: CAShapeLayer
-    private var lastFlashStyle: FlashStyle = .navigation
     private let keyboardCopyModeBadgeContainerView: GhosttyFlashOverlayView
     private let keyboardCopyModeBadgeView: GhosttyPassthroughVisualEffectView
     private let keyboardCopyModeBadgeIconView: NSImageView
     private let keyboardCopyModeBadgeLabel: NSTextField
+    private var restoredTerminalActionBannerHostingView: NSHostingView<RestoredTerminalActionBanner>?
     private let imageTransferIndicatorContainerView: NSView
     private let imageTransferIndicatorView: NSVisualEffectView
     private let imageTransferIndicatorSpinner: NSProgressIndicator
@@ -6600,13 +6698,10 @@ final class GhosttySurfaceScrollView: NSView {
     /// When true, auto-scroll should be suspended to prevent the "doomscroll" bug
     /// where the terminal fights the user's scroll position.
     private var userScrolledAwayFromBottom = false
-    private var pendingExplicitWheelScroll = false
-    private var allowExplicitScrollbarSync = false
     /// Threshold in points from bottom to consider "at bottom" (allows for minor float drift)
     private static let scrollToBottomThreshold: CGFloat = 5.0
     private var isActive = true
     private var lastFocusRefreshAt: CFTimeInterval = 0
-    private var lastRequestedPortalOcclusionVisible: Bool?
     private var activeDropZone: DropZone?
     private var pendingDropZone: DropZone?
     private var dropZoneOverlayAnimationGeneration: UInt64 = 0
@@ -6834,7 +6929,7 @@ final class GhosttySurfaceScrollView: NSView {
         notificationRingOverlayView.autoresizingMask = [.width, .height]
         notificationRingLayer.fillColor = NSColor.clear.cgColor
         notificationRingLayer.strokeColor = NSColor.systemBlue.cgColor
-        notificationRingLayer.lineWidth = NotificationRingMetrics.lineWidth
+        notificationRingLayer.lineWidth = 2.5
         notificationRingLayer.lineJoin = .round
         notificationRingLayer.lineCap = .round
         notificationRingLayer.shadowColor = NSColor.systemBlue.cgColor
@@ -6850,13 +6945,13 @@ final class GhosttySurfaceScrollView: NSView {
         flashOverlayView.layer?.masksToBounds = false
         flashOverlayView.autoresizingMask = [.width, .height]
         flashLayer.fillColor = NSColor.clear.cgColor
-        flashLayer.strokeColor = WorkspaceAttentionCoordinator.flashStyle(for: .navigation).accent.strokeColor.cgColor
-        flashLayer.lineWidth = NotificationRingMetrics.lineWidth
+        flashLayer.strokeColor = NSColor.systemBlue.cgColor
+        flashLayer.lineWidth = 3
         flashLayer.lineJoin = .round
         flashLayer.lineCap = .round
-        flashLayer.shadowColor = WorkspaceAttentionCoordinator.flashStyle(for: .navigation).accent.strokeColor.cgColor
-        flashLayer.shadowOpacity = Float(WorkspaceAttentionCoordinator.flashStyle(for: .navigation).glowOpacity)
-        flashLayer.shadowRadius = WorkspaceAttentionCoordinator.flashStyle(for: .navigation).glowRadius
+        flashLayer.shadowColor = NSColor.systemBlue.cgColor
+        flashLayer.shadowOpacity = 0.6
+        flashLayer.shadowRadius = 6
         flashLayer.shadowOffset = .zero
         flashLayer.opacity = 0
         flashOverlayView.layer?.addSublayer(flashLayer)
@@ -7029,14 +7124,6 @@ final class GhosttySurfaceScrollView: NSView {
         })
 
         observers.append(NotificationCenter.default.addObserver(
-            forName: .ghosttyDidReceiveWheelScroll,
-            object: surfaceView,
-            queue: .main
-        ) { [weak self] _ in
-            self?.pendingExplicitWheelScroll = true
-        })
-
-        observers.append(NotificationCenter.default.addObserver(
             forName: .ghosttySearchFocus,
             object: nil,
             queue: .main
@@ -7057,17 +7144,6 @@ final class GhosttySurfaceScrollView: NSView {
         ) { [weak self] _ in
             self?.synchronizeScrollView()
         })
-
-        observers.append(NotificationCenter.default.addObserver(
-            forName: NSScroller.preferredScrollerStyleDidChangeNotification,
-            object: nil,
-            // Match AppKit's geometry change immediately so the terminal width
-            // does not stay stuck behind a legacy scrollbar gutter.
-            queue: nil
-        ) { [weak self] _ in
-            self?.handlePreferredScrollerStyleChange()
-        })
-
     }
 
     required init?(coder: NSCoder) {
@@ -7179,8 +7255,7 @@ final class GhosttySurfaceScrollView: NSView {
         // which makes interactive width changes arrive a queue turn late on Sequoia.
         scrollView.layoutSubtreeIfNeeded()
         updateNotificationRingPath()
-        updateFlashPath(style: lastFlashStyle)
-        updateFlashAppearance(style: lastFlashStyle)
+        updateFlashPath(style: .standardFocus)
         synchronizeScrollView()
         synchronizeSurfaceView()
         let didCoreSurfaceChange = synchronizeCoreSurface()
@@ -7465,6 +7540,8 @@ final class GhosttySurfaceScrollView: NSView {
         guard !keyboardCopyModeBadgeContainerView.isHidden else { return }
         if let overlay, overlay.superview === self {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: overlay)
+        } else if let banner = restoredTerminalActionBannerHostingView, banner.superview === self {
+            addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: banner)
         } else {
             addSubview(keyboardCopyModeBadgeContainerView, positioned: .above, relativeTo: nil)
         }
@@ -7527,6 +7604,59 @@ final class GhosttySurfaceScrollView: NSView {
         activeImageTransferCancelHandler = nil
         imageTransferIndicatorSpinner.stopAnimation(nil)
         imageTransferIndicatorContainerView.isHidden = true
+    }
+
+    func setRestoredTerminalActionBanner(
+        action: RestoredTerminalActionSnapshot?,
+        onRun: (() -> Void)?,
+        onDismiss: (() -> Void)?
+    ) {
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.setRestoredTerminalActionBanner(action: action, onRun: onRun, onDismiss: onDismiss)
+            }
+            return
+        }
+
+        guard let action, let onRun, let onDismiss else {
+            restoredTerminalActionBannerHostingView?.removeFromSuperview()
+            restoredTerminalActionBannerHostingView = nil
+            return
+        }
+
+        let rootView = RestoredTerminalActionBanner(
+            action: action,
+            onRun: onRun,
+            onDismiss: onDismiss
+        )
+
+        if let banner = restoredTerminalActionBannerHostingView {
+            banner.rootView = rootView
+            if banner.superview !== self {
+                mountTopBannerHostingView(banner)
+            }
+            return
+        }
+
+        let banner = NSHostingView(rootView: rootView)
+        restoredTerminalActionBannerHostingView = banner
+        mountTopBannerHostingView(banner)
+    }
+
+    private func mountTopBannerHostingView(_ view: NSView) {
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        if let overlay = searchOverlayHostingView, overlay.superview === self {
+            addSubview(view, positioned: .below, relativeTo: overlay)
+        } else {
+            addSubview(view, positioned: .above, relativeTo: nil)
+        }
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+        ])
+        updateKeyboardCopyModeBadgeZOrder(relativeTo: searchOverlayHostingView)
     }
 
     private func makeSearchOverlayRootView(
@@ -7912,17 +8042,15 @@ final class GhosttySurfaceScrollView: NSView {
     }
 #endif
 
-    func triggerFlash(style: FlashStyle = .navigation) {
+    func triggerFlash(style: FlashStyle = .standardFocus) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.lastFlashStyle = style
-            #if DEBUG
+#if DEBUG
             if let surfaceId = self.surfaceView.terminalSurface?.id {
                 Self.recordFlash(for: surfaceId)
             }
 #endif
             self.updateFlashPath(style: style)
-            self.updateFlashAppearance(style: style)
             self.flashLayer.removeAllAnimations()
             self.flashLayer.opacity = 0
             let animation = CAKeyframeAnimation(keyPath: "opacity")
@@ -7945,10 +8073,6 @@ final class GhosttySurfaceScrollView: NSView {
         let wasVisible = surfaceView.isVisibleInUI
         surfaceView.setVisibleInUI(visible)
         isHidden = !visible
-        if wasVisible != visible, lastRequestedPortalOcclusionVisible != visible {
-            lastRequestedPortalOcclusionVisible = visible
-            surfaceView.terminalSurface?.setOcclusion(visible)
-        }
 #if DEBUG
         if wasVisible != visible {
             let transition = "\(wasVisible ? 1 : 0)->\(visible ? 1 : 0)"
@@ -8099,10 +8223,6 @@ final class GhosttySurfaceScrollView: NSView {
     @discardableResult
     func debugSimulateFileDrop(paths: [String]) -> Bool {
         surfaceView.debugSimulateFileDrop(paths: paths)
-    }
-
-    func debugPendingSurfaceSize() -> CGSize? {
-        surfaceView.debugPendingSurfaceSize()
     }
 
     func debugRegisteredDropTypes() -> [String] {
@@ -8994,7 +9114,10 @@ final class GhosttySurfaceScrollView: NSView {
         let inset: CGFloat
         let radius: CGFloat
         switch style {
-        case .navigation, .notification:
+        case .standardFocus:
+            inset = CGFloat(FocusFlashPattern.ringInset)
+            radius = CGFloat(FocusFlashPattern.ringCornerRadius)
+        case .notificationDismiss:
             inset = NotificationRingMetrics.inset
             radius = NotificationRingMetrics.cornerRadius
         }
@@ -9004,15 +9127,6 @@ final class GhosttySurfaceScrollView: NSView {
             inset: inset,
             radius: radius
         )
-    }
-
-    private func updateFlashAppearance(style: FlashStyle) {
-        let presentation = Self.flashPresentation(for: style)
-        let strokeColor = presentation.accent.strokeColor
-        flashLayer.strokeColor = strokeColor.cgColor
-        flashLayer.shadowColor = strokeColor.cgColor
-        flashLayer.shadowOpacity = Float(presentation.glowOpacity)
-        flashLayer.shadowRadius = presentation.glowRadius
     }
 
     private func updateOverlayRingPath(
@@ -9026,7 +9140,7 @@ final class GhosttySurfaceScrollView: NSView {
             layer.path = nil
             return
         }
-        let rect = PanelOverlayRingMetrics.pathRect(in: bounds)
+        let rect = bounds.insetBy(dx: inset, dy: inset)
         layer.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
     }
 
@@ -9057,20 +9171,25 @@ final class GhosttySurfaceScrollView: NSView {
                     userScrolledAwayFromBottom = false
                 }
 
-                // Passive bottom packets should not override an explicit scrollback review,
-                // but the first scrollbar packet caused by the user's own wheel input should
-                // still move the viewport to the requested scrollback position.
-                let shouldAutoScroll = !userScrolledAwayFromBottom || allowExplicitScrollbarSync
+                // Only auto-scroll if user hasn't manually scrolled away from bottom
+                // or if we're following terminal output (scrollbar shows we're at bottom)
+                let shouldAutoScroll = !userScrolledAwayFromBottom ||
+                    (scrollbar.offset + scrollbar.len >= scrollbar.total)
 
                 if shouldAutoScroll && !pointApproximatelyEqual(currentOrigin, targetOrigin) {
+#if DEBUG
+                    logDragGeometryChange(
+                        event: "scrollOrigin",
+                        old: currentOrigin,
+                        new: targetOrigin
+                    )
+#endif
                     scrollView.contentView.scroll(to: targetOrigin)
                     didChangeGeometry = true
                 }
                 lastSentRow = Int(scrollbar.offset)
             }
         }
-
-        allowExplicitScrollbarSync = false
 
         if didChangeGeometry {
             scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -9107,28 +9226,8 @@ final class GhosttySurfaceScrollView: NSView {
         guard let scrollbar = notification.userInfo?[GhosttyNotificationKey.scrollbar] as? GhosttyScrollbar else {
             return
         }
-        if pendingExplicitWheelScroll {
-            userScrolledAwayFromBottom = scrollbar.offset + scrollbar.len < scrollbar.total
-            allowExplicitScrollbarSync = true
-            pendingExplicitWheelScroll = false
-        }
         surfaceView.scrollbar = scrollbar
         synchronizeScrollView()
-    }
-
-    private func handlePreferredScrollerStyleChange() {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in
-                self?.handlePreferredScrollerStyleChange()
-            }
-            return
-        }
-
-        // Retile just the scroll view so contentSize reflects the current
-        // scrollbar mode without perturbing viewport origin or hosted view
-        // geometry; the broader reconcile path caused visible content glitches.
-        scrollView.tile()
-        _ = synchronizeCoreSurface()
     }
 
     private func documentHeight() -> CGFloat {
@@ -9424,6 +9523,9 @@ struct GhosttyTerminalView: NSViewRepresentable {
     var inactiveOverlayColor: NSColor = .clear
     var inactiveOverlayOpacity: Double = 0
     var searchState: TerminalSurface.SearchState? = nil
+    var restoredTerminalAction: RestoredTerminalActionSnapshot? = nil
+    var onRunRestoredTerminalAction: ((RestoredTerminalActionSnapshot) -> Void)? = nil
+    var onDismissRestoredTerminalAction: (() -> Void)? = nil
     var reattachToken: UInt64 = 0
     var onFocus: ((UUID) -> Void)? = nil
     var onTriggerFlash: (() -> Void)? = nil
@@ -9627,6 +9729,15 @@ struct GhosttyTerminalView: NSViewRepresentable {
                 visible: showsInactiveOverlay
             )
             hostedView.setNotificationRing(visible: showsUnreadNotificationRing)
+            hostedView.setRestoredTerminalActionBanner(
+                action: restoredTerminalAction,
+                onRun: restoredTerminalAction.flatMap { action in
+                    onRunRestoredTerminalAction.map { handler in
+                        { handler(action) }
+                    }
+                },
+                onDismiss: onDismissRestoredTerminalAction
+            )
             hostedView.setSearchOverlay(searchState: searchState)
             hostedView.syncKeyStateIndicator(text: terminalSurface.currentKeyStateIndicatorText)
         }

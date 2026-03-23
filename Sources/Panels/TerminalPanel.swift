@@ -22,8 +22,6 @@ final class TerminalPanel: Panel, ObservableObject {
     /// Published directory from the terminal
     @Published private(set) var directory: String = ""
 
-    @Published private(set) var tmuxLayoutReport: TmuxPaneLayoutReport?
-
     /// Search state for find functionality
     @Published var searchState: TerminalSurface.SearchState? {
         didSet {
@@ -37,8 +35,6 @@ final class TerminalPanel: Panel, ObservableObject {
     /// Without this, certain pane-close sequences can leave terminal views detached
     /// (hostedView.window == nil) until the user switches workspaces.
     @Published var viewReattachToken: UInt64 = 0
-
-    var onRequestWorkspacePaneFlash: ((WorkspaceAttentionFlashReason) -> Void)?
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -129,11 +125,6 @@ final class TerminalPanel: Panel, ObservableObject {
         surface.updateWorkspaceId(newWorkspaceId)
     }
 
-    func updateTmuxLayoutReport(_ report: TmuxPaneLayoutReport?) {
-        guard tmuxLayoutReport != report else { return }
-        tmuxLayoutReport = report
-    }
-
     func focus() {
         surface.setFocus(true)
         // `unfocus()` force-disables active state to stop stale retries from stealing focus.
@@ -191,6 +182,10 @@ final class TerminalPanel: Panel, ObservableObject {
         surface.sendText(text)
     }
 
+    func sendCommand(_ command: String) {
+        surface.sendCommand(command)
+    }
+
     func performBindingAction(_ action: String) -> Bool {
         surface.performBindingAction(action)
     }
@@ -203,29 +198,32 @@ final class TerminalPanel: Panel, ObservableObject {
         surface.needsConfirmClose()
     }
 
-    func shouldPersistScrollbackForSessionSnapshot() -> Bool {
-        // Session restore only replays terminal output into a fresh shell. If Ghostty
-        // says we are not safely at a prompt, replaying that state later is misleading.
-        !surface.needsConfirmClose()
+    nonisolated static func shouldPersistScrollbackForSessionSnapshot(
+        needsConfirmClose: Bool,
+        includeUnsafeTerminalScrollback: Bool
+    ) -> Bool {
+        // Passive background snapshots stay conservative and only replay when Ghostty
+        // reports the terminal is safely at a prompt. Crash recovery and explicit
+        // app termination can opt into persisting active TUI scrollback so recent
+        // terminal state is not lost across relaunch.
+        includeUnsafeTerminalScrollback || !needsConfirmClose
     }
 
-    func triggerFlash(reason: WorkspaceAttentionFlashReason) {
-        guard NotificationPaneFlashSettings.isEnabled() else { return }
+    func shouldPersistScrollbackForSessionSnapshot(includeUnsafeTerminalScrollback: Bool) -> Bool {
+        Self.shouldPersistScrollbackForSessionSnapshot(
+            needsConfirmClose: surface.needsConfirmClose(),
+            includeUnsafeTerminalScrollback: includeUnsafeTerminalScrollback
+        )
+    }
 
-        switch TmuxOverlayExperimentSettings.target() {
-        case .bonsplitPane:
-            if let onRequestWorkspacePaneFlash {
-                onRequestWorkspacePaneFlash(reason)
-                return
-            }
-            hostedView.triggerFlash(style: GhosttySurfaceScrollView.flashStyle(for: reason))
-        case .surface, .tmuxActivePane:
-            hostedView.triggerFlash(style: GhosttySurfaceScrollView.flashStyle(for: reason))
-        }
+    func triggerFlash() {
+        guard NotificationPaneFlashSettings.isEnabled() else { return }
+        hostedView.triggerFlash()
     }
 
     func triggerNotificationDismissFlash() {
-        triggerFlash(reason: .notificationDismiss)
+        guard NotificationPaneFlashSettings.isEnabled() else { return }
+        hostedView.triggerFlash(style: .notificationDismiss)
     }
 
     func applyWindowBackgroundIfActive() {

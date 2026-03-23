@@ -336,13 +336,11 @@ final class SidebarState: ObservableObject {
 }
 
 enum SidebarResizeInteraction {
-    // Keep a generous drag target inside the sidebar itself, but make the
-    // terminal-side overlap very small so column-0 text selection still wins.
-    static let sidebarSideHitWidth: CGFloat = 6
-    static let contentSideHitWidth: CGFloat = 2
+    static let handleWidth: CGFloat = 6
+    static let hitInset: CGFloat = 3
 
-    static var totalHitWidth: CGFloat {
-        sidebarSideHitWidth + contentSideHitWidth
+    static var hitWidthPerSide: CGFloat {
+        hitInset + (handleWidth / 2)
     }
 }
 
@@ -931,9 +929,7 @@ final class FileDropOverlayView: NSView {
 
 var fileDropOverlayKey: UInt8 = 0
 private var commandPaletteWindowOverlayKey: UInt8 = 0
-private var tmuxWorkspacePaneWindowOverlayKey: UInt8 = 0
 let commandPaletteOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("cmux.commandPalette.overlay.container")
-let tmuxWorkspacePaneOverlayContainerIdentifier = NSUserInterfaceItemIdentifier("cmux.tmuxWorkspacePane.overlay.container")
 
 enum CommandPaletteOverlayPromotionPolicy {
     static func shouldPromote(previouslyVisible: Bool, isVisible: Bool) -> Bool {
@@ -951,15 +947,6 @@ private final class CommandPaletteOverlayContainerView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard capturesMouseEvents else { return nil }
         return super.hitTest(point)
-    }
-}
-
-@MainActor
-private final class PassthroughWindowOverlayContainerView: NSView {
-    override var isOpaque: Bool { false }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
     }
 }
 
@@ -1279,103 +1266,6 @@ private func commandPaletteWindowOverlayController(for window: NSWindow) -> Wind
     return controller
 }
 
-@MainActor
-private final class WindowTmuxWorkspacePaneOverlayController: NSObject {
-    private weak var window: NSWindow?
-    private let containerView = PassthroughWindowOverlayContainerView(frame: .zero)
-    private let model = TmuxWorkspacePaneOverlayModel()
-    private let hostingView: NSHostingView<TmuxWorkspacePaneOverlayView>
-    private var installConstraints: [NSLayoutConstraint] = []
-
-    init(window: NSWindow) {
-        self.window = window
-        self.hostingView = NSHostingView(
-            rootView: TmuxWorkspacePaneOverlayView(
-                unreadRects: [],
-                flashRect: nil,
-                flashStartedAt: nil,
-                flashReason: nil
-            )
-        )
-        super.init()
-        containerView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.wantsLayer = true
-        containerView.layer?.backgroundColor = NSColor.clear.cgColor
-        containerView.isHidden = true
-        containerView.alphaValue = 0
-        containerView.identifier = tmuxWorkspacePaneOverlayContainerIdentifier
-        hostingView.translatesAutoresizingMaskIntoConstraints = false
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        containerView.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
-            hostingView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-        ])
-        _ = ensureInstalled()
-    }
-
-    @discardableResult
-    private func ensureInstalled() -> Bool {
-        guard let window,
-              let contentView = window.contentView,
-              let themeFrame = contentView.superview else { return false }
-
-        if containerView.superview !== themeFrame {
-            NSLayoutConstraint.deactivate(installConstraints)
-            installConstraints.removeAll()
-            containerView.removeFromSuperview()
-            themeFrame.addSubview(containerView, positioned: .above, relativeTo: contentView)
-            installConstraints = [
-                containerView.topAnchor.constraint(equalTo: contentView.topAnchor),
-                containerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-                containerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                containerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            ]
-            NSLayoutConstraint.activate(installConstraints)
-        }
-
-        return true
-    }
-
-    func update(state: TmuxWorkspacePaneOverlayRenderState?) {
-        guard ensureInstalled() else { return }
-        if let state {
-            model.apply(state)
-            hostingView.rootView = TmuxWorkspacePaneOverlayView(
-                unreadRects: model.unreadRects,
-                flashRect: model.flashRect,
-                flashStartedAt: model.flashStartedAt,
-                flashReason: model.flashReason
-            )
-            containerView.alphaValue = 1
-            containerView.isHidden = false
-        } else {
-            model.clear()
-            hostingView.rootView = TmuxWorkspacePaneOverlayView(
-                unreadRects: [],
-                flashRect: nil,
-                flashStartedAt: nil,
-                flashReason: nil
-            )
-            containerView.alphaValue = 0
-            containerView.isHidden = true
-        }
-    }
-}
-
-@MainActor
-private func tmuxWorkspacePaneWindowOverlayController(for window: NSWindow) -> WindowTmuxWorkspacePaneOverlayController {
-    if let existing = objc_getAssociatedObject(window, &tmuxWorkspacePaneWindowOverlayKey) as? WindowTmuxWorkspacePaneOverlayController {
-        return existing
-    }
-    let controller = WindowTmuxWorkspacePaneOverlayController(window: window)
-    objc_setAssociatedObject(window, &tmuxWorkspacePaneWindowOverlayKey, controller, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-    return controller
-}
-
 private func commandPaletteOwningWebView(for responder: NSResponder?) -> WKWebView? {
     guard let responder else { return nil }
 
@@ -1558,6 +1448,7 @@ struct ContentView: View {
     @State private var mountedWorkspaceIds: [UUID] = []
     @State private var lastSidebarSelectionIndex: Int? = nil
     @State private var titlebarText: String = ""
+    @State private var titlebarOrgName: String?
     @State private var isFullScreen: Bool = false
     @State private var observedWindow: NSWindow?
     @StateObject private var fullscreenControlsViewModel = TitlebarControlsViewModel()
@@ -1732,135 +1623,6 @@ struct ContentView: View {
         var lastUsedAt: TimeInterval
     }
 
-    static func tmuxWorkspacePaneExactRect(
-        for panel: Panel,
-        in contentView: NSView
-    ) -> CGRect? {
-        let targetView: NSView?
-        switch panel {
-        case let terminal as TerminalPanel:
-            targetView = terminal.hostedView
-        case let browser as BrowserPanel:
-            targetView = browser.webView
-        default:
-            targetView = nil
-        }
-        guard let targetView else { return nil }
-        return tmuxWorkspacePaneExactRect(for: targetView, in: contentView)
-    }
-
-    static func tmuxWorkspacePaneExactRect(
-        for targetView: NSView,
-        in contentView: NSView
-    ) -> CGRect? {
-        guard let contentWindow = contentView.window,
-              let targetWindow = targetView.window,
-              contentWindow === targetWindow,
-              targetView.superview != nil else {
-            return nil
-        }
-
-        let rectInWindow = targetView.convert(targetView.bounds, to: nil)
-        let rectInContent = contentView.convert(rectInWindow, from: nil)
-        guard rectInContent.width > 1, rectInContent.height > 1 else { return nil }
-        return rectInContent
-    }
-
-    static func preferredTmuxWorkspacePaneWindowOverlayRect(
-        exactRect: CGRect?,
-        paneRect: CGRect?
-    ) -> CGRect? {
-        guard let paneRect else { return exactRect }
-        guard let exactRect,
-              exactRect.width > 1,
-              exactRect.height > 1 else {
-            return paneRect
-        }
-
-        let tolerance: CGFloat = 0.5
-        let exactFitsWithinPane =
-            exactRect.minX >= paneRect.minX - tolerance &&
-            exactRect.maxX <= paneRect.maxX + tolerance &&
-            exactRect.minY >= paneRect.minY - tolerance &&
-            exactRect.maxY <= paneRect.maxY + tolerance
-        return exactFitsWithinPane ? exactRect : paneRect
-    }
-
-    private func tmuxWorkspacePaneWindowOverlayState(for window: NSWindow) -> TmuxWorkspacePaneOverlayRenderState? {
-        guard TmuxOverlayExperimentSettings.target().usesWorkspacePaneOverlay,
-              let workspace = tabManager.selectedWorkspace else { return nil }
-        let layoutSnapshot = WorkspaceContentView.effectiveTmuxLayoutSnapshot(
-            cachedSnapshot: workspace.tmuxLayoutSnapshot,
-            liveSnapshot: workspace.bonsplitController.layoutSnapshot()
-        )
-        let contentView = window.contentView
-
-        let unreadRects: [CGRect]
-        if let layoutSnapshot, let contentView {
-            unreadRects = layoutSnapshot.panes.compactMap { pane in
-                guard let selectedTabId = pane.selectedTabId,
-                      let tabUUID = UUID(uuidString: selectedTabId),
-                      let panelId = workspace.panelIdFromSurfaceId(TabID(uuid: tabUUID)),
-                      let panel = workspace.panels[panelId] else {
-                    return nil
-                }
-
-                let shouldShowUnread = Workspace.shouldShowUnreadIndicator(
-                    hasUnreadNotification: notificationStore.hasVisibleNotificationIndicator(
-                        forTabId: workspace.id,
-                        surfaceId: panelId
-                    ),
-                    isManuallyUnread: workspace.manualUnreadPanelIds.contains(panelId)
-                )
-                guard shouldShowUnread else { return nil }
-
-                let paneRect = WorkspaceContentView.tmuxWorkspacePaneWindowOverlayRect(
-                    layoutSnapshot: layoutSnapshot,
-                    paneId: workspace.paneId(forPanelId: panelId)
-                )
-                let exactRect = Self.tmuxWorkspacePaneExactRect(for: panel, in: contentView)
-                return Self.preferredTmuxWorkspacePaneWindowOverlayRect(
-                    exactRect: exactRect,
-                    paneRect: paneRect
-                )
-            }
-        } else {
-            unreadRects = WorkspaceContentView.tmuxWorkspacePaneWindowUnreadRects(
-                workspace: workspace,
-                notificationStore: notificationStore,
-                layoutSnapshot: layoutSnapshot
-            )
-        }
-
-        let flashRect: CGRect?
-        if let panelId = workspace.tmuxWorkspaceFlashPanelId,
-           let panel = workspace.panels[panelId],
-           let contentView {
-            let paneRect = WorkspaceContentView.tmuxWorkspacePaneWindowOverlayRect(
-                layoutSnapshot: layoutSnapshot,
-                paneId: workspace.paneId(forPanelId: panelId)
-            )
-            let exactRect = Self.tmuxWorkspacePaneExactRect(for: panel, in: contentView)
-            flashRect = Self.preferredTmuxWorkspacePaneWindowOverlayRect(
-                exactRect: exactRect,
-                paneRect: paneRect
-            )
-        } else {
-            flashRect = WorkspaceContentView.tmuxWorkspacePaneWindowOverlayRect(
-                layoutSnapshot: layoutSnapshot,
-                paneId: workspace.tmuxWorkspaceFlashPanelId.flatMap { workspace.paneId(forPanelId: $0) }
-            )
-        }
-
-        return TmuxWorkspacePaneOverlayRenderState(
-            workspaceId: workspace.id,
-            unreadRects: unreadRects,
-            flashRect: flashRect,
-            flashToken: workspace.tmuxWorkspaceFlashToken,
-            flashReason: workspace.tmuxWorkspaceFlashReason
-        )
-    }
-
     private struct CommandPaletteContextSnapshot {
         private var boolValues: [String: Bool] = [:]
         private var stringValues: [String: String] = [:]
@@ -2027,12 +1789,8 @@ struct ContentView: View {
         case divider
     }
 
-    private var sidebarResizerSidebarHitWidth: CGFloat {
-        SidebarResizeInteraction.sidebarSideHitWidth
-    }
-
-    private var sidebarResizerContentHitWidth: CGFloat {
-        SidebarResizeInteraction.contentSideHitWidth
+    private var sidebarResizerHitWidthPerSide: CGFloat {
+        SidebarResizeInteraction.hitWidthPerSide
     }
 
     private func maxSidebarWidth(availableWidth: CGFloat? = nil) -> CGFloat {
@@ -2108,8 +1866,8 @@ struct ContentView: View {
 
     private func dividerBandContains(pointInContent point: NSPoint, contentBounds: NSRect) -> Bool {
         guard point.y >= contentBounds.minY, point.y <= contentBounds.maxY else { return false }
-        let minX = sidebarWidth - sidebarResizerSidebarHitWidth
-        let maxX = sidebarWidth + sidebarResizerContentHitWidth
+        let minX = sidebarWidth - sidebarResizerHitWidthPerSide
+        let maxX = sidebarWidth + sidebarResizerHitWidthPerSide
         return point.x >= minX && point.x <= maxX
     }
 
@@ -2289,7 +2047,7 @@ struct ContentView: View {
         GeometryReader { proxy in
             let totalWidth = max(0, proxy.size.width)
             let dividerX = min(max(sidebarWidth, 0), totalWidth)
-            let leadingWidth = max(0, dividerX - sidebarResizerSidebarHitWidth)
+            let leadingWidth = max(0, dividerX - sidebarResizerHitWidthPerSide)
 
             HStack(spacing: 0) {
                 Color.clear
@@ -2298,7 +2056,7 @@ struct ContentView: View {
 
                 sidebarResizerHandleOverlay(
                     .divider,
-                    width: SidebarResizeInteraction.totalHitWidth,
+                    width: sidebarResizerHitWidthPerSide * 2,
                     availableWidth: totalWidth,
                     accessibilityIdentifier: "SidebarResizer"
                 )
@@ -2467,10 +2225,7 @@ struct ContentView: View {
                     DraggableFolderIcon(directory: directory)
                 }
 
-                Text(titlebarText)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundColor(fakeTitlebarTextColor)
-                    .lineLimit(1)
+                titlebarBreadcrumb
                     .allowsHitTesting(false)
 
                 Spacer()
@@ -2508,11 +2263,42 @@ struct ContentView: View {
             if !titlebarText.isEmpty {
                 titlebarText = ""
             }
+            if titlebarOrgName != nil {
+                titlebarOrgName = nil
+            }
             return
         }
         let title = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if titlebarText != title {
             titlebarText = title
+        }
+        let orgName = tab.organizationName
+        if titlebarOrgName != orgName {
+            titlebarOrgName = orgName
+        }
+    }
+
+    @ViewBuilder
+    private var titlebarBreadcrumb: some View {
+        if let orgName = titlebarOrgName, !orgName.isEmpty {
+            HStack(spacing: 4) {
+                Text(orgName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(fakeTitlebarTextColor.opacity(0.6))
+                    .lineLimit(1)
+                Text("/")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(fakeTitlebarTextColor.opacity(0.35))
+                Text(titlebarText)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(fakeTitlebarTextColor)
+                    .lineLimit(1)
+            }
+        } else {
+            Text(titlebarText)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(fakeTitlebarTextColor)
+                .lineLimit(1)
         }
     }
 
@@ -2771,6 +2557,12 @@ struct ContentView: View {
             scheduleTitlebarTextRefresh()
         })
 
+        view = AnyView(view.onReceive(NotificationCenter.default.publisher(for: .workspaceDidUpdatePresentationMetadata)) { notification in
+            guard let tabId = notification.userInfo?[GhosttyNotificationKey.tabId] as? UUID,
+                  tabId == tabManager.selectedTabId else { return }
+            scheduleTitlebarTextRefresh()
+        })
+
         view = AnyView(view.onChange(of: titlebarThemeGeneration) { oldValue, newValue in
             guard GhosttyApp.shared.backgroundLogEnabled else { return }
             GhosttyApp.shared.logBackground(
@@ -3005,8 +2797,6 @@ struct ContentView: View {
 
         view = AnyView(view.background(WindowAccessor(dedupeByWindow: false) { window in
             MainActor.assumeIsolated {
-                let tmuxOverlayController = tmuxWorkspacePaneWindowOverlayController(for: window)
-                tmuxOverlayController.update(state: tmuxWorkspacePaneWindowOverlayState(for: window))
                 let overlayController = commandPaletteWindowOverlayController(for: window)
                 overlayController.update(rootView: AnyView(commandPaletteOverlay), isVisible: isCommandPalettePresented)
             }
@@ -4772,6 +4562,7 @@ struct ContentView: View {
                     detail: .workspace
                 )
                 let workspaceId = workspace.id
+                let workspaceFocusedPanelId = workspace.focusedPanelId
                 entries.append(
                     CommandPaletteCommand(
                         id: workspaceCommandId,
@@ -4786,7 +4577,8 @@ struct ContentView: View {
                             focusCommandPaletteSwitcherTarget(
                                 windowId: windowId,
                                 tabManager: windowTabManager,
-                                workspaceId: workspaceId
+                                workspaceId: workspaceId,
+                                panelId: workspaceFocusedPanelId
                             )
                         }
                     )
@@ -4936,14 +4728,15 @@ struct ContentView: View {
     private func focusCommandPaletteSwitcherTarget(
         windowId: UUID,
         tabManager: TabManager,
-        workspaceId: UUID
+        workspaceId: UUID,
+        panelId: UUID?
     ) {
         // Switcher commands dismiss the palette after action dispatch.
         // Defer focus mutation one turn so browser omnibar autofocus can run
         // without being blocked by the palette-visibility guard.
         DispatchQueue.main.async {
             _ = AppDelegate.shared?.focusMainWindow(windowId: windowId)
-            tabManager.focusTab(workspaceId, suppressFlash: true)
+            tabManager.focusTab(workspaceId, surfaceId: panelId, suppressFlash: true)
         }
     }
 
@@ -8418,6 +8211,7 @@ struct VerticalTabsSidebar: View {
     let onSendFeedback: () -> Void
     @EnvironmentObject var tabManager: TabManager
     @EnvironmentObject var notificationStore: TerminalNotificationStore
+    @ObservedObject private var memoryUsageStore = MemoryUsageStore.shared
     @Binding var selection: SidebarSelection
     @Binding var selectedTabIds: Set<UUID>
     @Binding var lastSidebarSelectionIndex: Int?
@@ -8432,8 +8226,8 @@ struct VerticalTabsSidebar: View {
     private var sidebarShowNotificationMessage = SidebarWorkspaceDetailSettings.defaultShowNotificationMessage
     @AppStorage(WorkspacePresentationModeSettings.modeKey)
     private var workspacePresentationMode = WorkspacePresentationModeSettings.defaultMode.rawValue
-    @AppStorage(KeyboardShortcutSettings.Action.selectWorkspaceByNumber.defaultsKey)
-    private var selectWorkspaceByNumberShortcutData = Data()
+    @AppStorage(MemoryUsageDisplaySettings.showInSidebarKey)
+    private var memoryUsageShowInSidebar = MemoryUsageDisplaySettings.defaultShowInSidebar
 
     /// Space at top of sidebar for traffic light buttons
     private let trafficLightPadding: CGFloat = 28
@@ -8451,25 +8245,9 @@ struct VerticalTabsSidebar: View {
         )
     }
 
-    private var workspaceNumberShortcut: StoredShortcut {
-        decodeShortcut(
-            from: selectWorkspaceByNumberShortcutData,
-            fallback: KeyboardShortcutSettings.Action.selectWorkspaceByNumber.defaultShortcut
-        )
-    }
-
-    private func decodeShortcut(from data: Data, fallback: StoredShortcut) -> StoredShortcut {
-        guard !data.isEmpty,
-              let shortcut = try? JSONDecoder().decode(StoredShortcut.self, from: data) else {
-            return fallback
-        }
-        return shortcut
-    }
-
     var body: some View {
         let workspaceCount = tabManager.tabs.count
         let canCloseWorkspace = workspaceCount > 1
-        let workspaceNumberShortcut = self.workspaceNumberShortcut
 
         VStack(spacing: 0) {
             GeometryReader { proxy in
@@ -8494,11 +8272,10 @@ struct VerticalTabsSidebar: View {
                                     tab: tab,
                                     index: index,
                                     isActive: tabManager.selectedTabId == tab.id,
-                                    workspaceShortcutDigit: WorkspaceShortcutMapper.digitForWorkspace(
+                                    workspaceShortcutDigit: WorkspaceShortcutMapper.commandDigitForWorkspace(
                                         at: index,
                                         workspaceCount: workspaceCount
                                     ),
-                                    workspaceShortcutModifierSymbol: workspaceNumberShortcut.modifierDisplayString,
                                     canCloseWorkspace: canCloseWorkspace,
                                     accessibilityWorkspaceCount: workspaceCount,
                                     unreadCount: notificationStore.unreadCount(forTabId: tab.id),
@@ -8510,6 +8287,12 @@ struct VerticalTabsSidebar: View {
                                         let text = notification.body.isEmpty ? notification.title : notification.body
                                         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                                         return trimmed.isEmpty ? nil : trimmed
+                                    }(),
+                                    workspaceMemorySummary: {
+                                        guard memoryUsageShowInSidebar else { return nil }
+                                        return MemoryUsageFormatter.inlineBadgeString(
+                                            for: memoryUsageStore.snapshot.bytes(forWorkspace: tab.id)
+                                        )
                                     }(),
                                     rowSpacing: tabRowSpacing,
                                     setSelectionToTabs: { selection = .tabs },
@@ -8642,8 +8425,7 @@ enum ShortcutHintModifierPolicy {
         defaults: UserDefaults = .standard
     ) -> Bool {
         let normalized = modifierFlags.intersection(.deviceIndependentFlagsMask)
-            .subtracting([.numericPad, .function, .capsLock])
-        guard normalized == KeyboardShortcutSettings.shortcut(for: .selectWorkspaceByNumber).modifierFlags else {
+        guard normalized == [.command] else {
             return false
         }
         return ShortcutHintDebugSettings.showHintsOnCommandHoldEnabled(defaults: defaults)
@@ -9522,13 +9304,248 @@ private struct SidebarFooter: View {
 private struct SidebarFooterButtons: View {
     @ObservedObject var updateViewModel: UpdateViewModel
     let onSendFeedback: () -> Void
+    @AppStorage(MemoryUsageDisplaySettings.showInFooterKey)
+    private var memoryUsageShowInFooter = MemoryUsageDisplaySettings.defaultShowInFooter
 
     var body: some View {
         HStack(spacing: 4) {
+            if memoryUsageShowInFooter {
+                SidebarMemoryUsageButton()
+            }
             SidebarHelpMenuButton(onSendFeedback: onSendFeedback)
             UpdatePill(model: updateViewModel)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SidebarMemoryUsageButton: View {
+    @ObservedObject private var memoryUsageStore = MemoryUsageStore.shared
+    @State private var isPopoverPresented = false
+
+    private var appName: String {
+        if let displayName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String,
+           !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayName
+        }
+        if let bundleName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String,
+           !bundleName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return bundleName
+        }
+        return String(localized: "memory.footer.appFallback", defaultValue: "cmux")
+    }
+
+    private var pressureColor: Color {
+        switch memoryUsageStore.snapshot.systemPressureLevel {
+        case .normal:
+            return Color(nsColor: .secondaryLabelColor)
+        case .warning:
+            return Color.orange
+        case .critical:
+            return Color.red
+        }
+    }
+
+    private var pressureTooltip: String {
+        switch memoryUsageStore.snapshot.systemPressureLevel {
+        case .normal:
+            return String(localized: "memory.footer.tooltip", defaultValue: "Inspect app and terminal memory usage")
+        case .warning:
+            return String(localized: "memory.footer.pressure.warning", defaultValue: "System memory pressure elevated — session auto-saved")
+        case .critical:
+            return String(localized: "memory.footer.pressure.critical", defaultValue: "System memory critical — heavy workspaces may be closed to prevent crash")
+        }
+    }
+
+    private var footerValueText: String {
+        let bytes = memoryUsageStore.snapshot.appResidentBytes
+        guard bytes > 0 else {
+            return String(localized: "memory.footer.loading", defaultValue: "RAM --")
+        }
+        return String(localized: "memory.footer.prefix", defaultValue: "RAM") + " " +
+            MemoryUsageFormatter.footerLabel(for: bytes)
+    }
+
+    var body: some View {
+        Button {
+            isPopoverPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "memorychip")
+                    .font(.system(size: 10.5, weight: .medium))
+                Text(footerValueText)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .foregroundStyle(pressureColor)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+        }
+        .buttonStyle(SidebarFooterIconButtonStyle())
+        .background(ArrowlessPopoverAnchor(
+            isPresented: $isPopoverPresented,
+            preferredEdge: .maxY,
+            detachedGap: 4
+        ) {
+            popover
+        })
+        .safeHelp(pressureTooltip)
+        .accessibilityLabel(String(localized: "memory.footer.accessibilityLabel", defaultValue: "Memory Usage"))
+        .accessibilityIdentifier("SidebarMemoryUsageButton")
+    }
+
+    private var popover: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(String(localized: "memory.popover.title", defaultValue: "Memory Usage"))
+                .font(.system(size: 13, weight: .semibold))
+
+            SidebarMemoryUsagePopoverRow(
+                title: appName,
+                subtitle: String(localized: "memory.popover.thisApp", defaultValue: "This app"),
+                value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.appResidentBytes)
+            )
+
+            SidebarMemoryUsagePopoverSection(
+                title: String(localized: "memory.popover.tabsSection", defaultValue: "Terminal Tabs")
+            ) {
+                SidebarMemoryUsagePopoverRow(
+                    title: String(localized: "memory.popover.trackedTabsTotal", defaultValue: "Tracked tab total"),
+                    subtitle: String(localized: "memory.popover.trackedTabsSubtitle", defaultValue: "All live terminal tabs in this window set"),
+                    value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.trackedTerminalResidentBytes)
+                )
+
+                if memoryUsageStore.snapshot.topPanelConsumers.isEmpty {
+                    Text(String(localized: "memory.popover.noTrackedTabs", defaultValue: "No live terminal tabs are reporting RAM yet."))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(memoryUsageStore.snapshot.topPanelConsumers) { consumer in
+                        SidebarMemoryUsagePopoverRow(
+                            title: consumer.panelTitle,
+                            subtitle: consumer.workspaceTitle,
+                            value: MemoryUsageFormatter.detailedString(for: consumer.bytes)
+                        )
+                    }
+                }
+            }
+
+            if memoryUsageStore.snapshot.processGroups.isEmpty {
+                SidebarMemoryUsagePopoverSection(
+                    title: String(localized: "memory.popover.systemSection", defaultValue: "Top Processes")
+                ) {
+                    ForEach(memoryUsageStore.snapshot.topSystemProcesses) { process in
+                        SidebarMemoryUsagePopoverRow(
+                            title: process.name,
+                            subtitle: String(localized: "memory.popover.pidPrefix", defaultValue: "PID") + " \(process.pid)",
+                            value: MemoryUsageFormatter.detailedString(for: process.bytes)
+                        )
+                    }
+                }
+            } else {
+                ForEach(memoryUsageStore.snapshot.processGroups) { group in
+                    SidebarMemoryUsagePopoverSection(
+                        title: group.workspaceTitle + " — " + MemoryUsageFormatter.detailedString(for: group.totalBytes)
+                    ) {
+                        ForEach(group.processes) { process in
+                            SidebarMemoryUsagePopoverRow(
+                                title: process.name,
+                                subtitle: String(localized: "memory.popover.pidPrefix", defaultValue: "PID") + " \(process.pid)",
+                                value: MemoryUsageFormatter.detailedString(for: process.bytes)
+                            )
+                        }
+                    }
+                }
+            }
+
+            SidebarMemoryUsagePopoverSection(
+                title: String(localized: "memory.popover.systemHealth", defaultValue: "System Health")
+            ) {
+                SidebarMemoryUsagePopoverRow(
+                    title: String(localized: "memory.popover.systemTotal", defaultValue: "Physical RAM"),
+                    subtitle: nil,
+                    value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.systemTotalBytes)
+                )
+                SidebarMemoryUsagePopoverRow(
+                    title: String(localized: "memory.popover.systemAvailable", defaultValue: "Available"),
+                    subtitle: nil,
+                    value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.systemAvailableBytes)
+                )
+                if memoryUsageStore.snapshot.systemSwapUsedBytes > 0 {
+                    SidebarMemoryUsagePopoverRow(
+                        title: String(localized: "memory.popover.systemSwap", defaultValue: "Swap Used"),
+                        subtitle: nil,
+                        value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.systemSwapUsedBytes)
+                    )
+                }
+                if memoryUsageStore.snapshot.systemCompressedBytes > 0 {
+                    SidebarMemoryUsagePopoverRow(
+                        title: String(localized: "memory.popover.systemCompressed", defaultValue: "Compressed"),
+                        subtitle: nil,
+                        value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.systemCompressedBytes)
+                    )
+                }
+                if memoryUsageStore.snapshot.systemPressureLevel > .normal {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(memoryUsageStore.snapshot.systemPressureLevel == .critical ? Color.red : Color.orange)
+                            .frame(width: 6, height: 6)
+                        Text(memoryUsageStore.snapshot.systemPressureLevel == .critical
+                             ? String(localized: "memory.popover.pressureCritical", defaultValue: "Memory Pressure: Critical")
+                             : String(localized: "memory.popover.pressureWarning", defaultValue: "Memory Pressure: Warning"))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(memoryUsageStore.snapshot.systemPressureLevel == .critical ? Color.red : Color.orange)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(minWidth: 320, alignment: .leading)
+    }
+}
+
+private struct SidebarMemoryUsagePopoverSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+}
+
+private struct SidebarMemoryUsagePopoverRow: View {
+    let title: String
+    let subtitle: String?
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
     }
 }
 
@@ -10902,11 +10919,11 @@ private struct TabItemView: View, Equatable {
         lhs.index == rhs.index &&
         lhs.isActive == rhs.isActive &&
         lhs.workspaceShortcutDigit == rhs.workspaceShortcutDigit &&
-        lhs.workspaceShortcutModifierSymbol == rhs.workspaceShortcutModifierSymbol &&
         lhs.canCloseWorkspace == rhs.canCloseWorkspace &&
         lhs.accessibilityWorkspaceCount == rhs.accessibilityWorkspaceCount &&
         lhs.unreadCount == rhs.unreadCount &&
         lhs.latestNotificationText == rhs.latestNotificationText &&
+        lhs.workspaceMemorySummary == rhs.workspaceMemorySummary &&
         lhs.rowSpacing == rhs.rowSpacing &&
         lhs.showsModifierShortcutHints == rhs.showsModifierShortcutHints &&
         lhs.remoteContextMenuWorkspaceIds == rhs.remoteContextMenuWorkspaceIds &&
@@ -10924,11 +10941,11 @@ private struct TabItemView: View, Equatable {
     let index: Int
     let isActive: Bool
     let workspaceShortcutDigit: Int?
-    let workspaceShortcutModifierSymbol: String
     let canCloseWorkspace: Bool
     let accessibilityWorkspaceCount: Int
     let unreadCount: Int
     let latestNotificationText: String?
+    let workspaceMemorySummary: String?
     let rowSpacing: CGFloat
     let setSelectionToTabs: () -> Void
     @Binding var selectedTabIds: Set<UUID>
@@ -11039,7 +11056,7 @@ private struct TabItemView: View, Equatable {
 
     private var workspaceShortcutLabel: String? {
         guard let workspaceShortcutDigit else { return nil }
-        return "\(workspaceShortcutModifierSymbol)\(workspaceShortcutDigit)"
+        return "⌘\(workspaceShortcutDigit)"
     }
 
     private var showsWorkspaceShortcutHint: Bool {
@@ -11225,6 +11242,23 @@ private struct TabItemView: View, Equatable {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .layoutPriority(1)
+
+                if let workspaceMemorySummary {
+                    Text(workspaceMemorySummary)
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundColor(activeSecondaryColor(0.82))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(
+                                    usesInvertedActiveForeground
+                                        ? Color.white.opacity(0.14)
+                                        : Color.primary.opacity(0.06)
+                                )
+                        )
+                }
 
                 Spacer(minLength: 0)
 
@@ -11727,6 +11761,63 @@ private struct TabItemView: View, Equatable {
             closeTabsAbove(tabId: tab.id)
         }
         .disabled(index == 0)
+
+        Divider()
+
+        Button(String(localized: "contextMenu.revealInFinder", defaultValue: "Reveal in Finder")) {
+            let dir = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !dir.isEmpty {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir)
+            }
+        }
+        .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Divider()
+
+        let favName = tab.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? String(localized: "workspace.displayName.fallback", defaultValue: "Workspace")
+            : tab.title
+
+        Button(String(localized: "contextMenu.nameOrganization", defaultValue: "Name Organization…")) {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "organization.name.title", defaultValue: "Name Organization")
+            alert.informativeText = String(localized: "organization.name.message", defaultValue: "Enter a name for this workspace's organization.")
+            alert.addButton(withTitle: String(localized: "organization.name.save", defaultValue: "Save"))
+            alert.addButton(withTitle: String(localized: "organization.name.cancel", defaultValue: "Cancel"))
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+            input.stringValue = tab.organizationName ?? favName
+            alert.accessoryView = input
+            alert.window.initialFirstResponder = input
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !newName.isEmpty else { return }
+            tab.setOrganizationName(newName)
+        }
+
+        Button(String(localized: "contextMenu.saveAsOrganization", defaultValue: "Save as Organization")) {
+            let orgName = tab.organizationName ?? favName
+            let snapshot = tab.sessionSnapshot(includeScrollback: false)
+            let org = WorkspaceOrganization(name: orgName, snapshot: snapshot)
+            let orgs = WorkspaceOrganizationStore.loadAll()
+            if orgs.count >= WorkspaceOrganizationStore.maxOrganizations {
+                if let oldest = orgs.last {
+                    WorkspaceOrganizationStore.remove(oldest.id)
+                }
+            }
+            WorkspaceOrganizationStore.save(org)
+        }
+
+        Button(String(localized: "contextMenu.exportOrganization", defaultValue: "Export Organization…")) {
+            let orgName = tab.organizationName ?? favName
+            let snapshot = tab.sessionSnapshot(includeScrollback: true)
+            WorkspaceOrganizationStore.exportWorkspace(snapshot, name: orgName)
+        }
+
+        Button(String(localized: "contextMenu.importOrganization", defaultValue: "Import Organization…")) {
+            if let org = WorkspaceOrganizationStore.importWorkspace() {
+                tabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+            }
+        }
 
         Divider()
 

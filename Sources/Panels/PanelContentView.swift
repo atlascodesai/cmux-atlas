@@ -16,6 +16,9 @@ struct PanelContentView: View {
     let onFocus: () -> Void
     let onRequestPanelFocus: () -> Void
     let onTriggerFlash: () -> Void
+    let restoredTerminalAction: RestoredTerminalActionSnapshot?
+    let onRunRestoredTerminalAction: ((RestoredTerminalActionSnapshot) -> Void)?
+    let onDismissRestoredTerminalAction: (() -> Void)?
 
     var body: some View {
         switch panel.panelType {
@@ -31,7 +34,10 @@ struct PanelContentView: View {
                     appearance: appearance,
                     hasUnreadNotification: hasUnreadNotification,
                     onFocus: onFocus,
-                    onTriggerFlash: onTriggerFlash
+                    onTriggerFlash: onTriggerFlash,
+                    restoredTerminalAction: restoredTerminalAction,
+                    onRunRestoredTerminalAction: onRunRestoredTerminalAction,
+                    onDismissRestoredTerminalAction: onDismissRestoredTerminalAction
                 )
             }
         case .browser:

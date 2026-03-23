@@ -60,129 +60,6 @@ typeset -g _CMUX_TTY_NAME=""
 typeset -g _CMUX_TTY_REPORTED=0
 typeset -g _CMUX_GHOSTTY_SEMANTIC_PATCHED=0
 typeset -g _CMUX_WINCH_GUARD_INSTALLED=0
-typeset -g _CMUX_TMUX_PUSH_SIGNATURE=""
-typeset -g _CMUX_TMUX_PULL_SIGNATURE=""
-typeset -ga _CMUX_TMUX_SYNC_KEYS=(
-    CMUX_BUNDLED_CLI_PATH
-    CMUX_BUNDLE_ID
-    CMUXD_UNIX_PATH
-    CMUXTERM_REPO_ROOT
-    CMUX_DEBUG_LOG
-    CMUX_LOAD_GHOSTTY_ZSH_INTEGRATION
-    CMUX_PORT
-    CMUX_PORT_END
-    CMUX_PORT_RANGE
-    CMUX_REMOTE_DAEMON_ALLOW_LOCAL_BUILD
-    CMUX_SHELL_INTEGRATION
-    CMUX_SHELL_INTEGRATION_DIR
-    CMUX_SOCKET_ENABLE
-    CMUX_SOCKET_MODE
-    CMUX_SOCKET_PATH
-    CMUX_TAB_ID
-    CMUX_TAG
-    CMUX_WORKSPACE_ID
-)
-typeset -ga _CMUX_TMUX_SURFACE_SCOPED_KEYS=(
-    CMUX_PANEL_ID
-    CMUX_SURFACE_ID
-)
-
-_cmux_tmux_sync_key_is_managed() {
-    local candidate="$1"
-    local key
-    for key in "${_CMUX_TMUX_SYNC_KEYS[@]}"; do
-        [[ "$key" == "$candidate" ]] && return 0
-    done
-    return 1
-}
-
-_cmux_tmux_shell_env_signature() {
-    local key value
-    local -a parts
-    for key in "${_CMUX_TMUX_SYNC_KEYS[@]}"; do
-        value="${(P)key}"
-        [[ -n "$value" ]] || continue
-        parts+=("${key}=${value}")
-    done
-    print -r -- "${(j:\x1f:)parts}"
-}
-
-_cmux_tmux_publish_cmux_environment() {
-    [[ -z "$TMUX" ]] || return 0
-    command -v tmux >/dev/null 2>&1 || return 0
-
-    local signature
-    signature="$(_cmux_tmux_shell_env_signature)"
-    [[ -n "$signature" ]] || return 0
-    [[ "$signature" == "$_CMUX_TMUX_PUSH_SIGNATURE" ]] && return 0
-
-    local key value
-    for key in "${_CMUX_TMUX_SYNC_KEYS[@]}"; do
-        value="${(P)key}"
-        [[ -n "$value" ]] || continue
-        tmux set-environment -g "$key" "$value" >/dev/null 2>&1 || return 0
-    done
-
-    for key in "${_CMUX_TMUX_SURFACE_SCOPED_KEYS[@]}"; do
-        tmux set-environment -gu "$key" >/dev/null 2>&1 || return 0
-    done
-
-    _CMUX_TMUX_PUSH_SIGNATURE="$signature"
-}
-
-_cmux_tmux_refresh_cmux_environment() {
-    [[ -n "$TMUX" ]] || return 0
-    command -v tmux >/dev/null 2>&1 || return 0
-
-    local output
-    output="$(tmux show-environment -g 2>/dev/null)" || return 0
-
-    local line key filtered="" did_change=0
-    while IFS= read -r line; do
-        [[ "$line" == CMUX_* ]] || continue
-        key="${line%%=*}"
-        _cmux_tmux_sync_key_is_managed "$key" || continue
-        filtered+="${line}"$'\n'
-    done <<< "$output"
-
-    [[ -n "$filtered" ]] || return 0
-    [[ "$filtered" == "$_CMUX_TMUX_PULL_SIGNATURE" ]] && return 0
-
-    local value
-    while IFS= read -r line; do
-        [[ "$line" == CMUX_* ]] || continue
-        key="${line%%=*}"
-        _cmux_tmux_sync_key_is_managed "$key" || continue
-        value="${line#*=}"
-        if [[ "${(P)key}" != "$value" ]]; then
-            export "$key=$value"
-            did_change=1
-        fi
-    done <<< "$filtered"
-
-    _CMUX_TMUX_PULL_SIGNATURE="$filtered"
-    if (( did_change )); then
-        _CMUX_TTY_REPORTED=0
-        _CMUX_SHELL_ACTIVITY_LAST=""
-        _CMUX_PWD_LAST_PWD=""
-        _CMUX_GIT_LAST_PWD=""
-        _CMUX_GIT_HEAD_LAST_PWD=""
-        _CMUX_GIT_HEAD_PATH=""
-        _CMUX_GIT_HEAD_SIGNATURE=""
-        _CMUX_GIT_FORCE=1
-        _CMUX_PR_FORCE=1
-        _cmux_stop_pr_poll_loop
-        _cmux_stop_git_head_watch
-    fi
-}
-
-_cmux_tmux_sync_cmux_environment() {
-    if [[ -n "$TMUX" ]]; then
-        _cmux_tmux_refresh_cmux_environment
-    else
-        _cmux_tmux_publish_cmux_environment
-    fi
-}
 
 _cmux_ensure_ghostty_preexec_strips_both_marks() {
     local fn_name="$1"
@@ -313,32 +190,17 @@ _cmux_git_head_signature() {
     return 1
 }
 
-_cmux_report_tty_payload() {
-    [[ -n "$CMUX_TAB_ID" ]] || return 0
-    [[ -n "$_CMUX_TTY_NAME" ]] || return 0
-
-    local payload="report_tty $_CMUX_TTY_NAME --tab=$CMUX_TAB_ID"
-    if [[ -z "$TMUX" ]]; then
-        [[ -n "$CMUX_PANEL_ID" ]] || return 0
-        payload+=" --panel=$CMUX_PANEL_ID"
-    fi
-
-    print -r -- "$payload"
-}
-
 _cmux_report_tty_once() {
     # Send the TTY name to the app once per session so the batched port scanner
     # knows which TTY belongs to this panel.
     (( _CMUX_TTY_REPORTED )) && return 0
     [[ -S "$CMUX_SOCKET_PATH" ]] || return 0
-
-    local payload=""
-    payload="$(_cmux_report_tty_payload)"
-    [[ -n "$payload" ]] || return 0
-
+    [[ -n "$CMUX_TAB_ID" ]] || return 0
+    [[ -n "$CMUX_PANEL_ID" ]] || return 0
+    [[ -n "$_CMUX_TTY_NAME" ]] || return 0
     _CMUX_TTY_REPORTED=1
     {
-        _cmux_send "$payload"
+        _cmux_send "report_tty $_CMUX_TTY_NAME --tab=$CMUX_TAB_ID --panel=$CMUX_PANEL_ID"
     } >/dev/null 2>&1 &!
 }
 
@@ -644,8 +506,6 @@ _cmux_start_git_head_watch() {
 }
 
 _cmux_preexec() {
-    _cmux_tmux_sync_cmux_environment
-
     if [[ -z "$_CMUX_TTY_NAME" ]]; then
         local t
         t="$(tty 2>/dev/null || true)"
@@ -673,7 +533,6 @@ _cmux_preexec() {
 
 _cmux_precmd() {
     _cmux_stop_git_head_watch
-    _cmux_tmux_sync_cmux_environment
 
     # Skip if socket doesn't exist yet
     [[ -S "$CMUX_SOCKET_PATH" ]] || return 0
@@ -854,13 +713,34 @@ _cmux_fix_path() {
     add-zsh-hook -d precmd _cmux_fix_path
 }
 
+_cmux_install_command_wrapper() {
+    local command_name="$1"
+    [[ -n "${GHOSTTY_BIN_DIR:-}" ]] || return 0
+    [[ -n "$command_name" ]] || return 0
+
+    local gui_dir="${GHOSTTY_BIN_DIR%/}"
+    local wrapper_path="${gui_dir%/MacOS}/Resources/bin/${command_name}"
+    [[ -x "$wrapper_path" ]] || return 0
+
+    unalias "$command_name" >/dev/null 2>&1 || true
+    eval "function ${command_name}() { \"$wrapper_path\" \"\$@\"; }"
+}
+
+_cmux_install_ai_wrappers() {
+    _cmux_install_command_wrapper claude
+    _cmux_install_command_wrapper codex
+    (( $+functions[add-zsh-hook] )) && add-zsh-hook -d precmd _cmux_install_ai_wrappers
+}
+
 _cmux_zshexit() {
     _cmux_stop_git_head_watch
     _cmux_stop_pr_poll_loop
 }
 
 autoload -Uz add-zsh-hook
+_cmux_install_ai_wrappers
 add-zsh-hook preexec _cmux_preexec
 add-zsh-hook precmd _cmux_precmd
 add-zsh-hook precmd _cmux_fix_path
+add-zsh-hook precmd _cmux_install_ai_wrappers
 add-zsh-hook zshexit _cmux_zshexit
