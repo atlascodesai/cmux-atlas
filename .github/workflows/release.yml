@@ -219,7 +219,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security list-keychains -d user -s build.keychain
+          security list-keychains -d user -s build.keychain login.keychain-db /Library/Keychains/System.keychain
 
       - name: Codesign app
         if: steps.guard_release_assets.outputs.skip_all != 'true'
