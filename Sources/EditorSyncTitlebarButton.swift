@@ -5,6 +5,131 @@ enum AIQuickLaunchAgent {
     case claudeCode
 }
 
+enum AIQuickLaunchStrings {
+    static func accessibilityLabel(for agent: AIQuickLaunchAgent) -> String {
+        switch agent {
+        case .codex:
+            return String(localized: "aiQuickLaunch.codex.accessibility", defaultValue: "Open Codex")
+        case .claudeCode:
+            return String(localized: "aiQuickLaunch.claude.accessibility", defaultValue: "Open Claude Code")
+        }
+    }
+
+    static func helpText(for agent: AIQuickLaunchAgent, permissiveEnabled: Bool) -> String {
+        switch agent {
+        case .codex:
+            return permissiveEnabled
+                ? String(
+                    localized: "aiQuickLaunch.codex.help.enabled",
+                    defaultValue: "Open Codex (--yolo enabled)"
+                )
+                : String(
+                    localized: "aiQuickLaunch.codex.help.disabled",
+                    defaultValue: "Open Codex"
+                )
+        case .claudeCode:
+            return permissiveEnabled
+                ? String(
+                    localized: "aiQuickLaunch.claude.help.enabled",
+                    defaultValue: "Open Claude Code (--dangerously-skip-permissions enabled)"
+                )
+                : String(
+                    localized: "aiQuickLaunch.claude.help.disabled",
+                    defaultValue: "Open Claude Code"
+                )
+        }
+    }
+
+    static func permissiveToggleTitle(for agent: AIQuickLaunchAgent, permissiveEnabled: Bool) -> String {
+        switch agent {
+        case .codex:
+            return permissiveEnabled
+                ? String(
+                    localized: "aiQuickLaunch.codex.context.disablePermissive",
+                    defaultValue: "Disable --yolo"
+                )
+                : String(
+                    localized: "aiQuickLaunch.codex.context.enablePermissive",
+                    defaultValue: "Enable --yolo"
+                )
+        case .claudeCode:
+            return permissiveEnabled
+                ? String(
+                    localized: "aiQuickLaunch.claude.context.disablePermissive",
+                    defaultValue: "Disable --dangerously-skip-permissions"
+                )
+                : String(
+                    localized: "aiQuickLaunch.claude.context.enablePermissive",
+                    defaultValue: "Enable --dangerously-skip-permissions"
+                )
+        }
+    }
+}
+
+enum EditorSyncStrings {
+    static let accessibilityLabel = String(
+        localized: "editorSync.accessibility",
+        defaultValue: "Editor Sync"
+    )
+
+    static let helpDisabled = String(
+        localized: "editorSync.help.disabled",
+        defaultValue: "Link an editor (⌘E)"
+    )
+
+    static let popoverTitle = String(
+        localized: "editorSync.popover.title",
+        defaultValue: "Link Editor  ⌘E"
+    )
+
+    static let noSupportedEditorsInstalled = String(
+        localized: "editorSync.popover.noEditors",
+        defaultValue: "No supported editors installed"
+    )
+
+    static let disableSync = String(
+        localized: "editorSync.popover.disable",
+        defaultValue: "Disable Sync"
+    )
+
+    static let disableContextMenuTitle = String(
+        localized: "editorSync.context.disable",
+        defaultValue: "Disable Editor Sync"
+    )
+
+    static func helpEnabled(targetEditorName: String) -> String {
+        String(
+            format: String(
+                localized: "editorSync.help.enabled",
+                defaultValue: "Editor sync: %@ (⌘E to toggle)"
+            ),
+            locale: .current,
+            targetEditorName
+        )
+    }
+
+    static func editorDisplayName(_ editor: TerminalDirectoryOpenTarget) -> String {
+        switch editor {
+        case .cursor:
+            return String(localized: "editorSync.editor.cursor", defaultValue: "Cursor")
+        case .vscode:
+            return String(localized: "editorSync.editor.vscode", defaultValue: "VS Code")
+        case .windsurf:
+            return String(localized: "editorSync.editor.windsurf", defaultValue: "Windsurf")
+        case .zed:
+            return String(localized: "editorSync.editor.zed", defaultValue: "Zed")
+        case .xcode:
+            return String(localized: "editorSync.editor.xcode", defaultValue: "Xcode")
+        case .androidStudio:
+            return String(localized: "editorSync.editor.androidStudio", defaultValue: "Android Studio")
+        case .antigravity:
+            return String(localized: "editorSync.editor.antigravity", defaultValue: "Antigravity")
+        default:
+            return editor.rawValue.capitalized
+        }
+    }
+}
+
 @MainActor
 final class AIQuickLaunchController: ObservableObject {
     static let shared = AIQuickLaunchController()
@@ -139,62 +264,15 @@ struct AIQuickLaunchTitlebarButton: View {
     }
 
     private var accessibilityLabel: String {
-        switch agent {
-        case .codex:
-            return String(localized: "aiQuickLaunch.codex.accessibility", defaultValue: "Open Codex")
-        case .claudeCode:
-            return String(localized: "aiQuickLaunch.claude.accessibility", defaultValue: "Open Claude Code")
-        }
+        AIQuickLaunchStrings.accessibilityLabel(for: agent)
     }
 
     private var helpText: String {
-        switch agent {
-        case .codex:
-            return permissiveEnabled
-                ? String(
-                    localized: "aiQuickLaunch.codex.help.enabled",
-                    defaultValue: "Open Codex (--yolo enabled)"
-                )
-                : String(
-                    localized: "aiQuickLaunch.codex.help.disabled",
-                    defaultValue: "Open Codex"
-                )
-        case .claudeCode:
-            return permissiveEnabled
-                ? String(
-                    localized: "aiQuickLaunch.claude.help.enabled",
-                    defaultValue: "Open Claude Code (--dangerously-skip-permissions enabled)"
-                )
-                : String(
-                    localized: "aiQuickLaunch.claude.help.disabled",
-                    defaultValue: "Open Claude Code"
-                )
-        }
+        AIQuickLaunchStrings.helpText(for: agent, permissiveEnabled: permissiveEnabled)
     }
 
     private var permissiveToggleTitle: String {
-        switch agent {
-        case .codex:
-            return permissiveEnabled
-                ? String(
-                    localized: "aiQuickLaunch.codex.context.disablePermissive",
-                    defaultValue: "Disable --yolo"
-                )
-                : String(
-                    localized: "aiQuickLaunch.codex.context.enablePermissive",
-                    defaultValue: "Enable --yolo"
-                )
-        case .claudeCode:
-            return permissiveEnabled
-                ? String(
-                    localized: "aiQuickLaunch.claude.context.disablePermissive",
-                    defaultValue: "Disable --dangerously-skip-permissions"
-                )
-                : String(
-                    localized: "aiQuickLaunch.claude.context.enablePermissive",
-                    defaultValue: "Enable --dangerously-skip-permissions"
-                )
-        }
+        AIQuickLaunchStrings.permissiveToggleTitle(for: agent, permissiveEnabled: permissiveEnabled)
     }
 }
 
@@ -255,10 +333,10 @@ struct EditorSyncTitlebarButton: View {
             editorContextMenu
         }
         .accessibilityIdentifier("titlebarControl.editorSync")
-        .accessibilityLabel("Editor Sync")
+        .accessibilityLabel(EditorSyncStrings.accessibilityLabel)
         .help(editorSync.isEnabled
-            ? "Editor sync: \(editorDisplayName(editorSync.targetEditor)) (⌘E to toggle)"
-            : "Link an editor (⌘E)")
+            ? EditorSyncStrings.helpEnabled(targetEditorName: editorDisplayName(editorSync.targetEditor))
+            : EditorSyncStrings.helpDisabled)
         .keyboardShortcut("e", modifiers: .command)
 
         if let buttonSize {
@@ -272,7 +350,7 @@ struct EditorSyncTitlebarButton: View {
 
     private var editorPickerPopover: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Link Editor  ⌘E")
+            Text(EditorSyncStrings.popoverTitle)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
@@ -321,7 +399,7 @@ struct EditorSyncTitlebarButton: View {
             }
 
             if availableEditors.isEmpty {
-                Text("No supported editors installed")
+                Text(EditorSyncStrings.noSupportedEditorsInstalled)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -335,7 +413,7 @@ struct EditorSyncTitlebarButton: View {
                     showingPicker = false
                 } label: {
                     HStack {
-                        Text("Disable Sync")
+                        Text(EditorSyncStrings.disableSync)
                             .font(.system(size: 12))
                         Spacer()
                         Text("⌘E")
@@ -372,7 +450,7 @@ struct EditorSyncTitlebarButton: View {
 
         if editorSync.isEnabled {
             Divider()
-            Button("Disable Editor Sync") {
+            Button(EditorSyncStrings.disableContextMenuTitle) {
                 editorSync.isEnabled = false
             }
         }
@@ -390,16 +468,7 @@ struct EditorSyncTitlebarButton: View {
     // MARK: - Helpers
 
     private func editorDisplayName(_ editor: TerminalDirectoryOpenTarget) -> String {
-        switch editor {
-        case .cursor: return "Cursor"
-        case .vscode: return "VS Code"
-        case .windsurf: return "Windsurf"
-        case .zed: return "Zed"
-        case .xcode: return "Xcode"
-        case .androidStudio: return "Android Studio"
-        case .antigravity: return "Antigravity"
-        default: return editor.rawValue.capitalized
-        }
+        EditorSyncStrings.editorDisplayName(editor)
     }
 
     private func editorIcon(for editor: TerminalDirectoryOpenTarget) -> some View {

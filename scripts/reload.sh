@@ -421,9 +421,8 @@ GHOSTTY_HELPER_SRC="$PWD/ghostty/zig-out/bin/ghostty"
 if [[ -d "$PWD/cmuxd" ]]; then
   (cd "$PWD/cmuxd" && zig build -Doptimize=ReleaseFast)
 fi
-if [[ -d "$PWD/ghostty" ]]; then
-  (cd "$PWD/ghostty" && zig build cli-helper -Dapp-runtime=none -Demit-macos-app=false -Demit-xcframework=false -Doptimize=ReleaseFast)
-fi
+# cli-helper build removed — ghostty submodule points to upstream manaflow
+# which does not have the cli-helper build step
 if [[ -x "$CMUXD_SRC" ]]; then
   BIN_DIR="$APP_PATH/Contents/Resources/bin"
   mkdir -p "$BIN_DIR"

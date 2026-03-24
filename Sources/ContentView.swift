@@ -11772,6 +11772,14 @@ private struct TabItemView: View, Equatable {
         }
         .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
+        Button(String(localized: "contextMenu.copyPath", defaultValue: "Copy Path")) {
+            let dir = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !dir.isEmpty {
+                copyTextToPasteboard(dir)
+            }
+        }
+        .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
         Divider()
 
         let favName = tab.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

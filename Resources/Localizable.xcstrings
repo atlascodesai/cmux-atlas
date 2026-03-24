@@ -115,6 +115,176 @@
         }
       }
     },
+    "aiQuickLaunch.claude.accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Claude Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Codeを開く"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.claude.context.disablePermissive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disable --dangerously-skip-permissions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--dangerously-skip-permissionsを無効化"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.claude.context.enablePermissive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable --dangerously-skip-permissions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--dangerously-skip-permissionsを有効化"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.claude.help.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Claude Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Codeを開く"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.claude.help.enabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Claude Code (--dangerously-skip-permissions enabled)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude Codeを開く（--dangerously-skip-permissions 有効）"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.codex.accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Codex"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexを開く"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.codex.context.disablePermissive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disable --yolo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--yoloを無効化"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.codex.context.enablePermissive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable --yolo"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "--yoloを有効化"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.codex.help.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Codex"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexを開く"
+          }
+        }
+      }
+    },
+    "aiQuickLaunch.codex.help.enabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Codex (--yolo enabled)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codexを開く（--yolo 有効）"
+          }
+        }
+      }
+    },
     "cli.claude-teams.usage": {
       "extractionState": "manual",
       "localizations": {
@@ -128,6 +298,244 @@
           "stringUnit": {
             "state": "translated",
             "value": "使い方: cmux claude-teams [claude-args...]\n\nエージェントチームを有効にした状態で Claude Code を起動します。\n\nこのコマンドは次を行います:\n  - Claude の teammate mode を auto に設定\n  - Claude の auto mode が cmux の split を使うよう tmux 風の環境を設定\n  - CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 を設定\n  - 専用の tmux shim を PATH の先頭に追加\n  - 残りの引数をそのまま claude に渡す\n\ntmux shim は、対応している tmux の window/pane コマンドを、現在の cmux セッション内の workspace と split 操作に変換します。\n\n例:\n  cmux claude-teams\n  cmux claude-teams --continue\n  cmux claude-teams --model sonnet"
+          }
+        }
+      }
+    },
+    "editorSync.accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editor Sync"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エディタ同期"
+          }
+        }
+      }
+    },
+    "editorSync.context.disable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disable Editor Sync"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エディタ同期を無効化"
+          }
+        }
+      }
+    },
+    "editorSync.editor.androidStudio": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Android Studio"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Android Studio"
+          }
+        }
+      }
+    },
+    "editorSync.editor.antigravity": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antigravity"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antigravity"
+          }
+        }
+      }
+    },
+    "editorSync.editor.cursor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cursor"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cursor"
+          }
+        }
+      }
+    },
+    "editorSync.editor.vscode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VS Code"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "VS Code"
+          }
+        }
+      }
+    },
+    "editorSync.editor.windsurf": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Windsurf"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Windsurf"
+          }
+        }
+      }
+    },
+    "editorSync.editor.xcode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xcode"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xcode"
+          }
+        }
+      }
+    },
+    "editorSync.editor.zed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zed"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zed"
+          }
+        }
+      }
+    },
+    "editorSync.help.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link an editor (⌘E)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エディタをリンク（⌘E）"
+          }
+        }
+      }
+    },
+    "editorSync.help.enabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Editor sync: %@ (⌘E to toggle)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エディタ同期: %@（⌘Eで切り替え）"
+          }
+        }
+      }
+    },
+    "editorSync.popover.disable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disable Sync"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同期を無効化"
+          }
+        }
+      }
+    },
+    "editorSync.popover.noEditors": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No supported editors installed"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "対応エディタがインストールされていません"
+          }
+        }
+      }
+    },
+    "editorSync.popover.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link Editor  ⌘E"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エディタをリンク  ⌘E"
           }
         }
       }
@@ -27335,6 +27743,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "SSHエラーをコピー"
+          }
+        }
+      }
+    },
+    "contextMenu.copyPath": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Path"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パスをコピー"
+          }
+        }
+      }
+    },
+    "contextMenu.revealInFinder": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal in Finder"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finderで表示"
           }
         }
       }

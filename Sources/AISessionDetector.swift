@@ -112,11 +112,24 @@ enum AISessionDetector {
     }
 
     private static func matchAgent(proc: ProcessInfo, workingDirectory: String?) -> AISessionSnapshot? {
+        snapshotForMatchedAgent(
+            proc: proc,
+            workingDirectory: workingDirectory,
+            resolvedProcessCwd: processCwd(pid: proc.pid)
+        )
+    }
+
+    static func snapshotForMatchedAgent(
+        proc: ProcessInfo,
+        workingDirectory: String?,
+        resolvedProcessCwd: String?,
+        now: TimeInterval = Date().timeIntervalSince1970
+    ) -> AISessionSnapshot? {
         let execName = (proc.command as NSString).lastPathComponent
 
         // Claude Code detection: binary is named "claude"
         if execName == "claude" || proc.command.hasSuffix("/claude") {
-            let resolvedCwd = processCwd(pid: proc.pid) ?? workingDirectory
+            let resolvedCwd = resolvedProcessCwd ?? workingDirectory
             let sessionInfo = resolveClaudeSessionId(pid: proc.pid, workingDirectory: resolvedCwd)
             return AISessionSnapshot(
                 agentType: .claudeCode,
@@ -124,19 +137,20 @@ enum AISessionDetector {
                 workingDirectory: resolvedCwd,
                 command: proc.fullCommand,
                 projectPath: sessionInfo?.projectPath,
-                lastSeenActive: Date().timeIntervalSince1970
+                lastSeenActive: now
             )
         }
 
         // Codex detection: binary named "codex"
         if execName == "codex" || proc.command.hasSuffix("/codex") {
+            let resolvedCwd = resolvedProcessCwd ?? workingDirectory
             return AISessionSnapshot(
                 agentType: .codex,
                 sessionId: nil,
-                workingDirectory: workingDirectory,
+                workingDirectory: resolvedCwd,
                 command: proc.fullCommand,
-                projectPath: workingDirectory,
-                lastSeenActive: Date().timeIntervalSince1970
+                projectPath: resolvedCwd,
+                lastSeenActive: now
             )
         }
 

@@ -269,6 +269,48 @@ final class AISessionDetectorTests: XCTestCase {
         XCTAssertTrue(procs.isEmpty)
     }
 
+    func testCodexSnapshotPrefersResolvedProcessWorkingDirectory() {
+        let proc = AISessionDetector.ProcessInfo(
+            pid: 42,
+            command: "/usr/local/bin/codex",
+            args: ["/usr/local/bin/codex", "--yolo"],
+            fullCommand: "/usr/local/bin/codex --yolo"
+        )
+
+        let snapshot = AISessionDetector.snapshotForMatchedAgent(
+            proc: proc,
+            workingDirectory: "/tmp/stale-workspace",
+            resolvedProcessCwd: "/tmp/actual-project",
+            now: 123
+        )
+
+        XCTAssertEqual(snapshot?.agentType, .codex)
+        XCTAssertEqual(snapshot?.workingDirectory, "/tmp/actual-project")
+        XCTAssertEqual(snapshot?.projectPath, "/tmp/actual-project")
+        XCTAssertEqual(snapshot?.lastSeenActive, 123)
+        XCTAssertEqual(snapshot?.resumeCommand, "cd '/tmp/actual-project' && codex")
+    }
+
+    func testCodexSnapshotFallsBackToWorkspaceDirectoryWhenProcessCwdMissing() {
+        let proc = AISessionDetector.ProcessInfo(
+            pid: 42,
+            command: "/usr/local/bin/codex",
+            args: ["/usr/local/bin/codex"],
+            fullCommand: "/usr/local/bin/codex"
+        )
+
+        let snapshot = AISessionDetector.snapshotForMatchedAgent(
+            proc: proc,
+            workingDirectory: "/tmp/workspace-project",
+            resolvedProcessCwd: nil,
+            now: 456
+        )
+
+        XCTAssertEqual(snapshot?.workingDirectory, "/tmp/workspace-project")
+        XCTAssertEqual(snapshot?.projectPath, "/tmp/workspace-project")
+        XCTAssertEqual(snapshot?.lastSeenActive, 456)
+    }
+
     // MARK: - Claude Project Dir Resolution
 
     func testFindClaudeProjectDirExactMatch() throws {

@@ -5480,6 +5480,12 @@ final class Workspace: Identifiable, ObservableObject {
             BrowserLinkToggleContextMenu()
         )
         bonsplitController.contextMenuShortcuts = Self.buildContextMenuShortcuts()
+        bonsplitController.tabHasDirectory = { [weak self] tabId in
+            guard let self,
+                  let panelId = self.panelIdFromSurfaceId(TabID(uuid: tabId)),
+                  let dir = self.panelDirectories[panelId] else { return false }
+            return !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
 
         // Remove the default "Welcome" tab that bonsplit creates
         let welcomeTabIds = bonsplitController.allTabIds
@@ -10437,6 +10443,18 @@ extension Workspace: BonsplitDelegate {
         case .toggleZoom:
             guard let panelId = panelIdFromSurfaceId(tab.id) else { return }
             toggleSplitZoom(panelId: panelId)
+        case .revealInFinder:
+            guard let panelId = panelIdFromSurfaceId(tab.id),
+                  let dir = panelDirectories[panelId],
+                  !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir)
+        case .copyPath:
+            guard let panelId = panelIdFromSurfaceId(tab.id),
+                  let dir = panelDirectories[panelId],
+                  !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(dir, forType: .string)
         @unknown default:
             break
         }

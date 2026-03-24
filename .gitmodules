@@ -1,6 +1,6 @@
 [submodule "ghostty"]
 	path = ghostty
-	url = https://github.com/atlascodesai/ghostty-atlas.git
+	url = https://github.com/manaflow-ai/ghostty.git
 	branch = main
 [submodule "homebrew-cmux"]
 	path = homebrew-cmux

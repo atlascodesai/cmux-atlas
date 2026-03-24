@@ -2707,3 +2707,139 @@ final class BrowserImportScopeTests: XCTestCase {
         XCTAssertNil(scope)
     }
 }
+
+@MainActor
+final class AIQuickLaunchControllerTests: XCTestCase {
+    func testCodexCommandReflectsPermissiveMode() {
+        let controller = AIQuickLaunchController.shared
+        let original = controller.codexPermissiveMode
+        defer { controller.codexPermissiveMode = original }
+
+        controller.codexPermissiveMode = false
+        XCTAssertEqual(controller.command(for: .codex), "codex")
+
+        controller.codexPermissiveMode = true
+        XCTAssertEqual(controller.command(for: .codex), "codex --yolo")
+    }
+
+    func testClaudeCommandReflectsPermissiveMode() {
+        let controller = AIQuickLaunchController.shared
+        let original = controller.claudePermissiveMode
+        defer { controller.claudePermissiveMode = original }
+
+        controller.claudePermissiveMode = false
+        XCTAssertEqual(controller.command(for: .claudeCode), "claude")
+
+        controller.claudePermissiveMode = true
+        XCTAssertEqual(controller.command(for: .claudeCode), "claude --dangerously-skip-permissions")
+    }
+}
+
+actor EditorSyncSleepGate {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func releaseAll() {
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
+@MainActor
+final class EditorSyncControllerTests: XCTestCase {
+    private func makeDefaults() -> UserDefaults {
+        let suiteName = "cmux-editor-sync-tests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
+    }
+
+    func testWorkspaceDidChangeDebouncesAndUsesReuseWindowCLI() async {
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: EditorSyncController.enabledKey)
+
+        let sleepGate = EditorSyncSleepGate()
+        var launchedCommands: [(executable: String, arguments: [String], environment: [String: String])] = []
+
+        let environment = EditorSyncController.Environment(
+            homeDirectoryPath: "/Users/tester",
+            isExecutableFileAtPath: { $0 == "/opt/homebrew/bin/code" },
+            applicationURLForTarget: { _ in URL(fileURLWithPath: "/Applications/Visual Studio Code.app") },
+            inheritedEnvironment: { ["PATH": "/usr/bin:/bin"] },
+            sleep: { _ in await sleepGate.wait() },
+            runCLI: { executableURL, arguments, environment in
+                launchedCommands.append((executableURL.path, arguments, environment))
+            },
+            openDirectory: { _, _ in
+                XCTFail("Expected CLI launch instead of fallback app open")
+            }
+        )
+
+        let controller = EditorSyncController(
+            defaults: defaults,
+            environment: environment,
+            debounceInterval: .milliseconds(300)
+        )
+        controller.targetEditor = .vscode
+        controller.workspaceDidChange(directory: "/tmp/first-project")
+        controller.workspaceDidChange(directory: "/tmp/final-project")
+
+        await sleepGate.releaseAll()
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertEqual(launchedCommands.count, 1)
+        XCTAssertEqual(launchedCommands.first?.executable, "/opt/homebrew/bin/code")
+        XCTAssertEqual(
+            launchedCommands.first?.arguments,
+            ["--reuse-window", "/tmp/final-project"]
+        )
+        XCTAssertEqual(
+            launchedCommands.first?.environment["PATH"],
+            "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+        )
+    }
+
+    func testOpenCurrentDirectoryNowFallsBackToAppOpenWhenNoCLIExists() {
+        let defaults = makeDefaults()
+        let expectedAppURL = URL(fileURLWithPath: "/Applications/Android Studio.app")
+        var openedDirectoryURL: URL?
+        var openedApplicationURL: URL?
+
+        let environment = EditorSyncController.Environment(
+            homeDirectoryPath: "/Users/tester",
+            isExecutableFileAtPath: { _ in false },
+            applicationURLForTarget: { target in
+                target == .androidStudio ? expectedAppURL : nil
+            },
+            inheritedEnvironment: { [:] },
+            sleep: { _ in },
+            runCLI: { _, _, _ in
+                XCTFail("Expected app fallback instead of CLI launch")
+            },
+            openDirectory: { directoryURL, applicationURL in
+                openedDirectoryURL = directoryURL
+                openedApplicationURL = applicationURL
+            }
+        )
+
+        let controller = EditorSyncController(
+            defaults: defaults,
+            environment: environment,
+            debounceInterval: .milliseconds(0)
+        )
+        controller.targetEditor = .androidStudio
+        controller.currentWorkspaceDirectory = { "/tmp/android-project" }
+
+        controller.openCurrentDirectoryNow()
+
+        XCTAssertEqual(openedDirectoryURL?.path, "/tmp/android-project")
+        XCTAssertEqual(openedApplicationURL, expectedAppURL)
+    }
+}
