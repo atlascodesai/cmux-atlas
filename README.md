@@ -1,6 +1,8 @@
 <h1 align="center">cmux Atlas</h1>
 <p align="center">A personal fork of <a href="https://github.com/manaflow-ai/cmux">manaflow-ai/cmux</a> — adding AI workflow features we want in our terminal</p>
 
+> **Note:** This fork exists to explore changes that may not align with the main cmux product vision but reflect our personal workflow preferences. If the Manaflow team finds any of these features useful for upstream, we're happy to open PRs. This fork is created and maintained with the help of [Claude](https://claude.ai) and [Codex](https://openai.com/codex).
+
 <p align="center">
   <img src="./docs/assets/main-first-image.png" alt="cmux Atlas screenshot" width="900" />
 </p>
