@@ -2280,7 +2280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             _ = NSLocale.preferredLanguages
 
             SentrySDK.start { options in
-                options.dsn = "https://ecba1ec90ecaee02a102fba931b6d2b3@o4507547940749312.ingest.us.sentry.io/4510796264636416"
+                options.dsn = "https://cf9f50c96d0e1872f0f774d70da71b1c@o4510776019910656.ingest.de.sentry.io/4511100296101968"
                 #if DEBUG
                 options.environment = "development"
                 options.debug = true
@@ -5449,6 +5449,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func openNewMainWindow(_ sender: Any?) {
         _ = createMainWindow()
+    }
+
+    /// Opens a saved organization in a new window.
+    func openOrganizationInNewWindow(_ org: WorkspaceOrganization) {
+        let snapshot = SessionWindowSnapshot(
+            tabManager: org.tabManagerSnapshot,
+            sidebar: SessionSidebarSnapshot(isVisible: true, selection: .tabs)
+        )
+        let windowId = createMainWindow(sessionWindowSnapshot: snapshot)
+        if let context = mainWindowContexts.values.first(where: { $0.windowId == windowId }) {
+            context.tabManager.organizationName = org.name
+            WorkspaceOrganizationStore.touchLastUsed(org.id)
+        }
     }
 
     @objc func openWindow(

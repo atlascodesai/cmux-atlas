@@ -2,6 +2,22 @@
 
 All notable changes to cmux are documented here.
 
+## [0.62.2-atlas.3] - 2026-03-25
+
+### Fixed
+- Fix Sparkle auto-update error 4005 (installer fails to start) by porting upstream's SPUStandardUserDriver fallback for menu-triggered updates
+- Fix Sentry DSN pointing to upstream US project instead of fork's DE region project
+- Fix CI codesign applying app entitlements to Sparkle XPC services via --deep; now signs inside-out
+
+### Added
+- Keyboard shortcuts: ⌥⌘C for new Claude Code tab, ⌥⌘X for new Codex tab (respects permissive/yolo settings)
+- Browser link toggle button in titlebar to switch between cmux browser and external browser
+- Organizations submenu in File menu with rename, export, import, and history
+
+### Changed
+- File menu restructured: "New Organization" (⇧⌘N) opens a new window, cleaner layout
+- Organization items removed from workspace right-click context menu (now only in File menu)
+
 ## [0.62.2-atlas.2] - 2026-03-25
 
 ### Fixed

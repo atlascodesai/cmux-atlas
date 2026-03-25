@@ -11785,46 +11785,6 @@ private struct TabItemView: View, Equatable {
 
         Divider()
 
-        let favName = tab.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? String(localized: "workspace.displayName.fallback", defaultValue: "Workspace")
-            : tab.title
-
-        Button(String(localized: "contextMenu.nameOrganization", defaultValue: "Name Organization…")) {
-            let alert = NSAlert()
-            alert.messageText = String(localized: "organization.name.title", defaultValue: "Name Organization")
-            alert.informativeText = String(localized: "organization.name.message", defaultValue: "Enter a name for this workspace's organization.")
-            alert.addButton(withTitle: String(localized: "organization.name.save", defaultValue: "Save"))
-            alert.addButton(withTitle: String(localized: "organization.name.cancel", defaultValue: "Cancel"))
-            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-            input.stringValue = tabManager.organizationName ?? favName
-            alert.accessoryView = input
-            alert.window.initialFirstResponder = input
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !newName.isEmpty else { return }
-            tabManager.organizationName = newName
-        }
-
-        Button(String(localized: "contextMenu.saveAsOrganization", defaultValue: "Save as Organization")) {
-            let name = tabManager.organizationName ?? favName
-            let snapshot = tabManager.sessionSnapshot(includeScrollback: false)
-            _ = WorkspaceOrganizationStore.upsertAutomaticSnapshot(name: name, tabManagerSnapshot: snapshot)
-        }
-
-        Button(String(localized: "contextMenu.exportOrganization", defaultValue: "Export Organization…")) {
-            let name = tabManager.organizationName ?? favName
-            let snapshot = tabManager.sessionSnapshot(includeScrollback: true)
-            WorkspaceOrganizationStore.exportOrganization(snapshot, name: name)
-        }
-
-        Button(String(localized: "contextMenu.importOrganization", defaultValue: "Import Organization…")) {
-            if let org = WorkspaceOrganizationStore.importWorkspace() {
-                tabManager.switchToOrganization(org)
-            }
-        }
-
-        Divider()
-
         Button(markReadLabel) {
             markTabsRead(targetIds)
         }

@@ -566,10 +566,6 @@ struct cmuxApp: App {
 
             // New tab commands
             CommandGroup(replacing: .newItem) {
-                splitCommandButton(title: String(localized: "menu.file.newWindow", defaultValue: "New Window"), shortcut: newWindowMenuShortcut) {
-                    appDelegate.openNewMainWindow(nil)
-                }
-
                 splitCommandButton(title: String(localized: "menu.file.newWorkspace", defaultValue: "New Workspace"), shortcut: newWorkspaceMenuShortcut) {
                     if let appDelegate = AppDelegate.shared {
                         if appDelegate.addWorkspaceInPreferredMainWindow(debugSource: "menu.newWorkspace") == nil {
@@ -583,6 +579,10 @@ struct cmuxApp: App {
                     } else {
                         activeTabManager.addTab()
                     }
+                }
+
+                splitCommandButton(title: String(localized: "menu.file.newOrganization", defaultValue: "New Organization"), shortcut: newWindowMenuShortcut) {
+                    appDelegate.openNewMainWindow(nil)
                 }
 
                 splitCommandButton(title: String(localized: "menu.file.openFolder", defaultValue: "Open Folder…"), shortcut: openFolderMenuShortcut) {
@@ -608,13 +608,51 @@ struct cmuxApp: App {
 
                 Divider()
 
+                // AI agent quick-launch (respects yolo/permissive settings)
+                Button(String(localized: "menu.file.newClaudeCodeTab", defaultValue: "New Claude Code Tab")) {
+                    if let workspace = activeTabManager.selectedWorkspace {
+                        workspace.launchQuickAIAgent(.claudeCode)
+                    }
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+
+                Button(String(localized: "menu.file.newCodexTab", defaultValue: "New Codex Tab")) {
+                    if let workspace = activeTabManager.selectedWorkspace {
+                        workspace.launchQuickAIAgent(.codex)
+                    }
+                }
+                .keyboardShortcut("x", modifiers: [.command, .option])
+
+                Divider()
+
                 Menu(String(localized: "menu.file.organizations", defaultValue: "Organizations")) {
                     let orgs = WorkspaceOrganizationStore.loadAll()
+                    let currentOrgName = activeTabManager.organizationName
 
-                    Button(String(localized: "menu.file.organizations.saveCurrent", defaultValue: "Save Current as Organization…")) {
+                    // List all organizations: checkmark indicates current window's org
+                    if !orgs.isEmpty {
+                        ForEach(Array(orgs.prefix(10).enumerated()), id: \.element.id) { _, org in
+                            Button {
+                                // Always open in new window, never replace current
+                                AppDelegate.shared?.openOrganizationInNewWindow(org)
+                            } label: {
+                                HStack {
+                                    Text(org.name)
+                                    if currentOrgName == org.name {
+                                        Spacer()
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+                    }
+
+                    Button(String(localized: "menu.file.organizations.rename", defaultValue: "Rename Organization…")) {
                         let alert = NSAlert()
-                        alert.messageText = String(localized: "organization.save.title", defaultValue: "Save Organization")
-                        alert.informativeText = String(localized: "organization.save.message", defaultValue: "Enter a name for this organization. All current workspaces will be saved.")
+                        alert.messageText = String(localized: "organization.rename.title", defaultValue: "Rename Organization")
+                        alert.informativeText = String(localized: "organization.rename.message", defaultValue: "Enter a new name for this organization.")
                         alert.addButton(withTitle: String(localized: "organization.name.save", defaultValue: "Save"))
                         alert.addButton(withTitle: String(localized: "organization.name.cancel", defaultValue: "Cancel"))
                         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
@@ -624,50 +662,24 @@ struct cmuxApp: App {
                         guard alert.runModal() == .alertFirstButtonReturn else { return }
                         let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !newName.isEmpty else { return }
-                        activeTabManager.saveCurrentAsOrganization(name: newName)
+                        activeTabManager.organizationName = newName
                     }
 
+                    Divider()
+
                     Button(String(localized: "menu.file.organizations.exportCurrent", defaultValue: "Export Organization…")) {
-                        let name = activeTabManager.organizationName ?? "Organization"
+                        let name = activeTabManager.organizationName ?? String(localized: "organization.defaultName", defaultValue: "Organization")
                         let snapshot = activeTabManager.sessionSnapshot(includeScrollback: true)
                         WorkspaceOrganizationStore.exportOrganization(snapshot, name: name)
                     }
 
                     Button(String(localized: "menu.file.organizations.import", defaultValue: "Import Organization…")) {
                         if let org = WorkspaceOrganizationStore.importWorkspace() {
-                            activeTabManager.switchToOrganization(org)
+                            AppDelegate.shared?.openOrganizationInNewWindow(org)
                         }
                     }
 
                     if !orgs.isEmpty {
-                        Divider()
-
-                        let recentOrgs = Array(orgs.prefix(5))
-                        ForEach(Array(recentOrgs.enumerated()), id: \.element.id) { index, org in
-                            Button {
-                                activeTabManager.switchToOrganization(org)
-                            } label: {
-                                HStack {
-                                    Text(org.name)
-                                    if activeTabManager.organizationName == org.name {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.control])
-                        }
-
-                        if orgs.count > 5 {
-                            Menu(String(localized: "menu.file.organizations.more", defaultValue: "More…")) {
-                                ForEach(orgs.dropFirst(5), id: \.id) { org in
-                                    Button(org.name) {
-                                        activeTabManager.switchToOrganization(org)
-                                    }
-                                }
-                            }
-                        }
-
                         Divider()
 
                         Menu(String(localized: "menu.file.organizations.remove", defaultValue: "Remove…")) {
@@ -684,7 +696,7 @@ struct cmuxApp: App {
                 }
             }
 
-            // Close tab/workspace
+            // Navigation and close commands
             CommandGroup(after: .newItem) {
                 Button(String(localized: "menu.file.goToWorkspace", defaultValue: "Go to Workspace…")) {
                     let targetWindow = NSApp.keyWindow ?? NSApp.mainWindow
@@ -698,6 +710,11 @@ struct cmuxApp: App {
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
 
+                Button(String(localized: "menu.file.reopenClosedPanel", defaultValue: "Reopen Closed Panel")) {
+                    _ = activeTabManager.reopenMostRecentlyClosedPanel()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+
                 Divider()
 
                 // Terminal semantics:
@@ -710,26 +727,11 @@ struct cmuxApp: App {
                 }
                 .keyboardShortcut("w", modifiers: .command)
 
-                Button(String(localized: "menu.file.closeOtherTabs", defaultValue: "Close Other Tabs in Pane")) {
-                    closeOtherTabsInFocusedPane()
-                }
-                .keyboardShortcut("t", modifiers: [.command, .option])
-                .disabled(!activeTabManager.canCloseOtherTabsInFocusedPane())
-
                 // Cmd+Shift+W closes the current workspace (with confirmation if needed). If this
                 // is the last workspace, it closes the window.
                 splitCommandButton(title: String(localized: "menu.file.closeWorkspace", defaultValue: "Close Workspace"), shortcut: closeWorkspaceMenuShortcut) {
                     closeTabOrWindow()
                 }
-
-                Menu(String(localized: "commandPalette.switcher.workspaceLabel", defaultValue: "Workspace")) {
-                    workspaceCommandMenuContent(manager: activeTabManager)
-                }
-
-                Button(String(localized: "menu.file.reopenClosedPanel", defaultValue: "Reopen Closed Panel")) {
-                    _ = activeTabManager.reopenMostRecentlyClosedPanel()
-                }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
             }
 
             // Find

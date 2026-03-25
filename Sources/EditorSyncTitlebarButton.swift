@@ -200,6 +200,7 @@ struct WorkspaceTabBarLeadingButtons: View {
                 config: config,
                 launch: { launchAgent(.claudeCode) }
             )
+            BrowserLinkToggleTitlebarButton(config: config)
             EditorSyncTitlebarButton(config: config)
         }
     }
@@ -485,6 +486,50 @@ struct EditorSyncTitlebarButton: View {
         return Image(systemName: symbolName)
             .font(.system(size: 12))
             .foregroundStyle(.primary)
+    }
+}
+
+// MARK: - Browser Link Toggle Titlebar Button
+
+/// Titlebar button to toggle opening links in cmux's built-in browser vs external browser.
+/// Left-click toggles the setting. Right-click shows a context menu with the toggle.
+struct BrowserLinkToggleTitlebarButton: View {
+    let config: TitlebarControlsStyleConfig?
+
+    @AppStorage(BrowserLinkOpenSettings.openTerminalLinksInCmuxBrowserKey)
+    private var openLinksInternally = BrowserLinkOpenSettings.defaultOpenTerminalLinksInCmuxBrowser
+
+    private var iconSize: CGFloat { config?.iconSize ?? 12 }
+    private var buttonSize: CGFloat? { config?.buttonSize }
+
+    var body: some View {
+        let button = Button {
+            openLinksInternally.toggle()
+        } label: {
+            Image(systemName: openLinksInternally ? "globe.badge.chevron.backward" : "arrow.up.right.square")
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(openLinksInternally ? AnyShapeStyle(cmuxAccentColor()) : AnyShapeStyle(.primary))
+                .frame(width: buttonSize, height: buttonSize)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .contextMenu {
+            BrowserLinkToggleContextMenu()
+        }
+        .accessibilityIdentifier("titlebarControl.browserLinkToggle")
+        .accessibilityLabel(
+            String(localized: "browserLinkToggle.accessibility", defaultValue: "Browser Link Mode")
+        )
+        .help(openLinksInternally
+            ? String(localized: "browserLinkToggle.help.internal", defaultValue: "Links open in cmux browser (click to use external)")
+            : String(localized: "browserLinkToggle.help.external", defaultValue: "Links open in external browser (click to use cmux)")
+        )
+
+        if let buttonSize {
+            button.frame(width: buttonSize, height: buttonSize)
+        } else {
+            button
+        }
     }
 }
 

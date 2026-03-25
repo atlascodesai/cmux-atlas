@@ -382,7 +382,18 @@ jobs:
             if [ -f "$HELPER_PATH" ]; then
               /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$HELPER_PATH"
             fi
-            /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" --deep "$APP_PATH"
+            # Sign Sparkle XPC services/helpers WITHOUT app entitlements to avoid error 4005
+            SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+            if [ -d "$SPARKLE_FW" ]; then
+              for xpc in "$SPARKLE_FW/Versions/B/XPCServices/"*.xpc; do
+                [ -d "$xpc" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$xpc"
+              done
+              [ -d "$SPARKLE_FW/Versions/B/Updater.app" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW/Versions/B/Updater.app"
+              [ -f "$SPARKLE_FW/Versions/B/Autoupdate" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW/Versions/B/Autoupdate"
+              /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW"
+            fi
+            # Sign main app last with app entitlements (NO --deep)
+            /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$APP_PATH"
             /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           done
 
