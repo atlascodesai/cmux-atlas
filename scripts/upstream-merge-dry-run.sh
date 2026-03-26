@@ -67,7 +67,6 @@ fi
 git rev-parse --verify "$upstream_ref" >/dev/null
 
 worktree_path="$(mktemp -d "${TMPDIR:-/tmp}/cmux-upstream-merge-check.XXXXXX")"
-branch_name="merge-check-$(date +%s)"
 
 cleanup() {
   if [[ "$keep_worktree" -eq 1 ]]; then
@@ -80,10 +79,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git worktree add -b "$branch_name" "$worktree_path" HEAD >/dev/null
+git worktree add --detach "$worktree_path" HEAD >/dev/null
 
 echo "Merge-check worktree: $worktree_path"
-echo "Merging $upstream_ref into $(git rev-parse --abbrev-ref HEAD) ..."
+echo "Merging $upstream_ref into detached HEAD at $(git rev-parse --short HEAD) ..."
 
 set +e
 merge_output="$(git -C "$worktree_path" merge --no-commit --no-ff "$upstream_ref" 2>&1)"
