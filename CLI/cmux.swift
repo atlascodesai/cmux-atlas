@@ -10351,12 +10351,15 @@ struct CMUXCLI {
                     cwd: parsedInput.cwd,
                     pid: claudePid
                 )
+                var activeArgs = "claude_code \(sessionId) --tab=\(workspaceId) --surface=\(surfaceId)"
+                if let cwd = parsedInput.cwd, !cwd.isEmpty {
+                    activeArgs += " --cwd=\(cwd) --project=\(cwd)"
+                }
+                if let claudePid {
+                    activeArgs += " --pid=\(claudePid)"
+                }
+                _ = try? sendV1Command("set_active_ai_session \(activeArgs)", client: client)
             }
-            // Clear any lingering resume banner from a previous session in this tab.
-            _ = try? sendV1Command(
-                "clear_session_resume --tab=\(workspaceId) --surface=\(surfaceId)",
-                client: client
-            )
             // Register PID for stale-session detection and OSC suppression,
             // but don't set a visible status. "Running" only appears when the
             // user submits a prompt (UserPromptSubmit) or Claude starts working
@@ -10502,14 +10505,20 @@ struct CMUXCLI {
                 let record = try? sessionStore.lookup(sessionId: sessionId)
                 let resolvedWorkspace = record?.workspaceId ?? fallbackWorkspaceId
                 let resolvedSurface = record?.surfaceId ?? fallbackSurfaceId
+                let resumeCWD = parsedInput.cwd ?? record?.cwd
                 var resumeArgs = "\(sessionId) --tab=\(resolvedWorkspace)"
                 if let surface = resolvedSurface, !surface.isEmpty {
                     resumeArgs += " --surface=\(surface)"
                 }
-                if let cwd = parsedInput.cwd, !cwd.isEmpty {
-                    resumeArgs += " --cwd=\(cwd)"
+                if let cwd = resumeCWD, !cwd.isEmpty {
+                    resumeArgs += " --cwd=\(cwd) --project=\(cwd)"
                 }
-                _ = try? sendV1Command("show_session_resume \(resumeArgs)", client: client)
+                _ = try? sendV1Command("prefill_session_resume \(resumeArgs)", client: client)
+                var clearActiveArgs = "claude_code --tab=\(resolvedWorkspace)"
+                if let surface = resolvedSurface, !surface.isEmpty {
+                    clearActiveArgs += " --surface=\(surface)"
+                }
+                _ = try? sendV1Command("clear_active_ai_session \(clearActiveArgs)", client: client)
             }
 
             let consumedSession = try? sessionStore.consume(
@@ -10639,11 +10648,23 @@ struct CMUXCLI {
                 permissionMode: parsedInput.permissionMode,
                 source: parsedInput.source
             )
-            // Clear any lingering resume banner from a previous session.
-            _ = try? sendV1Command(
-                "clear_session_resume --tab=\(workspaceId) --surface=\(surfaceId)",
-                client: client
-            )
+            let codexPid: Int? = {
+                guard let raw = ProcessInfo.processInfo.environment["CMUX_CODEX_PID"]?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    let pid = Int(raw),
+                    pid > 0 else {
+                    return nil
+                }
+                return pid
+            }()
+            var activeArgs = "codex \(sessionId) --tab=\(workspaceId) --surface=\(surfaceId)"
+            if let cwd = parsedInput.cwd, !cwd.isEmpty {
+                activeArgs += " --cwd=\(cwd) --project=\(cwd)"
+            }
+            if let codexPid {
+                activeArgs += " --pid=\(codexPid)"
+            }
+            _ = try? sendV1Command("set_active_ai_session \(activeArgs)", client: client)
             print("{\"continue\":true}")
 
         case "stop", "idle":
@@ -10668,12 +10689,6 @@ struct CMUXCLI {
                 permissionMode: parsedInput.permissionMode ?? existingRecord?.permissionMode,
                 source: parsedInput.source ?? existingRecord?.source
             )
-            // Show resume banner so the user can resume the codex session from this tab.
-            var resumeArgs = "\(sessionId) --tab=\(workspaceId) --surface=\(resolvedSurfaceId) --agent=codex"
-            if let cwd = parsedInput.cwd ?? existingRecord?.cwd, !cwd.isEmpty {
-                resumeArgs += " --cwd=\(cwd)"
-            }
-            _ = try? sendV1Command("show_session_resume \(resumeArgs)", client: client)
             print("{\"continue\":true}")
 
         case "help", "--help", "-h":

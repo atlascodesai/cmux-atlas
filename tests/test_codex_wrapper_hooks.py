@@ -28,7 +28,7 @@ def read_lines(path: Path) -> list[str]:
     return [line.rstrip("\n") for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def run_wrapper(*, socket_state: str, argv: list[str]) -> tuple[int, list[str], list[str], str]:
+def run_wrapper(*, socket_state: str, argv: list[str]) -> tuple[int, list[str], list[str], str, str]:
     with tempfile.TemporaryDirectory(prefix="cmux-codex-wrapper-test-") as td:
         tmp = Path(td)
         wrapper_dir = tmp / "wrapper-bin"
@@ -41,6 +41,7 @@ def run_wrapper(*, socket_state: str, argv: list[str]) -> tuple[int, list[str], 
         wrapper.chmod(0o755)
 
         real_args_log = tmp / "real-args.log"
+        real_pid_log = tmp / "real-pid.log"
         cmux_log = tmp / "cmux.log"
         socket_path = str(tmp / "cmux.sock")
         fake_real_codex = real_dir / "codex"
@@ -53,6 +54,7 @@ set -euo pipefail
 for arg in "$@"; do
   printf '%s\\n' "$arg" >> "$FAKE_REAL_ARGS_LOG"
 done
+printf '%s\\n' "${CMUX_CODEX_PID-}" > "$FAKE_REAL_PID_LOG"
 """,
         )
 
@@ -85,6 +87,7 @@ exit 0
         env["CMUX_SOCKET_PATH"] = socket_path
         env["CMUX_CODEX_REAL_BIN"] = str(fake_real_codex)
         env["FAKE_REAL_ARGS_LOG"] = str(real_args_log)
+        env["FAKE_REAL_PID_LOG"] = str(real_pid_log)
         env["FAKE_CMUX_LOG"] = str(cmux_log)
         env["FAKE_CMUX_PING_OK"] = "1" if socket_state == "live" else "0"
 
@@ -101,7 +104,8 @@ exit 0
             if test_socket is not None:
                 test_socket.close()
 
-        return proc.returncode, read_lines(real_args_log), read_lines(cmux_log), proc.stderr.strip()
+        pid_value = real_pid_log.read_text(encoding="utf-8").strip() if real_pid_log.exists() else ""
+        return proc.returncode, read_lines(real_args_log), read_lines(cmux_log), proc.stderr.strip(), pid_value
 
 
 def expect(condition: bool, message: str, failures: list[str]) -> None:
@@ -110,7 +114,7 @@ def expect(condition: bool, message: str, failures: list[str]) -> None:
 
 
 def test_live_socket_injects_supported_hooks(failures: list[str]) -> None:
-    code, real_argv, cmux_log, stderr = run_wrapper(socket_state="live", argv=["chat"])
+    code, real_argv, cmux_log, stderr, pid_value = run_wrapper(socket_state="live", argv=["chat"])
     expect(code == 0, f"live socket: wrapper exited {code}: {stderr}", failures)
     expect("--enable" in real_argv, f"live socket: missing --enable in args: {real_argv}", failures)
     expect("codex_hooks" in real_argv, f"live socket: missing codex_hooks in args: {real_argv}", failures)
@@ -131,24 +135,25 @@ def test_live_socket_injects_supported_hooks(failures: list[str]) -> None:
         f"live socket: expected bounded ping timeout, got {cmux_log}",
         failures,
     )
+    expect(pid_value.isdigit(), f"live socket: expected CMUX_CODEX_PID env, got {pid_value!r}", failures)
 
 
 def test_review_subcommand_skips_hook_injection(failures: list[str]) -> None:
-    code, real_argv, cmux_log, stderr = run_wrapper(socket_state="live", argv=["review", "--help"])
+    code, real_argv, cmux_log, stderr, _ = run_wrapper(socket_state="live", argv=["review", "--help"])
     expect(code == 0, f"review passthrough: wrapper exited {code}: {stderr}", failures)
     expect(real_argv == ["review", "--help"], f"review passthrough: expected passthrough args, got {real_argv}", failures)
     expect(any(" ping" in line for line in cmux_log), f"review passthrough: expected cmux ping, got {cmux_log}", failures)
 
 
 def test_missing_socket_skips_hook_injection(failures: list[str]) -> None:
-    code, real_argv, cmux_log, stderr = run_wrapper(socket_state="missing", argv=["chat"])
+    code, real_argv, cmux_log, stderr, _ = run_wrapper(socket_state="missing", argv=["chat"])
     expect(code == 0, f"missing socket: wrapper exited {code}: {stderr}", failures)
     expect(real_argv == ["chat"], f"missing socket: expected passthrough args, got {real_argv}", failures)
     expect(cmux_log == [], f"missing socket: expected no cmux calls, got {cmux_log}", failures)
 
 
 def test_stale_socket_skips_hook_injection(failures: list[str]) -> None:
-    code, real_argv, cmux_log, stderr = run_wrapper(socket_state="stale", argv=["chat"])
+    code, real_argv, cmux_log, stderr, _ = run_wrapper(socket_state="stale", argv=["chat"])
     expect(code == 0, f"stale socket: wrapper exited {code}: {stderr}", failures)
     expect(real_argv == ["chat"], f"stale socket: expected passthrough args, got {real_argv}", failures)
     expect(any(" ping" in line for line in cmux_log), f"stale socket: expected cmux ping probe, got {cmux_log}", failures)

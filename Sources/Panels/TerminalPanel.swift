@@ -186,6 +186,24 @@ final class TerminalPanel: Panel, ObservableObject {
         surface.sendCommand(command)
     }
 
+    func prefillResumeAction(_ snapshot: RestoredTerminalActionSnapshot) {
+        let permissiveModeEnabled: Bool
+        switch snapshot.agentType {
+        case .claudeCode:
+            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
+        case .codex:
+            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
+        }
+        guard let command = snapshot.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) else { return }
+        sendText(command)
+    }
+
+#if DEBUG
+    func queuedTextForTesting() -> String {
+        surface.queuedTextForTesting()
+    }
+#endif
+
     func performBindingAction(_ action: String) -> Bool {
         surface.performBindingAction(action)
     }

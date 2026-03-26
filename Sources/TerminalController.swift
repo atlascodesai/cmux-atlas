@@ -1716,6 +1716,15 @@ class TerminalController {
         case "clear_agent_pid":
             return clearAgentPID(args)
 
+        case "set_active_ai_session":
+            return setActiveAISession(args)
+
+        case "clear_active_ai_session":
+            return clearActiveAISession(args)
+
+        case "prefill_session_resume":
+            return prefillSessionResume(args)
+
         case "show_session_resume":
             return showSessionResume(args)
 
@@ -10835,8 +10844,11 @@ class TerminalController {
           list_log [--limit=N] [--tab=X] - List log entries
           set_progress <0.0-1.0> [--label=X] [--tab=X] - Set progress bar
           clear_progress [--tab=X] - Clear progress bar
-          show_session_resume <session_id> [--tab=X] [--surface=Y] [--agent=claude_code|codex] [--cwd=<path>] - Show AI session resume banner
-          clear_session_resume [--tab=X] [--surface=Y] - Clear AI session resume banner
+          set_active_ai_session <agent> [session_id] [--tab=X] [--surface=Y] [--pid=N] [--cwd=<path>] [--project=<path>] - Track a live AI session on a terminal panel
+          clear_active_ai_session <agent> [--tab=X] [--surface=Y] - Clear tracked live AI session for a terminal panel
+          prefill_session_resume <session_id> [--tab=X] [--surface=Y] [--agent=claude_code|codex] [--cwd=<path>] [--project=<path>] - Prefill terminal with AI session resume command
+          show_session_resume <session_id> [--tab=X] [--surface=Y] [--agent=claude_code|codex] [--cwd=<path>] - Alias for prefill_session_resume
+          clear_session_resume [--tab=X] [--surface=Y] - No-op compatibility alias
           report_git_branch <branch> [--status=dirty] [--tab=X] [--panel=Y] - Report git branch
           clear_git_branch [--tab=X] [--panel=Y] - Clear git branch
           report_pr <number> <url> [--label=PR] [--state=open|merged|closed] [--branch=<name>] [--checks=pass|fail|pending] [--tab=X] [--panel=Y] - Report pull request / review item
@@ -13991,6 +14003,18 @@ class TerminalController {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private func parseAIAgentType(_ raw: String?) -> AIAgentType? {
+        guard let raw = normalizedOptionValue(raw)?.lowercased() else { return nil }
+        switch raw {
+        case "claude", "claude_code", "claudecode":
+            return .claudeCode
+        case "codex":
+            return .codex
+        default:
+            return nil
+        }
+    }
+
     private func schedulePanelMetadataMutation(
         args: String,
         options: [String: String],
@@ -14170,20 +14194,74 @@ class TerminalController {
         return "OK"
     }
 
-    /// Show a session resume banner for a terminal panel.
-    /// Usage: show_session_resume <session_id> [--tab=<id>] [--surface=<id>] [--agent=claude_code|codex] [--cwd=<path>] [--project=<path>]
-    private func showSessionResume(_ args: String) -> String {
+    /// Track a live AI session for a terminal panel.
+    /// Usage: set_active_ai_session <agent> [session_id] [--tab=<id>] [--surface=<id>] [--pid=<pid>] [--cwd=<path>] [--project=<path>]
+    private func setActiveAISession(_ args: String) -> String {
         let parsed = parseOptions(args)
-        guard let sessionId = parsed.positional.first, !sessionId.isEmpty else {
-            return "ERROR: Usage: show_session_resume <session_id> [--tab=<id>] [--surface=<id>] [--agent=claude_code|codex] [--cwd=<path>]"
+        guard let agentType = parseAIAgentType(parsed.positional.first) else {
+            return "ERROR: Usage: set_active_ai_session <agent> [session_id] [--tab=<id>] [--surface=<id>] [--pid=<pid>] [--cwd=<path>] [--project=<path>]"
         }
 
-        let agentType: AIAgentType
-        switch parsed.options["agent"]?.lowercased() {
-        case "codex":
-            agentType = .codex
-        default:
-            agentType = .claudeCode
+        let pidValue: pid_t? = {
+            guard let rawPid = normalizedOptionValue(parsed.options["pid"]),
+                  let pid = Int32(rawPid),
+                  pid > 0 else {
+                return nil
+            }
+            return pid
+        }()
+
+        let sessionId = parsed.positional.count > 1 ? normalizedOptionValue(parsed.positional[1]) : nil
+        let cwd = normalizedOptionValue(parsed.options["cwd"])
+        let projectPath = normalizedOptionValue(parsed.options["project"]) ?? cwd
+
+        return schedulePanelMetadataMutation(
+            args: args,
+            options: parsed.options,
+            missingPanelUsage: "set_active_ai_session <agent> [session_id] [--tab=<id>] [--surface=<id>]"
+        ) { tab, panelId in
+            let existing = tab.activeAISession(panelId: panelId, agentType: agentType)
+            tab.registerActiveAISession(
+                panelId: panelId,
+                snapshot: ActiveAISessionSnapshot(
+                    agentType: agentType,
+                    sessionId: sessionId ?? existing?.sessionId,
+                    workingDirectory: cwd ?? existing?.workingDirectory,
+                    projectPath: projectPath ?? existing?.projectPath,
+                    pid: pidValue ?? existing?.pid,
+                    lastUpdatedAt: Date().timeIntervalSince1970
+                )
+            )
+        }
+    }
+
+    /// Clear a tracked live AI session for a terminal panel.
+    /// Usage: clear_active_ai_session <agent> [--tab=<id>] [--surface=<id>]
+    private func clearActiveAISession(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        guard let agentType = parseAIAgentType(parsed.positional.first) else {
+            return "ERROR: Usage: clear_active_ai_session <agent> [--tab=<id>] [--surface=<id>]"
+        }
+
+        return schedulePanelMetadataMutation(
+            args: args,
+            options: parsed.options,
+            missingPanelUsage: "clear_active_ai_session <agent> [--tab=<id>] [--surface=<id>]"
+        ) { tab, panelId in
+            tab.clearActiveAISession(panelId: panelId, agentType: agentType)
+        }
+    }
+
+    /// Prefill a terminal panel with an AI resume command.
+    /// Usage: prefill_session_resume <session_id> [--tab=<id>] [--surface=<id>] [--agent=claude_code|codex] [--cwd=<path>] [--project=<path>]
+    private func prefillSessionResume(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        guard let sessionId = parsed.positional.first, !sessionId.isEmpty else {
+            return "ERROR: Usage: prefill_session_resume <session_id> [--tab=<id>] [--surface=<id>] [--agent=claude_code|codex] [--cwd=<path>]"
+        }
+
+        guard let agentType = parseAIAgentType(parsed.options["agent"] ?? "claude_code") else {
+            return "ERROR: Invalid agent '\(parsed.options["agent"] ?? "")'"
         }
 
         let cwd = parsed.options["cwd"]
@@ -14205,29 +14283,26 @@ class TerminalController {
         let surfaceIdStr = parsed.options["surface"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let surfaceId = surfaceIdStr.flatMap { UUID(uuidString: $0) }
 
-        let permissiveModeEnabled: Bool
-        switch agentType {
-        case .claudeCode:
-            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
-        case .codex:
-            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
-        }
-
         DispatchQueue.main.async { [weak self] in
             guard let self, let tab = self.tabForSidebarMutation(id: targetTabId) else { return }
             let panelId = surfaceId ?? tab.focusedPanelId
             guard let panelId, let terminalPanel = tab.panels[panelId] as? TerminalPanel else { return }
-            if let command = snapshot.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) {
-                terminalPanel.sendText(command)
-            }
+            terminalPanel.prefillResumeAction(snapshot)
         }
         return "OK"
+    }
+
+    /// Alias for backwards compatibility with older hook integrations.
+    /// Usage: show_session_resume <session_id> [--tab=<id>] [--surface=<id>] [--agent=claude_code|codex] [--cwd=<path>] [--project=<path>]
+    private func showSessionResume(_ args: String) -> String {
+        prefillSessionResume(args)
     }
 
     /// Clear the session resume (no-op, kept for CLI compatibility).
     /// Usage: clear_session_resume [--tab=<id>] [--surface=<id>]
     private func clearSessionResume(_ args: String) -> String {
-        // No-op: resume is now pre-populated text, not a banner.
+        _ = args
+        // No-op: resume is now an explicit prefill command, not persisted banner state.
         // Kept for backwards compatibility with existing CLI integrations.
         return "OK"
     }

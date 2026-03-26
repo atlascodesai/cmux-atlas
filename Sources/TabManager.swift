@@ -1672,14 +1672,14 @@ class TabManager: ObservableObject {
         agentPIDSweepTimer?.cancel()
     }
 
-    // MARK: - Agent PID Sweep
+    // MARK: - Agent Process Sweep
 
-    /// Periodically checks agent PIDs associated with status entries.
-    /// If a process has exited (SIGKILL, crash, etc.), clears the stale status entry.
-    /// This is the safety net for cases where no hook fires (e.g. SIGKILL).
+    /// Periodically checks tracked agent processes.
+    /// Stale status PIDs are cleared, and live AI sessions can prefill a resume
+    /// command when their backing process exits without a dedicated hook.
     private func startAgentPIDSweepTimer() {
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now() + 30, repeating: 30)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             DispatchQueue.main.async { [weak self] in
@@ -1692,21 +1692,38 @@ class TabManager: ObservableObject {
     }
 
     private func sweepStaleAgentPIDs() {
+        func isProcessAlive(_ pid: pid_t) -> Bool {
+            guard pid > 0 else { return false }
+            // kill(pid, 0) probes process liveness without sending a signal.
+            // ESRCH = process doesn't exist (stale). EPERM = process exists
+            // but we lack permission (not stale, keep tracking).
+            errno = 0
+            if kill(pid, 0) == -1, POSIXErrorCode(rawValue: errno) == .ESRCH {
+                return false
+            }
+            return true
+        }
+
         for tab in tabs {
             var keysToRemove: [String] = []
             for (key, pid) in tab.agentPIDs {
-                guard pid > 0 else {
-                    keysToRemove.append(key)
-                    continue
-                }
-                // kill(pid, 0) probes process liveness without sending a signal.
-                // ESRCH = process doesn't exist (stale). EPERM = process exists
-                // but we lack permission (not stale, keep tracking).
-                errno = 0
-                if kill(pid, 0) == -1, POSIXErrorCode(rawValue: errno) == .ESRCH {
+                if !isProcessAlive(pid) {
                     keysToRemove.append(key)
                 }
             }
+
+            let deadActiveSessions = tab.activeAISessions.compactMap { panelId, snapshot -> (UUID, ActiveAISessionSnapshot)? in
+                guard let pid = snapshot.pid else { return nil }
+                return isProcessAlive(pid) ? nil : (panelId, snapshot)
+            }
+
+            for (panelId, snapshot) in deadActiveSessions {
+                if let terminalPanel = tab.terminalPanel(for: panelId) {
+                    terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
+                }
+                tab.clearActiveAISession(panelId: panelId, agentType: snapshot.agentType)
+            }
+
             if !keysToRemove.isEmpty {
                 for key in keysToRemove {
                     tab.statusEntries.removeValue(forKey: key)
@@ -1718,6 +1735,13 @@ class TabManager: ObservableObject {
             }
         }
     }
+
+#if DEBUG
+    @MainActor
+    func sweepAgentProcessesForTesting() {
+        sweepStaleAgentPIDs()
+    }
+#endif
 
     private func gitProbeDirectory(for workspace: Workspace, panelId: UUID) -> String? {
         let rawDirectory = workspace.panelDirectories[panelId]
@@ -4607,16 +4631,7 @@ class TabManager: ObservableObject {
             return false
         }
 
-        let permissiveModeEnabled: Bool
-        switch snapshot.restoredTerminalAction.agentType {
-        case .claudeCode:
-            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
-        case .codex:
-            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
-        }
-        if let command = snapshot.restoredTerminalAction.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) {
-            terminalPanel.sendCommand(command)
-        }
+        terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
 
         return true
     }

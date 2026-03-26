@@ -97,6 +97,25 @@ struct SidebarMetadataBlock {
     let timestamp: Date
 }
 
+struct ActiveAISessionSnapshot: Sendable, Equatable {
+    var agentType: AIAgentType
+    var sessionId: String?
+    var workingDirectory: String?
+    var projectPath: String?
+    var pid: pid_t?
+    var lastUpdatedAt: TimeInterval
+
+    var restoredTerminalAction: RestoredTerminalActionSnapshot {
+        RestoredTerminalActionSnapshot(
+            agentType: agentType,
+            sessionId: sessionId,
+            workingDirectory: workingDirectory,
+            projectPath: projectPath,
+            lastSeenActive: lastUpdatedAt
+        )
+    }
+}
+
 enum SidebarMetadataFormat: String {
     case plain
     case markdown
@@ -283,6 +302,7 @@ extension Workspace {
         // restarts because the processes that set them are gone.
         statusEntries.removeAll()
         agentPIDs.removeAll()
+        activeAISessions.removeAll()
         logEntries = snapshot.logEntries.map { entry in
             SidebarLogEntry(
                 message: entry.message,
@@ -609,16 +629,7 @@ extension Workspace {
                 restoredTerminalScrollbackByPanelId.removeValue(forKey: terminalPanel.id)
             }
             if let restoredTerminalAction = snapshot.restoredTerminalAction {
-                let permissiveModeEnabled: Bool
-                switch restoredTerminalAction.agentType {
-                case .claudeCode:
-                    permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
-                case .codex:
-                    permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
-                }
-                if let command = restoredTerminalAction.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) {
-                    terminalPanel.sendText(command)
-                }
+                terminalPanel.prefillResumeAction(restoredTerminalAction)
             }
             applySessionPanelMetadata(snapshot, toPanelId: terminalPanel.id)
             return terminalPanel.id
@@ -5304,6 +5315,7 @@ final class Workspace: Identifiable, ObservableObject {
     /// PIDs associated with agent status entries (e.g. claude_code), keyed by status key.
     /// Used for stale-session detection: if the PID is dead, the status entry is cleared.
     var agentPIDs: [String: pid_t] = [:]
+    @Published private(set) var activeAISessions: [UUID: ActiveAISessionSnapshot] = [:]
     @Published private(set) var cachedAISessions: [UUID: AISessionSnapshot] = [:]
     private var aiSessionRefreshGenerationByPanel: [UUID: UUID] = [:]
     private let aiSessionRefreshQueue = DispatchQueue(
@@ -6250,6 +6262,7 @@ final class Workspace: Identifiable, ObservableObject {
     func resetSidebarContext(reason: String = "unspecified") {
         statusEntries.removeAll()
         agentPIDs.removeAll()
+        activeAISessions.removeAll()
         logEntries.removeAll()
         progress = nil
         gitBranch = nil
@@ -6349,6 +6362,7 @@ final class Workspace: Identifiable, ObservableObject {
         surfaceTTYNames = surfaceTTYNames.filter { validSurfaceIds.contains($0.key) }
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
         panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
+        activeAISessions = activeAISessions.filter { validSurfaceIds.contains($0.key) }
         cachedAISessions = cachedAISessions.filter { validSurfaceIds.contains($0.key) }
         aiSessionRefreshGenerationByPanel = aiSessionRefreshGenerationByPanel.filter { validSurfaceIds.contains($0.key) }
         recomputeListeningPorts()
@@ -6435,6 +6449,31 @@ final class Workspace: Identifiable, ObservableObject {
         } else {
             cachedAISessions.removeValue(forKey: panelId)
         }
+    }
+
+    func registerActiveAISession(panelId: UUID, snapshot: ActiveAISessionSnapshot) {
+        guard panels[panelId]?.panelType == .terminal else { return }
+        activeAISessions[panelId] = snapshot
+    }
+
+    func clearActiveAISession(panelId: UUID, agentType: AIAgentType? = nil) {
+        guard let current = activeAISessions[panelId] else { return }
+        if let agentType, current.agentType != agentType {
+            return
+        }
+        activeAISessions.removeValue(forKey: panelId)
+    }
+
+    func activeAISession(panelId: UUID, agentType: AIAgentType? = nil) -> ActiveAISessionSnapshot? {
+        guard let snapshot = activeAISessions[panelId] else { return nil }
+        if let agentType, snapshot.agentType != agentType {
+            return nil
+        }
+        return snapshot
+    }
+
+    func hasActiveAISession(for agentType: AIAgentType) -> Bool {
+        activeAISessions.values.contains(where: { $0.agentType == agentType })
     }
 
     func recomputeListeningPorts() {
@@ -10061,6 +10100,7 @@ extension Workspace: BonsplitDelegate {
         panelPullRequests.removeValue(forKey: panelId)
         panelTitles.removeValue(forKey: panelId)
         panelCustomTitles.removeValue(forKey: panelId)
+        activeAISessions.removeValue(forKey: panelId)
         pinnedPanelIds.remove(panelId)
         manualUnreadPanelIds.remove(panelId)
         manualUnreadMarkedAt.removeValue(forKey: panelId)

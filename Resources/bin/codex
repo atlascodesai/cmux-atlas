@@ -48,6 +48,8 @@ if [[ "$IN_CMUX" == "0" || "${CMUX_CODEX_HOOKS_DISABLED:-0}" == "1" ]] || ! cmux
     exec "$REAL_CODEX" "$@"
 fi
 
+export CMUX_CODEX_PID=$$
+
 case "${1:-}" in
     exec|review|login|logout|mcp|mcp-server|app-server|app|completion|sandbox|debug|apply|cloud|features|help|-h|--help|-V|--version)
         exec "$REAL_CODEX" "$@"

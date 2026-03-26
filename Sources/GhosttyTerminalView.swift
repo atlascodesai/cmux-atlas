@@ -2221,7 +2221,7 @@ class GhosttyApp {
                     // raw OSC notifications would duplicate or outlive the structured hooks.
                     let owningManager = AppDelegate.shared?.tabManagerFor(tabId: tabId) ?? tabManager
                     if let workspace = owningManager.tabs.first(where: { $0.id == tabId }),
-                       workspace.agentPIDs["claude_code"] != nil {
+                       workspace.hasActiveAISession(for: .claudeCode) {
                         return true
                     }
                     let tabTitle = owningManager.titleForTab(tabId) ?? "Terminal"
@@ -2502,7 +2502,7 @@ class GhosttyApp {
                 // Suppress OSC notifications for workspaces with active Claude hook sessions.
                 let owningManager = AppDelegate.shared?.tabManagerFor(tabId: tabId) ?? AppDelegate.shared?.tabManager
                 if let workspace = owningManager?.tabs.first(where: { $0.id == tabId }),
-                   workspace.agentPIDs["claude_code"] != nil {
+                   workspace.hasActiveAISession(for: .claudeCode) {
                     return
                 }
                 let tabTitle = owningManager?.titleForTab(tabId) ?? "Terminal"
@@ -3969,6 +3969,12 @@ final class TerminalSurface: Identifiable, ObservableObject {
         sendText(command)
         sendText("\r")
     }
+
+#if DEBUG
+    func queuedTextForTesting() -> String {
+        pendingTextQueue.compactMap { String(data: $0, encoding: .utf8) }.joined()
+    }
+#endif
 
     func requestBackgroundSurfaceStartIfNeeded() {
         if !Thread.isMainThread {

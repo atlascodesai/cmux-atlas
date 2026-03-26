@@ -211,6 +211,38 @@ final class WorkspaceShortcutMapperTests: XCTestCase {
     }
 }
 
+@MainActor
+final class WorkspaceActiveAISessionTests: XCTestCase {
+    func testActiveAISessionLifecycleTracksByPanel() {
+        let workspace = Workspace(title: "AI")
+        guard let panelId = workspace.focusedPanelId else {
+            XCTFail("Expected initial focused terminal panel")
+            return
+        }
+
+        let snapshot = ActiveAISessionSnapshot(
+            agentType: .codex,
+            sessionId: "session-123",
+            workingDirectory: "/tmp/project",
+            projectPath: "/tmp/project",
+            pid: 4242,
+            lastUpdatedAt: 123
+        )
+
+        workspace.registerActiveAISession(panelId: panelId, snapshot: snapshot)
+
+        XCTAssertEqual(workspace.activeAISession(panelId: panelId), snapshot)
+        XCTAssertTrue(workspace.hasActiveAISession(for: .codex))
+
+        workspace.clearActiveAISession(panelId: panelId, agentType: .claudeCode)
+        XCTAssertEqual(workspace.activeAISession(panelId: panelId), snapshot)
+
+        workspace.clearActiveAISession(panelId: panelId, agentType: .codex)
+        XCTAssertNil(workspace.activeAISession(panelId: panelId))
+        XCTAssertFalse(workspace.hasActiveAISession(for: .codex))
+    }
+}
+
 
 final class WorkspacePlacementSettingsTests: XCTestCase {
     func testCurrentPlacementDefaultsToAfterCurrentWhenUnset() {

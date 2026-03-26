@@ -432,7 +432,7 @@ final class TerminalControllerSocketSecurityTests: XCTestCase {
 
     // MARK: - Session Resume Socket Commands
 
-    func testShowSessionResumePrePopulatesTerminalText() async throws {
+    func testPrefillSessionResumePrePopulatesTerminalText() async throws {
         let socketPath = makeSocketPath("show-resume")
         let appDelegate = AppDelegate.shared ?? AppDelegate()
         let manager = appDelegate.tabManager ?? TabManager()
@@ -462,12 +462,12 @@ final class TerminalControllerSocketSecurityTests: XCTestCase {
         try waitForSocket(at: socketPath)
 
         let sessionId = "test-session-\(UUID().uuidString.prefix(8))"
-        let command = "show_session_resume \(sessionId) --tab=\(workspace.id.uuidString) --surface=\(panelId.uuidString) --cwd=/tmp/test-project"
+        let command = "prefill_session_resume \(sessionId) --tab=\(workspace.id.uuidString) --surface=\(panelId.uuidString) --cwd=/tmp/test-project"
         let responses = try sendCommands([command], to: socketPath)
         XCTAssertEqual(responses.first, "OK")
     }
 
-    func testShowSessionResumeWithCodexAgent() async throws {
+    func testShowSessionResumeAliasStillWorksForCodexAgent() async throws {
         let socketPath = makeSocketPath("resume-codex")
         let appDelegate = AppDelegate.shared ?? AppDelegate()
         let manager = appDelegate.tabManager ?? TabManager()
@@ -500,6 +500,41 @@ final class TerminalControllerSocketSecurityTests: XCTestCase {
         let command = "show_session_resume \(sessionId) --tab=\(workspace.id.uuidString) --surface=\(panelId.uuidString) --agent=codex --cwd=/tmp/codex-project"
         let responses = try sendCommands([command], to: socketPath)
         XCTAssertEqual(responses.first, "OK")
+    }
+
+    func testSetAndClearActiveAISessionReturnOK() throws {
+        let socketPath = makeSocketPath("active-ai-session")
+        let appDelegate = AppDelegate.shared ?? AppDelegate()
+        let manager = appDelegate.tabManager ?? TabManager()
+
+        let originalTabManager = appDelegate.tabManager
+        appDelegate.tabManager = manager
+
+        let workspace = manager.addWorkspace(select: true)
+        defer {
+            if manager.tabs.contains(where: { $0.id == workspace.id }) {
+                manager.closeWorkspace(workspace)
+            }
+            appDelegate.tabManager = originalTabManager
+        }
+
+        guard let panelId = workspace.focusedPanelId else {
+            XCTFail("Expected workspace with a focused panel")
+            return
+        }
+
+        TerminalController.shared.start(
+            tabManager: manager,
+            socketPath: socketPath,
+            accessMode: .allowAll
+        )
+        defer { TerminalController.shared.stop() }
+        try waitForSocket(at: socketPath)
+
+        let setCommand = "set_active_ai_session codex session-123 --tab=\(workspace.id.uuidString) --surface=\(panelId.uuidString) --pid=4242 --cwd=/tmp/project"
+        let clearCommand = "clear_active_ai_session codex --tab=\(workspace.id.uuidString) --surface=\(panelId.uuidString)"
+        let responses = try sendCommands([setCommand, clearCommand], to: socketPath)
+        XCTAssertEqual(responses, ["OK", "OK"])
     }
 
     func testClearSessionResumeReturnsOK() throws {
