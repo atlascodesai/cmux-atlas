@@ -302,7 +302,7 @@ extension Workspace {
         // restarts because the processes that set them are gone.
         statusEntries.removeAll()
         agentPIDs.removeAll()
-        activeAISessions.removeAll()
+        atlasAISessionStore.removeAllActiveSessions()
         logEntries = snapshot.logEntries.map { entry in
             SidebarLogEntry(
                 message: entry.message,
@@ -5315,13 +5315,8 @@ final class Workspace: Identifiable, ObservableObject {
     /// PIDs associated with agent status entries (e.g. claude_code), keyed by status key.
     /// Used for stale-session detection: if the PID is dead, the status entry is cleared.
     var agentPIDs: [String: pid_t] = [:]
-    @Published private(set) var activeAISessions: [UUID: ActiveAISessionSnapshot] = [:]
-    @Published private(set) var cachedAISessions: [UUID: AISessionSnapshot] = [:]
-    private var aiSessionRefreshGenerationByPanel: [UUID: UUID] = [:]
-    private let aiSessionRefreshQueue = DispatchQueue(
-        label: "com.cmux.ai-session-refresh",
-        qos: .utility
-    )
+    let atlasAISessionStore = WorkspaceAtlasAISessionStore()
+    private var atlasAISessionStoreObserver: AnyCancellable?
     private var restoredTerminalScrollbackByPanelId: [UUID: String] = [:]
 
     private static func isProxyOnlyRemoteError(_ detail: String) -> Bool {
@@ -5579,10 +5574,14 @@ final class Workspace: Identifiable, ObservableObject {
             bonsplitController.selectTab(initialTabId)
         }
 
+        atlasAISessionStoreObserver = atlasAISessionStore.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         observeMemoryUsage()
     }
 
     deinit {
+        atlasAISessionStoreObserver?.cancel()
         memoryUsageSnapshotCancellable?.cancel()
         memoryUsageDefaultsCancellable?.cancel()
         activeRemoteSessionControllerID = nil
@@ -6262,7 +6261,7 @@ final class Workspace: Identifiable, ObservableObject {
     func resetSidebarContext(reason: String = "unspecified") {
         statusEntries.removeAll()
         agentPIDs.removeAll()
-        activeAISessions.removeAll()
+        atlasAISessionStore.removeAllActiveSessions()
         logEntries.removeAll()
         progress = nil
         gitBranch = nil
@@ -6362,118 +6361,8 @@ final class Workspace: Identifiable, ObservableObject {
         surfaceTTYNames = surfaceTTYNames.filter { validSurfaceIds.contains($0.key) }
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
         panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
-        activeAISessions = activeAISessions.filter { validSurfaceIds.contains($0.key) }
-        cachedAISessions = cachedAISessions.filter { validSurfaceIds.contains($0.key) }
-        aiSessionRefreshGenerationByPanel = aiSessionRefreshGenerationByPanel.filter { validSurfaceIds.contains($0.key) }
+        atlasAISessionStore.prune(validSurfaceIds: validSurfaceIds)
         recomputeListeningPorts()
-    }
-
-    // MARK: - AI Session Cache
-
-    func scheduleAISessionRefreshForTerminalPanels() {
-        let terminalPanelIds = panels.compactMap { panelId, panel in
-            panel.panelType == .terminal ? panelId : nil
-        }
-        for panelId in terminalPanelIds {
-            scheduleAISessionRefresh(panelId: panelId)
-        }
-    }
-
-    func refreshAISessionCacheNowForTerminalPanels() {
-        let terminalPanelIds = panels.compactMap { panelId, panel in
-            panel.panelType == .terminal ? panelId : nil
-        }
-        for panelId in terminalPanelIds {
-            refreshAISessionCacheNow(panelId: panelId)
-        }
-    }
-
-    private func scheduleAISessionRefresh(panelId: UUID, delay: TimeInterval = 0.4) {
-        guard panels[panelId]?.panelType == .terminal else {
-            cachedAISessions.removeValue(forKey: panelId)
-            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
-            return
-        }
-
-        let ttyName = surfaceTTYNames[panelId]
-        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
-        let workspaceId = self.id
-        let generation = UUID()
-        aiSessionRefreshGenerationByPanel[panelId] = generation
-
-        aiSessionRefreshQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            let snapshot = AISessionDetector.detect(
-                ttyName: ttyName,
-                workingDirectory: workingDirectory,
-                workspaceId: workspaceId,
-                panelId: panelId
-            )
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                guard self.aiSessionRefreshGenerationByPanel[panelId] == generation else { return }
-                self.aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
-
-                guard self.panels[panelId]?.panelType == .terminal else {
-                    self.cachedAISessions.removeValue(forKey: panelId)
-                    return
-                }
-
-                if let snapshot {
-                    self.cachedAISessions[panelId] = snapshot
-                } else {
-                    self.cachedAISessions.removeValue(forKey: panelId)
-                }
-            }
-        }
-    }
-
-    private func refreshAISessionCacheNow(panelId: UUID) {
-        guard panels[panelId]?.panelType == .terminal else {
-            cachedAISessions.removeValue(forKey: panelId)
-            aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
-            return
-        }
-
-        aiSessionRefreshGenerationByPanel.removeValue(forKey: panelId)
-        let ttyName = surfaceTTYNames[panelId]
-        let workingDirectory = panelDirectories[panelId] ?? currentDirectory
-        let snapshot = AISessionDetector.detect(
-            ttyName: ttyName,
-            workingDirectory: workingDirectory,
-            workspaceId: self.id,
-            panelId: panelId
-        )
-        if let snapshot {
-            cachedAISessions[panelId] = snapshot
-        } else {
-            cachedAISessions.removeValue(forKey: panelId)
-        }
-    }
-
-    func registerActiveAISession(panelId: UUID, snapshot: ActiveAISessionSnapshot) {
-        guard panels[panelId]?.panelType == .terminal else { return }
-        activeAISessions[panelId] = snapshot
-    }
-
-    func clearActiveAISession(panelId: UUID, agentType: AIAgentType? = nil) {
-        guard let current = activeAISessions[panelId] else { return }
-        if let agentType, current.agentType != agentType {
-            return
-        }
-        activeAISessions.removeValue(forKey: panelId)
-    }
-
-    func activeAISession(panelId: UUID, agentType: AIAgentType? = nil) -> ActiveAISessionSnapshot? {
-        guard let snapshot = activeAISessions[panelId] else { return nil }
-        if let agentType, snapshot.agentType != agentType {
-            return nil
-        }
-        return snapshot
-    }
-
-    func hasActiveAISession(for agentType: AIAgentType) -> Bool {
-        activeAISessions.values.contains(where: { $0.agentType == agentType })
     }
 
     func recomputeListeningPorts() {
@@ -10100,7 +9989,7 @@ extension Workspace: BonsplitDelegate {
         panelPullRequests.removeValue(forKey: panelId)
         panelTitles.removeValue(forKey: panelId)
         panelCustomTitles.removeValue(forKey: panelId)
-        activeAISessions.removeValue(forKey: panelId)
+        atlasAISessionStore.clearActiveSession(panelId: panelId)
         pinnedPanelIds.remove(panelId)
         manualUnreadPanelIds.remove(panelId)
         manualUnreadMarkedAt.removeValue(forKey: panelId)

@@ -9359,7 +9359,8 @@ private struct SidebarMemoryUsageButton: View {
     }
 
     private var footerValueText: String {
-        let bytes = memoryUsageStore.snapshot.appResidentBytes
+        let snapshot = memoryUsageStore.snapshot
+        let bytes = snapshot.appResidentBytes + snapshot.trackedTerminalResidentBytes
         guard bytes > 0 else {
             return String(localized: "memory.footer.loading", defaultValue: "RAM --")
         }

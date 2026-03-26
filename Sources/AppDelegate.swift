@@ -2137,7 +2137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var didAttemptStartupSessionRestore = false
     private var isApplyingStartupSessionRestore = false
     private var sessionAutosaveTimer: DispatchSourceTimer?
-    private var aiSessionCacheRefreshTimer: DispatchSourceTimer?
+    var aiSessionCacheRefreshTimer: DispatchSourceTimer?
     private var sessionAutosaveTickInFlight = false
     private var sessionAutosaveDeferredRetryPending = false
     private let sessionPersistenceQueue = DispatchQueue(
@@ -2155,7 +2155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var lastSessionAutosavePersistedAt: Date = .distantPast
     private var lastTypingActivityAt: TimeInterval = 0
     private var didHandleExplicitOpenIntentAtStartup = false
-    private var isTerminatingApp = false
+    var isTerminatingApp = false
     private var didInstallLifecycleSnapshotObservers = false
     private var didDisableSuddenTermination = false
     private var commandPaletteVisibilityByWindowId: [UUID: Bool] = [:]
@@ -2168,7 +2168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private static let commandPaletteRequestGraceInterval: TimeInterval = 1.25
     private static let commandPalettePendingOpenMaxAge: TimeInterval = 8.0
     private static let sessionAutosaveTypingQuietPeriod: TimeInterval = 0.65
-    private static let aiSessionCacheRefreshInterval: DispatchTimeInterval = .seconds(12)
+    static let aiSessionCacheRefreshInterval: DispatchTimeInterval = .seconds(12)
 
     var updateViewModel: UpdateViewModel {
         updateController.viewModel
@@ -3278,42 +3278,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         aiSessionCacheRefreshTimer = nil
         sessionAutosaveTickInFlight = false
         sessionAutosaveDeferredRetryPending = false
-    }
-
-    private func startAISessionCacheRefreshTimerIfNeeded() {
-        guard aiSessionCacheRefreshTimer == nil else { return }
-
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        let interval = Self.aiSessionCacheRefreshInterval
-        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .seconds(1))
-        timer.setEventHandler { [weak self] in
-            guard let self, !self.isTerminatingApp else { return }
-            self.scheduleAISessionCacheRefreshAcrossAllWorkspaces()
-        }
-        aiSessionCacheRefreshTimer = timer
-        timer.resume()
-    }
-
-    private func scheduleAISessionCacheRefreshAcrossAllWorkspaces() {
-        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
-            lhs.windowId.uuidString < rhs.windowId.uuidString
-        }
-        for context in contexts {
-            for workspace in context.tabManager.tabs {
-                workspace.scheduleAISessionRefreshForTerminalPanels()
-            }
-        }
-    }
-
-    private func refreshAISessionCachesNowAcrossAllWorkspaces() {
-        let contexts = mainWindowContexts.values.sorted { lhs, rhs in
-            lhs.windowId.uuidString < rhs.windowId.uuidString
-        }
-        for context in contexts {
-            for workspace in context.tabManager.tabs {
-                workspace.refreshAISessionCacheNowForTerminalPanels()
-            }
-        }
     }
 
     private func installLifecycleSnapshotObserversIfNeeded() {
@@ -5449,19 +5413,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc func openNewMainWindow(_ sender: Any?) {
         _ = createMainWindow()
-    }
-
-    /// Opens a saved organization in a new window.
-    func openOrganizationInNewWindow(_ org: WorkspaceOrganization) {
-        let snapshot = SessionWindowSnapshot(
-            tabManager: org.tabManagerSnapshot,
-            sidebar: SessionSidebarSnapshot(isVisible: true, selection: .tabs)
-        )
-        let windowId = createMainWindow(sessionWindowSnapshot: snapshot)
-        if let context = mainWindowContexts.values.first(where: { $0.windowId == windowId }) {
-            context.tabManager.organizationName = org.name
-            WorkspaceOrganizationStore.touchLastUsed(org.id)
-        }
     }
 
     @objc func openWindow(

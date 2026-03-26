@@ -1,132 +1,143 @@
 # Upstream Merge Guide
 
-How to merge `upstream/main` (manaflow-ai/cmux) into our fork (atlascodesai/cmux-atlas).
+How to merge `upstream/main` (manaflow-ai/cmux) into our fork (atlascodesai/cmux-atlas) after the Atlas seam refactor.
 
-## Quick Reference
+## Quick Start
+
+Use the dry-run helper first:
+
+```bash
+./scripts/upstream-merge-dry-run.sh --fetch
+```
+
+For the mechanical Atlas policy files during a real merge:
+
+```bash
+./scripts/upstream-merge-apply-atlas-overrides.sh
+```
+
+When the dry run looks reasonable:
 
 ```bash
 git fetch upstream main
+git switch -c merge/upstream-$(date +%Y%m%d)
 git merge --no-commit --no-ff upstream/main
-# resolve conflicts per the rules below
+# resolve conflicts
 git add -A && git commit -m "merge: sync with upstream ($(git rev-parse --short upstream/main))"
 ```
 
----
+## Atlas Seams
 
-## Conflict Categories
-
-### Category A: "Always Keep Ours" — Mechanical Overrides
-
-These files have fork-specific naming/branding that **always** takes our version.
-Resolution: `git checkout --ours <file>` then re-apply any new upstream additions manually.
-
-| File | What differs | Rule |
-|------|-------------|------|
-| `tests/test_ci_self_hosted_guard.sh` | Runner label (`atlas-macos-arm64` vs `warp-macos-15-arm64-6x`), job name (`ui-display-resolution-regression` vs `ui-regressions`), error messages | **Keep ours.** If upstream adds new guard checks, add them with our runner label. |
-| `.github/workflows/ci.yml` — runner labels | `runs-on: [self-hosted, atlas-macos-arm64]` vs `runs-on: warp-macos-15-arm64-6x` | **Keep ours** for all `runs-on` lines. |
-| `.github/workflows/ci.yml` — timeout | `timeout-minutes: 45` vs `timeout-minutes: 30` | **Keep ours** (45min needed for self-hosted runner). |
-
-**How to resolve Category A files:**
-
-```bash
-# For guard test scripts: keep ours entirely, then diff upstream for new checks
-git checkout --ours tests/test_ci_self_hosted_guard.sh
-git checkout --ours tests/test_ci_unit_test_spm_retry.sh
-
-# For ci.yml: more nuanced — see Category B below for new upstream steps
-```
-
-### Category B: "Keep Ours + Cherry-Pick Upstream Additions" — CI Workflow
-
-The CI workflow (`ci.yml`) needs both our fork overrides AND any new upstream steps/jobs.
-
-| Conflict area | Rule |
-|--------------|------|
-| Runner labels (`runs-on`) | Keep ours (`[self-hosted, atlas-macos-arm64]`) |
-| Timeout values | Keep ours (45min for tests, 60min for build-and-lag) |
-| Test invocation | **Take upstream's tee pattern**, then layer our watchdog wrapper on top (see below) |
-| `workflow_dispatch` trigger | Keep ours (not in upstream) |
-| New upstream jobs/steps | **Take from upstream**, adapt runner labels |
-| New upstream skip-testing entries | **Take from upstream**, update guard test to match |
-| Concurrency groups | Take upstream's if present |
-
-**How to resolve ci.yml:**
-
-1. Start from our version: `git checkout --ours .github/workflows/ci.yml`
-2. Diff upstream's version to find new jobs/steps: `git diff upstream/main~55..upstream/main -- .github/workflows/ci.yml`
-3. Manually add new upstream jobs/steps, replacing runner labels with ours
-4. Run guard tests: `bash tests/test_ci_test_skips_match_upstream.sh`
-
-### Category C: "Accept Both Sides" — Additive Content
-
-These files have additions from both sides that don't actually conflict semantically — they just happen to be inserted at adjacent lines.
-
-| File | What differs | Rule |
-|------|-------------|------|
-| `GhosttyTabs.xcodeproj/project.pbxproj` | Fork adds `Branding.swift`, `AISessionDetector.swift`, etc. Upstream adds `RemoteRelayZshBootstrap.swift`. | **Accept both.** Keep our fork files AND upstream's new files. Both entries go in the same list. |
-| `Resources/Localizable.xcstrings` | Fork adds memory-related strings (`memory.footer.*`). Upstream adds new feature strings (`menu.openInIntelliJ`, `error.remoteDrop.*`, etc.). | **Accept both.** This is a JSON-like file — both sets of strings belong. |
-
-**How to resolve Category C files:**
-
-```bash
-# For pbxproj: manually merge — include both sides' file references
-# For Localizable.xcstrings: include all string entries from both sides
-# Tip: resolve in an editor, ensure valid JSON/plist structure
-```
-
-### Category D: "Careful Manual Merge" — Source Code
-
-These files have real code changes on both sides that need understanding.
-
-| File | Ours | Upstream | Rule |
-|------|------|----------|------|
-| `Sources/ContentView.swift` | Memory usage badge in tab view (`workspaceMemorySummary`) | Upstream UI changes (pinned workspace, close tab dialog, etc.) | **Merge both.** Our memory badge is additive. Keep it alongside upstream changes. |
-| `Sources/GhosttyTerminalView.swift` | `restoredTerminalActionBannerHostingView` property | SSH image transfer UI (`imageTransferIndicatorContainerView`, spinner, cancel button) | **Merge both.** Our restored-terminal banner and upstream's image transfer indicator are independent features. Keep both property declarations. |
-
-**How to resolve Category D files:**
-
-1. Open the conflicted file
-2. For each conflict block, understand what each side added
-3. Include both additions — they're typically independent features
-4. Build to verify: `xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug -destination 'platform=macOS' build`
-
----
-
-## Post-Merge Checklist
-
-After resolving all conflicts:
-
-- [ ] `bash tests/test_ci_test_skips_match_upstream.sh` — guard test passes
-- [ ] `bash tests/test_ci_self_hosted_guard.sh` — runner guard passes
-- [ ] `bash tests/test_ci_unit_test_spm_retry.sh` — SPM retry guard passes
-- [ ] Build compiles: `xcodebuild ... build` (use tagged derivedDataPath)
-- [ ] Commit and push to trigger CI
-- [ ] All CI jobs pass (except known `ui-display-resolution-regression` issue)
-
----
-
-## Fork-Specific Files (Never in Upstream)
-
-These files only exist in our fork and won't conflict, but be aware they exist:
+These fork-owned files are intentionally additive. They should usually merge cleanly and should not be re-inlined into upstream-heavy files.
 
 | File | Purpose |
 |------|---------|
-| `Sources/Branding.swift` | Centralized brand constants (bundle IDs, socket paths) |
-| `Sources/AISessionDetector.swift` | AI session detection and resume |
-| `Sources/AISessionResumeView.swift` | AI session resume UI |
-| `Sources/EditorSyncController.swift` | Editor sync feature |
-| `Sources/EditorSyncTitlebarButton.swift` | Editor sync titlebar button |
-| `tests/test_ci_test_skips_match_upstream.sh` | Guard: skip list matches upstream |
+| `CLI/CMUXCLI+AgentHooks.swift` | Claude/Codex hook handling |
+| `Sources/AtlasAIQuickLaunch.swift` | Fork-owned AI quick-launch UI |
+| `Sources/AtlasAppCommands.swift` | Fork-owned app/menu commands |
+| `Sources/CMUXCoreNewItemCommands.swift` | Base File > New item replacement kept out of `cmuxApp.swift` |
+| `Sources/TabManager+AtlasAISessions.swift` | Agent PID sweep and AI resume prefill |
+| `Sources/TabManager+AtlasOrganizations.swift` | Organization save/switch logic |
+| `Sources/AppDelegate+AtlasAISessions.swift` | Global AI-session refresh orchestration |
+| `Sources/AppDelegate+AtlasOrganizations.swift` | Open organization in new window |
+| `Sources/WorkspaceAtlasAISessions.swift` | Workspace AI-session store and refresh logic |
 
----
+If a future merge conflict starts pulling this logic back into `TabManager.swift`, `Workspace.swift`, `AppDelegate.swift`, or `cmux.swift`, treat that as a regression in mergeability.
 
-## Upstream Remote Setup
+## Current Conflict Classes
 
-```bash
-# One-time setup (already done)
-git remote add upstream https://github.com/manaflow-ai/cmux.git
+After the seam refactor, the remaining conflict surface falls into three buckets.
 
-# Check how far behind we are
-git fetch upstream main
-git log --oneline $(git merge-base HEAD upstream/main)..upstream/main | wc -l
+### 1. Mechanical Fork Overrides
+
+These are mostly policy files. They are good candidates for scripted resolution or generated overlays.
+
+| File(s) | Rule |
+|--------|------|
+| `.github/workflows/ci.yml` | Keep Atlas runner labels/timeouts, then reapply new upstream jobs/steps |
+| `.github/workflows/ci-macos-compat.yml` | Same as above |
+| `.github/workflows/build-ghosttykit.yml` | Keep Atlas build assumptions, then reapply upstream job changes |
+| `scripts/reload.sh` | Keep tagged Atlas launch/socket behavior, then reapply upstream improvements |
+| `tests/test_ci_self_hosted_guard.sh` | Keep Atlas runner/guard expectations |
+
+Recommended automation:
+
+- Add a small merge helper that starts from `--ours` for these files and then diffs upstream for new jobs/steps.
+- Consider generating CI workflow fragments from a fork overlay so runner labels and timeout policies are not hand-merged in YAML.
+
+### 2. Registration Hotspots
+
+These files still conflict because both sides register commands, files, or menus in one central place.
+
+| File | Why it still conflicts | Better future seam |
+|------|------------------------|--------------------|
+| `CLI/cmux.swift` | Central command/help registry still lives here | Move to a command registry so Atlas and upstream commands register separately |
+| `Sources/cmuxApp.swift` | Command composition still happens in the app entrypoint | Keep base and Atlas command groups in separate command files and make `cmuxApp.swift` a thin mount point |
+| `GhosttyTabs.xcodeproj/project.pbxproj` | Every new source file touches the same lists | Move Atlas-only code into a local Swift package/product |
+
+Recommended automation:
+
+- Make a local `AtlasFeatures` Swift package so most future fork files stop touching `project.pbxproj`.
+- Move CLI help/dispatch into a table-driven registry to keep new Atlas commands out of `cmux.swift`.
+
+### 3. Shared Runtime Contracts
+
+These files still conflict because upstream and fork code both modify the same UI/runtime boundary.
+
+| File | Typical overlap |
+|------|------------------|
+| `Sources/TabManager.swift` | Workspace creation, focus/history, lifecycle snapshots |
+| `Sources/Workspace.swift` | Panel lifecycle and terminal inheritance |
+| `Sources/AppDelegate.swift` | Main-window orchestration |
+| `Sources/ContentView.swift` | Sidebar/resize/tab-row composition |
+| `Sources/WorkspaceContentView.swift` | Workspace-level view feature flags/experiments |
+| `Sources/GhosttyTerminalView.swift` | Terminal runtime safety and overlays |
+| `Sources/Panels/TerminalPanel.swift` | Surface input/resume/send semantics |
+| `Sources/Update/UpdateController.swift` | Update UI/policy |
+
+Recommended refactor direction:
+
+- Prefer upstream-owned base types with Atlas adapters or view slots.
+- When upstream adds a new capability, attach Atlas behavior through one hook point instead of editing the same branch-heavy method.
+- Avoid adding new stored state directly to these files unless it is genuinely core behavior.
+
+## Latest Dry-Run Result
+
+Dry merge against `upstream/main` after the seam refactor still produced conflicts, but the new Atlas-only files stayed clean and several former conflict regions moved out of upstream-owned files.
+
+Current conflicted files:
+
+```text
+.github/workflows/build-ghosttykit.yml
+.github/workflows/ci-macos-compat.yml
+.github/workflows/ci.yml
+CLI/cmux.swift
+GhosttyTabs.xcodeproj/project.pbxproj
+Resources/bin/claude
+Resources/shell-integration/cmux-zsh-integration.zsh
+Sources/AppDelegate.swift
+Sources/ContentView.swift
+Sources/GhosttyTerminalView.swift
+Sources/Panels/TerminalPanel.swift
+Sources/TabManager.swift
+Sources/Update/UpdateController.swift
+Sources/Workspace.swift
+Sources/WorkspaceContentView.swift
+Sources/cmuxApp.swift
+cmuxTests/WorkspaceRemoteConnectionTests.swift
+scripts/reload.sh
+tests/test_ci_self_hosted_guard.sh
 ```
+
+That means the next high-value reductions are:
+
+1. `project.pbxproj` via local package extraction.
+2. `CLI/cmux.swift` via command registry split.
+3. `cmuxApp.swift` via stricter menu injection boundaries.
+
+## Post-Merge Checklist
+
+- [ ] Dry run first: `./scripts/upstream-merge-dry-run.sh --fetch`
+- [ ] Resolve conflicts and build with a tagged reload
+- [ ] Verify CI guard scripts still reflect Atlas runner policy
+- [ ] Push the merge branch and let GitHub Actions run tests

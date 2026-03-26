@@ -1611,7 +1611,7 @@ class TabManager: ObservableObject {
             return tabs.first(where: { $0.id == selectedTabId })
         }
     }
-    private var agentPIDSweepTimer: DispatchSourceTimer?
+    var agentPIDSweepTimer: DispatchSourceTimer?
 #if DEBUG
     private var debugWorkspaceSwitchCounter: UInt64 = 0
     private var debugWorkspaceSwitchId: UInt64 = 0
@@ -1671,77 +1671,6 @@ class TabManager: ObservableObject {
         workspaceCycleCooldownTask?.cancel()
         agentPIDSweepTimer?.cancel()
     }
-
-    // MARK: - Agent Process Sweep
-
-    /// Periodically checks tracked agent processes.
-    /// Stale status PIDs are cleared, and live AI sessions can prefill a resume
-    /// command when their backing process exits without a dedicated hook.
-    private func startAgentPIDSweepTimer() {
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now() + 2, repeating: 2)
-        timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.sweepStaleAgentPIDs()
-            }
-        }
-        timer.resume()
-        agentPIDSweepTimer = timer
-    }
-
-    private func sweepStaleAgentPIDs() {
-        func isProcessAlive(_ pid: pid_t) -> Bool {
-            guard pid > 0 else { return false }
-            // kill(pid, 0) probes process liveness without sending a signal.
-            // ESRCH = process doesn't exist (stale). EPERM = process exists
-            // but we lack permission (not stale, keep tracking).
-            errno = 0
-            if kill(pid, 0) == -1, POSIXErrorCode(rawValue: errno) == .ESRCH {
-                return false
-            }
-            return true
-        }
-
-        for tab in tabs {
-            var keysToRemove: [String] = []
-            for (key, pid) in tab.agentPIDs {
-                if !isProcessAlive(pid) {
-                    keysToRemove.append(key)
-                }
-            }
-
-            let deadActiveSessions = tab.activeAISessions.compactMap { panelId, snapshot -> (UUID, ActiveAISessionSnapshot)? in
-                guard let pid = snapshot.pid else { return nil }
-                return isProcessAlive(pid) ? nil : (panelId, snapshot)
-            }
-
-            for (panelId, snapshot) in deadActiveSessions {
-                if let terminalPanel = tab.terminalPanel(for: panelId) {
-                    terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
-                }
-                tab.clearActiveAISession(panelId: panelId, agentType: snapshot.agentType)
-            }
-
-            if !keysToRemove.isEmpty {
-                for key in keysToRemove {
-                    tab.statusEntries.removeValue(forKey: key)
-                    tab.agentPIDs.removeValue(forKey: key)
-                }
-                // Also clear stale notifications (e.g. "Doing well, thanks!")
-                // left behind when Claude was killed without SessionEnd firing.
-                AppDelegate.shared?.notificationStore?.clearNotifications(forTabId: tab.id)
-            }
-        }
-    }
-
-#if DEBUG
-    @MainActor
-    func sweepAgentProcessesForTesting() {
-        sweepStaleAgentPIDs()
-    }
-#endif
 
     private func gitProbeDirectory(for workspace: Workspace, panelId: UUID) -> String? {
         let rawDirectory = workspace.panelDirectories[panelId]
@@ -3279,37 +3208,6 @@ class TabManager: ObservableObject {
 
     // Keep selectTab as convenience alias
     func selectTab(_ tab: Workspace) { selectWorkspace(tab) }
-
-    // MARK: - Organization Management
-
-    func switchToOrganization(_ org: WorkspaceOrganization) {
-        // Auto-save current organization before switching.
-        autoSaveCurrentOrganization()
-
-        restoreSessionSnapshot(org.tabManagerSnapshot)
-        organizationName = org.name
-        WorkspaceOrganizationStore.touchLastUsed(org.id)
-    }
-
-    func saveCurrentAsOrganization(name: String) {
-        let snapshot = sessionSnapshot(includeScrollback: false)
-        let existing = WorkspaceOrganizationStore.loadAll()
-        if existing.count >= WorkspaceOrganizationStore.maxOrganizations,
-           existing.first(where: {
-               $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
-           }) == nil,
-           let oldest = existing.last {
-            WorkspaceOrganizationStore.remove(oldest.id)
-        }
-        _ = WorkspaceOrganizationStore.upsertAutomaticSnapshot(name: name, tabManagerSnapshot: snapshot)
-        organizationName = name
-    }
-
-    func autoSaveCurrentOrganization() {
-        guard let name = organizationName, !name.isEmpty else { return }
-        let snapshot = sessionSnapshot(includeScrollback: false)
-        _ = WorkspaceOrganizationStore.upsertAutomaticSnapshot(name: name, tabManagerSnapshot: snapshot)
-    }
 
     private func confirmClose(title: String, message: String, acceptCmdD: Bool) -> Bool {
 #if DEBUG

@@ -564,137 +564,16 @@ struct cmuxApp: App {
             }
 #endif
 
-            // New tab commands
-            CommandGroup(replacing: .newItem) {
-                splitCommandButton(title: String(localized: "menu.file.newWorkspace", defaultValue: "New Workspace"), shortcut: newWorkspaceMenuShortcut) {
-                    if let appDelegate = AppDelegate.shared {
-                        if appDelegate.addWorkspaceInPreferredMainWindow(debugSource: "menu.newWorkspace") == nil {
-#if DEBUG
-                            FocusLogStore.shared.append(
-                                "cmdn.route phase=fallback_new_window src=menu.newWorkspace reason=workspace_creation_returned_nil"
-                            )
-#endif
-                            appDelegate.openNewMainWindow(nil)
-                        }
-                    } else {
-                        activeTabManager.addTab()
-                    }
-                }
+            CMUXCoreNewItemCommands(
+                activeTabManager: activeTabManager,
+                newWorkspaceMenuShortcut: newWorkspaceMenuShortcut,
+                openFolderMenuShortcut: openFolderMenuShortcut
+            )
 
-                splitCommandButton(title: String(localized: "menu.file.newOrganization", defaultValue: "New Organization"), shortcut: newWindowMenuShortcut) {
-                    appDelegate.openNewMainWindow(nil)
-                }
-
-                splitCommandButton(title: String(localized: "menu.file.openFolder", defaultValue: "Open Folder…"), shortcut: openFolderMenuShortcut) {
-                    let panel = NSOpenPanel()
-                    panel.canChooseFiles = false
-                    panel.canChooseDirectories = true
-                    panel.allowsMultipleSelection = false
-                    panel.title = String(localized: "menu.file.openFolder.panelTitle", defaultValue: "Open Folder")
-                    panel.prompt = String(localized: "menu.file.openFolder.panelPrompt", defaultValue: "Open")
-                    if panel.runModal() == .OK, let url = panel.url {
-                        if let appDelegate = AppDelegate.shared {
-                            if appDelegate.addWorkspaceInPreferredMainWindow(
-                                workingDirectory: url.path,
-                                debugSource: "menu.openFolder"
-                            ) == nil {
-                                appDelegate.openNewMainWindow(nil)
-                            }
-                        } else {
-                            activeTabManager.addWorkspace(workingDirectory: url.path)
-                        }
-                    }
-                }
-
-                Divider()
-
-                // AI agent quick-launch (respects yolo/permissive settings)
-                Button(String(localized: "menu.file.newClaudeCodeTab", defaultValue: "New Claude Code Tab")) {
-                    if let workspace = activeTabManager.selectedWorkspace {
-                        workspace.launchQuickAIAgent(.claudeCode)
-                    }
-                }
-                .keyboardShortcut("a", modifiers: [.command, .option])
-
-                Button(String(localized: "menu.file.newCodexTab", defaultValue: "New Codex Tab")) {
-                    if let workspace = activeTabManager.selectedWorkspace {
-                        workspace.launchQuickAIAgent(.codex)
-                    }
-                }
-                .keyboardShortcut("o", modifiers: [.command, .option])
-
-                Divider()
-
-                Menu(String(localized: "menu.file.organizations", defaultValue: "Organizations")) {
-                    let orgs = WorkspaceOrganizationStore.loadAll()
-                    let currentOrgName = activeTabManager.organizationName
-
-                    // List all organizations: checkmark indicates current window's org
-                    if !orgs.isEmpty {
-                        ForEach(Array(orgs.prefix(10).enumerated()), id: \.element.id) { _, org in
-                            Button {
-                                // Always open in new window, never replace current
-                                AppDelegate.shared?.openOrganizationInNewWindow(org)
-                            } label: {
-                                HStack {
-                                    Text(org.name)
-                                    if currentOrgName == org.name {
-                                        Spacer()
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-
-                        Divider()
-                    }
-
-                    Button(String(localized: "menu.file.organizations.rename", defaultValue: "Rename Organization…")) {
-                        let alert = NSAlert()
-                        alert.messageText = String(localized: "organization.rename.title", defaultValue: "Rename Organization")
-                        alert.informativeText = String(localized: "organization.rename.message", defaultValue: "Enter a new name for this organization.")
-                        alert.addButton(withTitle: String(localized: "organization.name.save", defaultValue: "Save"))
-                        alert.addButton(withTitle: String(localized: "organization.name.cancel", defaultValue: "Cancel"))
-                        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-                        input.stringValue = activeTabManager.organizationName ?? ""
-                        alert.accessoryView = input
-                        alert.window.initialFirstResponder = input
-                        guard alert.runModal() == .alertFirstButtonReturn else { return }
-                        let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !newName.isEmpty else { return }
-                        activeTabManager.organizationName = newName
-                    }
-
-                    Divider()
-
-                    Button(String(localized: "menu.file.organizations.exportCurrent", defaultValue: "Export Organization…")) {
-                        let name = activeTabManager.organizationName ?? String(localized: "organization.defaultName", defaultValue: "Organization")
-                        let snapshot = activeTabManager.sessionSnapshot(includeScrollback: true)
-                        WorkspaceOrganizationStore.exportOrganization(snapshot, name: name)
-                    }
-
-                    Button(String(localized: "menu.file.organizations.import", defaultValue: "Import Organization…")) {
-                        if let org = WorkspaceOrganizationStore.importWorkspace() {
-                            AppDelegate.shared?.openOrganizationInNewWindow(org)
-                        }
-                    }
-
-                    if !orgs.isEmpty {
-                        Divider()
-
-                        Menu(String(localized: "menu.file.organizations.remove", defaultValue: "Remove…")) {
-                            ForEach(orgs, id: \.id) { org in
-                                Button(String.localizedStringWithFormat(
-                                    String(localized: "menu.file.organizations.remove.named", defaultValue: "Remove \"%@\""),
-                                    org.name
-                                )) {
-                                    WorkspaceOrganizationStore.remove(org.id)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            AtlasNewItemCommands(
+                activeTabManager: activeTabManager,
+                newWindowMenuShortcut: newWindowMenuShortcut
+            )
 
             // Navigation and close commands
             CommandGroup(after: .newItem) {

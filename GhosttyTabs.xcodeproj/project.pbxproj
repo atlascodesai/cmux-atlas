@@ -26,6 +26,14 @@
 		A5001226 /* SocketControlSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001225 /* SocketControlSettings.swift */; };
 		A5001601 /* SentryHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001600 /* SentryHelper.swift */; };
 		A5001621 /* AppleScriptSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001620 /* AppleScriptSupport.swift */; };
+		A5001650 /* AtlasAIQuickLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001651 /* AtlasAIQuickLaunch.swift */; };
+		A5001652 /* AtlasAppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001653 /* AtlasAppCommands.swift */; };
+		A5001654 /* TabManager+AtlasAISessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001655 /* TabManager+AtlasAISessions.swift */; };
+		A5001656 /* TabManager+AtlasOrganizations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001657 /* TabManager+AtlasOrganizations.swift */; };
+		A5001658 /* AppDelegate+AtlasAISessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001659 /* AppDelegate+AtlasAISessions.swift */; };
+		A500165A /* AppDelegate+AtlasOrganizations.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500165B /* AppDelegate+AtlasOrganizations.swift */; };
+		A500165C /* WorkspaceAtlasAISessions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500165D /* WorkspaceAtlasAISessions.swift */; };
+		A500165E /* CMUXCoreNewItemCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500165F /* CMUXCoreNewItemCommands.swift */; };
 		A5001400 /* Panel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001410 /* Panel.swift */; };
 		A5001401 /* TerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001411 /* TerminalPanel.swift */; };
 		A5001402 /* BrowserPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001412 /* BrowserPanel.swift */; };
@@ -71,6 +79,9 @@
 		A5001100 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A5001101 /* Assets.xcassets */; };
 		A5001230 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A5001231 /* Sparkle */; };
 		B9000002A1B2C3D4E5F60719 /* cmux.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9000001A1B2C3D4E5F60719 /* cmux.swift */; };
+		B9000028A1B2C3D4E5F60719 /* CMUXCLI+AgentHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9000029A1B2C3D4E5F60719 /* CMUXCLI+AgentHooks.swift */; };
+		B9000030A1B2C3D4E5F60719 /* CMUXCLI+AtlasCommandRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9000031A1B2C3D4E5F60719 /* CMUXCLI+AtlasCommandRegistry.swift */; };
+		B9000032A1B2C3D4E5F60719 /* CMUXCLI+AtlasCodexCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9000033A1B2C3D4E5F60719 /* CMUXCLI+AtlasCodexCommand.swift */; };
 		B9000027A1B2C3D4E5F60719 /* RemoteRelayZshBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001641 /* RemoteRelayZshBootstrap.swift */; };
 		B900000BA1B2C3D4E5F60719 /* cmux in Copy CLI */ = {isa = PBXBuildFile; fileRef = B9000004A1B2C3D4E5F60719 /* cmux */; };
 		C1ADE00002A1B2C3D4E5F719 /* claude in Copy CLI */ = {isa = PBXBuildFile; fileRef = C1ADE00001A1B2C3D4E5F719 /* claude */; };
@@ -205,6 +216,8 @@
 		A5001019 /* TerminalController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalController.swift; sourceTree = "<group>"; };
 		A5001600 /* SentryHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentryHelper.swift; sourceTree = "<group>"; };
 		A5001620 /* AppleScriptSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleScriptSupport.swift; sourceTree = "<group>"; };
+		A5001651 /* AtlasAIQuickLaunch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtlasAIQuickLaunch.swift; sourceTree = "<group>"; };
+		A5001653 /* AtlasAppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtlasAppCommands.swift; sourceTree = "<group>"; };
 			A5001510 /* CmuxWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/CmuxWebView.swift; sourceTree = "<group>"; };
 			A5001511 /* UITestRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestRecorder.swift; sourceTree = "<group>"; };
 			A5001520 /* PostHogAnalytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostHogAnalytics.swift; sourceTree = "<group>"; };
@@ -246,6 +259,12 @@
 		A5001241 /* WindowDecorationsController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowDecorationsController.swift; sourceTree = "<group>"; };
 		A5001611 /* SessionPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPersistence.swift; sourceTree = "<group>"; };
 		A5001641 /* RemoteRelayZshBootstrap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteRelayZshBootstrap.swift; sourceTree = "<group>"; };
+		A5001655 /* TabManager+AtlasAISessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TabManager+AtlasAISessions.swift"; sourceTree = "<group>"; };
+		A5001657 /* TabManager+AtlasOrganizations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "TabManager+AtlasOrganizations.swift"; sourceTree = "<group>"; };
+		A5001659 /* AppDelegate+AtlasAISessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+AtlasAISessions.swift"; sourceTree = "<group>"; };
+		A500165B /* AppDelegate+AtlasOrganizations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppDelegate+AtlasOrganizations.swift"; sourceTree = "<group>"; };
+		A500165D /* WorkspaceAtlasAISessions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WorkspaceAtlasAISessions.swift"; sourceTree = "<group>"; };
+		A500165F /* CMUXCoreNewItemCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CMUXCoreNewItemCommands.swift; sourceTree = "<group>"; };
 		818DBCD4AB69EB72573E8138 /* SidebarResizeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarResizeUITests.swift; sourceTree = "<group>"; };
 		B8F266256A1A3D9A45BD840F /* SidebarHelpMenuUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarHelpMenuUITests.swift; sourceTree = "<group>"; };
 		B8F266276A1A3D9A45BD840F /* DisplayResolutionRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayResolutionRegressionUITests.swift; sourceTree = "<group>"; };
@@ -258,6 +277,9 @@
 		D1BEF00001A1B2C3D4E5F719 /* open */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "Resources/bin/open"; sourceTree = SOURCE_ROOT; };
 		A5002001 /* THIRD_PARTY_LICENSES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_LICENSES.md; sourceTree = SOURCE_ROOT; };
 		B9000001A1B2C3D4E5F60719 /* cmux.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = cmux.swift; sourceTree = "<group>"; };
+		B9000029A1B2C3D4E5F60719 /* CMUXCLI+AgentHooks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMUXCLI+AgentHooks.swift"; sourceTree = "<group>"; };
+		B9000031A1B2C3D4E5F60719 /* CMUXCLI+AtlasCommandRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMUXCLI+AtlasCommandRegistry.swift"; sourceTree = "<group>"; };
+		B9000033A1B2C3D4E5F60719 /* CMUXCLI+AtlasCodexCommand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CMUXCLI+AtlasCodexCommand.swift"; sourceTree = "<group>"; };
 		B9000004A1B2C3D4E5F60719 /* cmux */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = cmux; sourceTree = BUILT_PRODUCTS_DIR; };
 				B9000011A1B2C3D4E5F60719 /* AutomationSocketUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationSocketUITests.swift; sourceTree = "<group>"; };
 					B9000013A1B2C3D4E5F60719 /* JumpToUnreadUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JumpToUnreadUITests.swift; sourceTree = "<group>"; };
@@ -443,6 +465,14 @@
 				A5001090 /* AppDelegate.swift */,
 				A5001091 /* NotificationsPage.swift */,
 				A5001092 /* TerminalNotificationStore.swift */,
+				A5001651 /* AtlasAIQuickLaunch.swift */,
+				A5001653 /* AtlasAppCommands.swift */,
+				A5001655 /* TabManager+AtlasAISessions.swift */,
+				A5001657 /* TabManager+AtlasOrganizations.swift */,
+				A5001659 /* AppDelegate+AtlasAISessions.swift */,
+				A500165B /* AppDelegate+AtlasOrganizations.swift */,
+				A500165D /* WorkspaceAtlasAISessions.swift */,
+				A500165F /* CMUXCoreNewItemCommands.swift */,
 				A5001301 /* SurfaceSearchOverlay.swift */,
 				A5008370 /* BrowserSearchOverlay.swift */,
 				A5008372 /* BrowserFindJavaScript.swift */,
@@ -486,6 +516,9 @@
 			isa = PBXGroup;
 			children = (
 				B9000001A1B2C3D4E5F60719 /* cmux.swift */,
+				B9000029A1B2C3D4E5F60719 /* CMUXCLI+AgentHooks.swift */,
+				B9000031A1B2C3D4E5F60719 /* CMUXCLI+AtlasCommandRegistry.swift */,
+				B9000033A1B2C3D4E5F60719 /* CMUXCLI+AtlasCodexCommand.swift */,
 			);
 			path = CLI;
 			sourceTree = "<group>";
@@ -745,6 +778,14 @@
 				A5001093 /* AppDelegate.swift in Sources */,
 				A5001094 /* NotificationsPage.swift in Sources */,
 				A5001095 /* TerminalNotificationStore.swift in Sources */,
+				A5001650 /* AtlasAIQuickLaunch.swift in Sources */,
+				A5001652 /* AtlasAppCommands.swift in Sources */,
+				A5001654 /* TabManager+AtlasAISessions.swift in Sources */,
+				A5001656 /* TabManager+AtlasOrganizations.swift in Sources */,
+				A5001658 /* AppDelegate+AtlasAISessions.swift in Sources */,
+				A500165A /* AppDelegate+AtlasOrganizations.swift in Sources */,
+				A500165C /* WorkspaceAtlasAISessions.swift in Sources */,
+				A500165E /* CMUXCoreNewItemCommands.swift in Sources */,
 				A5001303 /* SurfaceSearchOverlay.swift in Sources */,
 				A5008371 /* BrowserSearchOverlay.swift in Sources */,
 				A5008373 /* BrowserFindJavaScript.swift in Sources */,
@@ -846,6 +887,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				B9000002A1B2C3D4E5F60719 /* cmux.swift in Sources */,
+				B9000028A1B2C3D4E5F60719 /* CMUXCLI+AgentHooks.swift in Sources */,
+				B9000030A1B2C3D4E5F60719 /* CMUXCLI+AtlasCommandRegistry.swift in Sources */,
+				B9000032A1B2C3D4E5F60719 /* CMUXCLI+AtlasCodexCommand.swift in Sources */,
 				B9000027A1B2C3D4E5F60719 /* RemoteRelayZshBootstrap.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
