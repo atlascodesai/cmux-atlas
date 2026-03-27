@@ -7781,7 +7781,7 @@ final class Workspace: Identifiable, ObservableObject {
         // Keyboard/browser-open paths want "new tab at end" regardless of global new-tab placement.
         if insertAtEnd {
             let targetIndex = max(0, bonsplitController.tabs(inPane: paneId).count - 1)
-            _ = bonsplitController.reorderTab(newTabId, toIndex: targetIndex)
+            _ = reorderSurface(panelId: browserPanel.id, toIndex: targetIndex)
         }
 
         // Match terminal behavior: enforce deterministic selection + focus.

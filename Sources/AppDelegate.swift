@@ -5057,7 +5057,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func closeMainWindow(windowId: UUID) -> Bool {
         guard let window = windowForMainWindowId(windowId) else { return false }
-        window.close()
+        window.performClose(nil)
         return true
     }
 
@@ -5093,11 +5093,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @discardableResult
     func closeWindowWithConfirmation(_ window: NSWindow) -> Bool {
         guard isMainTerminalWindow(window) else {
-            window.close()
+            window.performClose(nil)
             return true
         }
         guard confirmCloseMainWindow(window) else { return true }
-        window.close()
+        window.performClose(nil)
         return true
     }
 
@@ -5438,16 +5438,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func commandPaletteWindowForShortcutEvent(_ event: NSEvent) -> NSWindow? {
-        if let scopedContext = mainWindowContext(forShortcutEvent: event, debugSource: "commandPalette.shortcut"),
-           let scopedWindow = resolvedWindow(for: scopedContext) {
+        if let scopedWindow = mainWindowForShortcutEvent(event) {
             return scopedWindow
         }
         return activeCommandPaletteWindow()
     }
 
     private func contextForMainWindow(_ window: NSWindow?) -> MainWindowContext? {
-        guard let window, isMainTerminalWindow(window) else { return nil }
-        return mainWindowContexts[ObjectIdentifier(window)]
+        guard let window else { return nil }
+        return contextForMainTerminalWindow(window)
     }
 
 #if DEBUG
@@ -5514,6 +5513,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return mainWindow
         }
         return nil
+    }
+
+    private func windowForShortcutEvent(_ event: NSEvent) -> NSWindow? {
+        if let window = event.window {
+            return window
+        }
+        let eventWindowNumber = event.windowNumber
+        if eventWindowNumber > 0,
+           let numberedWindow = NSApp.window(withWindowNumber: eventWindowNumber) {
+            return numberedWindow
+        }
+        return NSApp.keyWindow ?? NSApp.mainWindow
     }
 
     /// Re-sync app-level active window pointers from the currently focused main terminal window.
@@ -5614,7 +5625,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func preferredMainWindowContextForShortcuts(event: NSEvent) -> MainWindowContext? {
-        preferredMainWindowContextForShortcutRouting(event: event)
+        if let context = contextForMainWindow(event.window) {
+            return context
+        }
+        if let context = contextForMainWindow(NSApp.keyWindow) {
+            return context
+        }
+        if let context = contextForMainWindow(NSApp.mainWindow) {
+            return context
+        }
+        if let activeManager = tabManager,
+           let activeContext = mainWindowContexts.values.first(where: { $0.tabManager === activeManager }) {
+            return activeContext
+        }
+        return mainWindowContexts.values.first
     }
 
     private func activateMainWindowContextForShortcutEvent(_ event: NSEvent) {
@@ -9791,10 +9815,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             event: event,
             shortcut: StoredShortcut(key: "t", command: true, shift: false, option: true, control: false)
         ) {
-            let routedWindow = mainWindowForShortcutEvent(event) ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+            let routedWindow = windowForShortcutEvent(event)
             if let targetWindow = routedWindow,
                targetWindow.identifier?.rawValue == "cmux.settings" {
-                targetWindow.close()
+                targetWindow.performClose(nil)
             } else {
                 if let terminalContext = focusedTerminalShortcutContext(preferredWindow: routedWindow) {
                     terminalContext.tabManager.closeOtherTabsInFocusedPaneWithConfirmation()
@@ -9811,7 +9835,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             event: event,
             shortcut: StoredShortcut(key: "w", command: true, shift: false, option: false, control: false)
         ) {
-            let routedWindow = mainWindowForShortcutEvent(event) ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+            let routedWindow = windowForShortcutEvent(event)
             // Browser popup windows primarily intercept Cmd+W in BrowserPopupPanel.
             // This AppDelegate path is a fallback for cases where AppKit routes the
             // event through the global shortcut handler first.
@@ -9821,11 +9845,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #if DEBUG
                 dlog("shortcut.cmdW route=browserPopup")
 #endif
-                targetWindow.close()
+                targetWindow.performClose(nil)
                 return true
             } else if let targetWindow = routedWindow,
                cmuxWindowShouldOwnCloseShortcut(targetWindow) {
-                targetWindow.close()
+                targetWindow.performClose(nil)
             } else {
                 if let terminalContext = focusedTerminalShortcutContext(preferredWindow: routedWindow) {
 #if DEBUG
@@ -9854,7 +9878,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         if matchShortcut(event: event, shortcut: KeyboardShortcutSettings.shortcut(for: .closeWindow)) {
-            guard let targetWindow = mainWindowForShortcutEvent(event) ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow else {
+            guard let targetWindow = windowForShortcutEvent(event) else {
                 NSSound.beep()
                 return true
             }
@@ -9968,7 +9992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             _ = performSplitShortcut(
                 direction: .right,
-                preferredWindow: mainWindowForShortcutEvent(event) ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+                preferredWindow: windowForShortcutEvent(event)
             )
             return true
         }
@@ -9982,7 +10006,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             _ = performSplitShortcut(
                 direction: .down,
-                preferredWindow: mainWindowForShortcutEvent(event) ?? event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+                preferredWindow: windowForShortcutEvent(event)
             )
             return true
         }
@@ -11446,7 +11470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let context = contextContainingTabId(tabId) else { return }
         let expectedIdentifier = "cmux.main.\(context.windowId.uuidString)"
         let window: NSWindow? = context.window ?? NSApp.windows.first(where: { $0.identifier?.rawValue == expectedIdentifier })
-        window?.close()
+        window?.performClose(nil)
     }
 
     @discardableResult
