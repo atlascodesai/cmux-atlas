@@ -2,6 +2,21 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.1] - 2026-03-27
+
+### Added
+- Upstream 1.38.x features including `cmux.json` custom commands and layouts, `cmux omo` integration, `cmux ssh --no-focus`, `new-workspace --name`, clickable listening ports, and expanded `send-key` modifier support
+- Additional docs, translations, and test coverage pulled in from the upstream 1.35.0 through 1.38.1 line
+
+### Changed
+- Realigned the fork version line to upstream `1.38.1` while keeping Atlas release tags in the `-atlas.N` format
+- Merged the latest upstream workspace, update, CLI, browser, and remote-daemon improvements into the Atlas fork while preserving Atlas-specific AI session, organization, and Codex integrations
+
+### Fixed
+- Multiple upstream workspace creation and Cmd+N crash fixes, including snapshot lifetime and remote workspace creation stability improvements
+- Socket, tmux compatibility, keyboard layout, update UI, and remote daemon issues fixed upstream through `v1.38.1`
+- Atlas merge-forward fixes including CLI stderr hardening and AI-session-related memory polling stability
+
 ## [0.62.2-atlas.3] - 2026-03-25
 
 ### Fixed
