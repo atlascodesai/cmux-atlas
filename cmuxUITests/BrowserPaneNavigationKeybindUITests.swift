@@ -817,14 +817,20 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
             },
             "Expected Cmd+D to create a split before opening the browser. data=\(String(describing: loadData()))"
         )
+        XCTAssertTrue(waitForSocketPong(timeout: 12.0), "Expected control socket before Cmd+L after split")
 
-        app.typeKey("l", modifierFlags: [.command])
-        XCTAssertTrue(
-            waitForDataMatch(timeout: 6.0) { data in
+        var browserOpenedViaCmdL = false
+        for attempt in 0..<2 {
+            app.typeKey("l", modifierFlags: [.command])
+            browserOpenedViaCmdL = waitForDataMatch(timeout: attempt == 0 ? 3.0 : 6.0) { data in
                 guard data["webViewFocusedAfterAddressBarFocus"] == "false" else { return false }
                 guard let panelId = data["webViewFocusedAfterAddressBarFocusPanelId"] else { return false }
                 return !panelId.isEmpty
-            },
+            }
+            if browserOpenedViaCmdL { break }
+        }
+        XCTAssertTrue(
+            browserOpenedViaCmdL,
             "Expected Cmd+L to focus browser omnibar before waiting on XCUI exposure. data=\(String(describing: loadData()))"
         )
 

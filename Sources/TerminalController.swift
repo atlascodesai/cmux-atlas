@@ -515,6 +515,69 @@ class TerminalController {
         }
     }
 
+    nonisolated static func normalizedExportedScreenPath(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed),
+           url.isFileURL,
+           !url.path.isEmpty {
+            return url.path
+        }
+        return trimmed.hasPrefix("/") ? trimmed : nil
+    }
+
+    nonisolated static func shouldRemoveExportedScreenFile(
+        fileURL: URL,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory
+    ) -> Bool {
+        let standardizedFile = fileURL.standardizedFileURL
+        let temporary = temporaryDirectory.standardizedFileURL
+        return standardizedFile.path.hasPrefix(temporary.path + "/")
+    }
+
+    nonisolated static func shouldRemoveExportedScreenDirectory(
+        fileURL: URL,
+        temporaryDirectory: URL = FileManager.default.temporaryDirectory
+    ) -> Bool {
+        let directory = fileURL.deletingLastPathComponent().standardizedFileURL
+        let temporary = temporaryDirectory.standardizedFileURL
+        return directory.path.hasPrefix(temporary.path + "/")
+    }
+
+    nonisolated static func resolvedSnapshotTerminalText(
+        vtExportText: String?,
+        liveReadText: String?
+    ) -> String? {
+        struct Candidate {
+            let text: String
+            let sourceRank: Int
+
+            var lineCount: Int {
+                text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+            }
+
+            var byteCount: Int {
+                text.utf8.count
+            }
+        }
+
+        let candidates: [Candidate] = [
+            vtExportText.map { Candidate(text: $0, sourceRank: 1) },
+            liveReadText.map { Candidate(text: $0, sourceRank: 0) },
+        ].compactMap { $0 }
+
+        return candidates.max { lhs, rhs in
+            if lhs.lineCount != rhs.lineCount {
+                return lhs.lineCount < rhs.lineCount
+            }
+            if lhs.byteCount != rhs.byteCount {
+                return lhs.byteCount < rhs.byteCount
+            }
+            return lhs.sourceRank < rhs.sourceRank
+        }?.text
+    }
+
     /// Update which window's TabManager receives socket commands.
     /// This is used when the user switches between multiple terminal windows.
     func setActiveTabManager(_ tabManager: TabManager?) {

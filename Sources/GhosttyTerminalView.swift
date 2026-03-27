@@ -1630,43 +1630,190 @@ class GhosttyApp {
     /// a `font-codepoint-map` entry covering CJK ranges. Also checks
     /// application-support config paths that cmux may load at runtime.
     static func userConfigContainsCJKCodepointMap(
-        configPaths: [String] = defaultCJKScanPaths()
+        configPaths: [String] = loadedCJKScanPaths()
     ) -> Bool {
-        var visited = Set<String>()
-        for rawPath in configPaths {
-            let path = NSString(string: rawPath).expandingTildeInPath
-            if Self.configFileContainsCodepointMap(atPath: path, visited: &visited) {
-                return true
-            }
-        }
-        return false
+        userFontConfigSummary(configPaths: configPaths).containsCodepointMap
     }
 
-    /// Returns the default set of config paths to scan for existing
-    /// `font-codepoint-map` entries. Includes both the standard Ghostty
-    /// config locations and any app-support paths that cmux may load.
-    private static func defaultCJKScanPaths() -> [String] {
+    static func userConfigHasExplicitFontFamilyFallbackChain(
+        configPaths: [String] = loadedCJKScanPaths()
+    ) -> Bool {
+        userFontConfigSummary(configPaths: configPaths).hasExplicitFontFamilyFallbackChain
+    }
+
+    static func shouldInjectCJKFontFallback(
+        preferredLanguages: [String] = Locale.preferredLanguages,
+        configPaths: [String] = loadedCJKScanPaths()
+    ) -> Bool {
+        guard cjkFontMappings(preferredLanguages: preferredLanguages) != nil else { return false }
+        let summary = userFontConfigSummary(configPaths: configPaths)
+        return !summary.containsCodepointMap && !summary.hasExplicitFontFamilyFallbackChain
+    }
+
+    private static func userFontConfigSummary(
+        configPaths: [String] = loadedCJKScanPaths()
+    ) -> UserFontConfigSummary {
+        var summary = UserFontConfigSummary()
+        var recursiveConfigPaths: [String] = []
+
+        for path in configPaths.map({ NSString(string: $0).expandingTildeInPath }) {
+            scanFontConfigFile(
+                atPath: path,
+                summary: &summary,
+                recursiveConfigPaths: &recursiveConfigPaths
+            )
+        }
+
+        var loadedRecursivePaths = Set<String>()
+        var index = 0
+        while index < recursiveConfigPaths.count {
+            let path = recursiveConfigPaths[index]
+            index += 1
+            let resolved = (path as NSString).standardizingPath
+            guard !loadedRecursivePaths.contains(resolved) else { continue }
+            loadedRecursivePaths.insert(resolved)
+
+            scanFontConfigFile(
+                atPath: path,
+                summary: &summary,
+                recursiveConfigPaths: &recursiveConfigPaths
+            )
+        }
+
+        return summary
+    }
+
+    /// Returns the top-level config paths that cmux will actually load before
+    /// recursive `config-file` processing.
+    static func loadedCJKScanPaths(
+        currentBundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        appSupportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    ) -> [String] {
         var paths = [
             "~/.config/ghostty/config",
             "~/.config/ghostty/config.ghostty",
-            "~/Library/Application Support/com.mitchellh.ghostty/config",
-            "~/Library/Application Support/com.mitchellh.ghostty/config.ghostty",
         ]
-        if let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first {
-            let releaseDir = appSupport.appendingPathComponent(releaseBundleIdentifier)
-            paths.append(releaseDir.appendingPathComponent("config").path)
-            paths.append(releaseDir.appendingPathComponent("config.ghostty").path)
 
-            if let bundleId = Bundle.main.bundleIdentifier, bundleId != releaseBundleIdentifier {
-                let currentDir = appSupport.appendingPathComponent(bundleId)
-                paths.append(currentDir.appendingPathComponent("config").path)
-                paths.append(currentDir.appendingPathComponent("config.ghostty").path)
+        guard let bundleId = currentBundleIdentifier,
+              !bundleId.isEmpty,
+              let appSupportDirectory else { return paths }
+
+        let appSupportConfigURLs = cmuxAppSupportConfigURLs(
+            currentBundleIdentifier: bundleId,
+            appSupportDirectory: appSupportDirectory
+        )
+        paths.append(contentsOf: appSupportConfigURLs.map(\.path))
+
+        let releaseDir = appSupportDirectory.appendingPathComponent(releaseBundleIdentifier, isDirectory: true)
+        let releaseLegacyConfig = releaseDir.appendingPathComponent("config", isDirectory: false)
+        let releaseConfig = releaseDir.appendingPathComponent("config.ghostty", isDirectory: false)
+
+        let releaseConfigSize = configFileSize(at: releaseConfig)
+        let releaseLegacyConfigSize = configFileSize(at: releaseLegacyConfig)
+
+        if shouldLoadLegacyGhosttyConfig(
+            newConfigFileSize: releaseConfigSize,
+            legacyConfigFileSize: releaseLegacyConfigSize
+        ), !paths.contains(releaseLegacyConfig.path) {
+            paths.append(releaseLegacyConfig.path)
+        }
+
+        return paths
+    }
+
+    private static func configFileSize(at url: URL) -> Int? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber else { return nil }
+        return size.intValue
+    }
+
+    private static func scanFontConfigFile(
+        atPath path: String,
+        summary: inout UserFontConfigSummary,
+        recursiveConfigPaths: inout [String]
+    ) {
+        let resolved = (path as NSString).standardizingPath
+        guard let contents = try? String(contentsOfFile: resolved, encoding: .utf8) else {
+            return
+        }
+        let parentDir = (resolved as NSString).deletingLastPathComponent
+
+        for line in contents.components(separatedBy: .newlines) {
+            guard let entry = parsedConfigEntry(from: line) else { continue }
+
+            switch entry.key {
+            case "font-codepoint-map":
+                guard let value = entry.value else { continue }
+                summary.applyFontCodepointMap(value)
+            case "font-family":
+                guard let value = entry.value else { continue }
+                summary.recordFontFamily(value)
+            case "config-file":
+                guard let value = entry.value else { continue }
+                applyConfigFileDirective(
+                    value,
+                    parentDir: parentDir,
+                    recursiveConfigPaths: &recursiveConfigPaths
+                )
+            default:
+                continue
             }
         }
-        return paths
+    }
+
+    private static func parsedConfigEntry(
+        from rawLine: String
+    ) -> (key: String, value: String?)? {
+        var trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("\u{FEFF}") {
+            trimmed.removeFirst()
+        }
+        if trimmed.isEmpty || trimmed.hasPrefix("#") { return nil }
+
+        guard let separatorIndex = trimmed.firstIndex(of: "=") else {
+            return (trimmed.trimmingCharacters(in: .whitespacesAndNewlines), nil)
+        }
+
+        let key = trimmed[..<separatorIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+        var value = trimmed[trimmed.index(after: separatorIndex)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") {
+            value.removeFirst()
+            value.removeLast()
+        }
+
+        return (String(key), String(value))
+    }
+
+    private static func applyConfigFileDirective(
+        _ value: String,
+        parentDir: String,
+        recursiveConfigPaths: inout [String]
+    ) {
+        if value.isEmpty {
+            recursiveConfigPaths.removeAll()
+            return
+        }
+
+        var includePath = value
+        if includePath.hasPrefix("?") {
+            includePath.removeFirst()
+        }
+        if includePath.count >= 2, includePath.hasPrefix("\""), includePath.hasSuffix("\"") {
+            includePath.removeFirst()
+            includePath.removeLast()
+        }
+        guard !includePath.isEmpty else { return }
+
+        let expanded = NSString(string: includePath).expandingTildeInPath
+        let absolute = (expanded as NSString).isAbsolutePath
+            ? expanded
+            : (parentDir as NSString).appendingPathComponent(expanded)
+        recursiveConfigPaths.append(absolute)
     }
 
     /// Scans a single config file (and any files it includes) for
