@@ -1696,10 +1696,10 @@ struct CMUXCLI {
             let workspaceArg = tfWsFlag ?? (windowId == nil ? ProcessInfo.processInfo.environment["CMUX_WORKSPACE_ID"] : nil)
             let surfaceArg = optionValue(commandArgs, name: "--surface") ?? optionValue(commandArgs, name: "--panel") ?? (tfWsFlag == nil && windowId == nil ? ProcessInfo.processInfo.environment["CMUX_SURFACE_ID"] : nil)
             var params: [String: Any] = [:]
-            let wsId = try normalizeWorkspaceHandle(workspaceArg, client: client)
-            if let wsId { params["workspace_id"] = wsId }
-            let sfId = try normalizeSurfaceHandle(surfaceArg, client: client, workspaceHandle: wsId)
-            if let sfId { params["surface_id"] = sfId }
+            let wsId = try resolveValidatedWorkspaceId(workspaceArg, client: client)
+            params["workspace_id"] = wsId
+            let sfId = try resolvePreferredSurfaceId(surfaceArg, workspaceId: wsId, client: client)
+            params["surface_id"] = sfId
             let payload = try client.sendV2(method: "surface.trigger_flash", params: params)
             printV2Payload(payload, jsonOutput: jsonOutput, idFormat: idFormat, fallbackText: v2OKSummary(payload, idFormat: idFormat))
 
@@ -1896,8 +1896,8 @@ struct CMUXCLI {
             let workspaceArg = notifyWsFlag ?? (windowId == nil ? ProcessInfo.processInfo.environment["CMUX_WORKSPACE_ID"] : nil)
             let surfaceArg = optionValue(commandArgs, name: "--surface") ?? (notifyWsFlag == nil && windowId == nil ? ProcessInfo.processInfo.environment["CMUX_SURFACE_ID"] : nil)
 
-            let targetWorkspace = try resolveWorkspaceId(workspaceArg, client: client)
-            let targetSurface = try resolveSurfaceId(surfaceArg, workspaceId: targetWorkspace, client: client)
+            let targetWorkspace = try resolveValidatedWorkspaceId(workspaceArg, client: client)
+            let targetSurface = try resolvePreferredSurfaceId(surfaceArg, workspaceId: targetWorkspace, client: client)
 
             let payload = "\(title)|\(subtitle)|\(body)"
             let response = try sendV1Command("notify_target \(targetWorkspace) \(targetSurface) \(payload)", client: client)
@@ -5725,6 +5725,16 @@ struct CMUXCLI {
         throw CLIError(message: "No workspace selected")
     }
 
+    private func resolveValidatedWorkspaceId(_ raw: String?, client: SocketClient) throws -> String {
+        if let raw, !raw.isEmpty, let candidate = try? resolveWorkspaceId(raw, client: client) {
+            let probe = try? client.sendV2(method: "surface.list", params: ["workspace_id": candidate])
+            if probe != nil {
+                return candidate
+            }
+        }
+        return try resolveWorkspaceId(nil, client: client)
+    }
+
     func resolveSurfaceId(_ raw: String?, workspaceId: String, client: SocketClient) throws -> String {
         if let raw, isUUID(raw) {
             return raw
@@ -5753,6 +5763,38 @@ struct CMUXCLI {
         }
 
         throw CLIError(message: "Unable to resolve surface ID")
+    }
+
+    private func resolveCallerTTYSurfaceId(
+        workspaceId: String,
+        client: SocketClient
+    ) throws -> String? {
+        guard let ttyName = ProcessInfo.processInfo.environment["CMUX_CLI_TTY_NAME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !ttyName.isEmpty else {
+            return nil
+        }
+
+        let payload = try client.sendV2(method: "debug.terminals")
+        let terminals = payload["terminals"] as? [[String: Any]] ?? []
+        return terminals.first(where: { terminal in
+            (terminal["workspace_id"] as? String) == workspaceId &&
+                (terminal["tty"] as? String) == ttyName
+        })?["surface_id"] as? String
+    }
+
+    private func resolvePreferredSurfaceId(
+        _ raw: String?,
+        workspaceId: String,
+        client: SocketClient
+    ) throws -> String {
+        if let callerTTYSurfaceId = try resolveCallerTTYSurfaceId(workspaceId: workspaceId, client: client) {
+            return callerTTYSurfaceId
+        }
+        if let raw, !raw.isEmpty, let candidate = try? resolveSurfaceId(raw, workspaceId: workspaceId, client: client) {
+            return candidate
+        }
+        return try resolveSurfaceId(nil, workspaceId: workspaceId, client: client)
     }
 
     /// Return the help/usage text for a subcommand, or nil if the command is unknown.

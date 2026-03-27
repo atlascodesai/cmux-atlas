@@ -4318,6 +4318,11 @@ extension BrowserPanel {
         }
 
         prepareDeveloperToolsForRevealIfNeeded(inspector)
+        if inspector.cmuxCallBool(selector: isVisibleSelector) ?? false {
+            developerToolsDetachedOpenGraceDeadline = nil
+            developerToolsLastKnownVisibleAt = Date()
+            return true
+        }
 
         let showSelector = NSSelectorFromString("show")
         guard inspector.responds(to: showSelector) else { return false }

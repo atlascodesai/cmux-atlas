@@ -5506,6 +5506,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
            isMainTerminalWindow(numberedWindow) {
             return numberedWindow
         }
+        if eventWindowNumber > 0,
+           let numberedWindow = NSApp.windows.first(where: { $0.windowNumber == eventWindowNumber }),
+           isMainTerminalWindow(numberedWindow) {
+            return numberedWindow
+        }
+        if let context = mainWindowContext(forShortcutEvent: event, debugSource: "shortcut.eventWindow"),
+           let resolvedWindow = resolvedWindow(for: context) {
+            return resolvedWindow
+        }
         if let keyWindow = NSApp.keyWindow, isMainTerminalWindow(keyWindow) {
             return keyWindow
         }
@@ -5522,6 +5531,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let eventWindowNumber = event.windowNumber
         if eventWindowNumber > 0,
            let numberedWindow = NSApp.window(withWindowNumber: eventWindowNumber) {
+            return numberedWindow
+        }
+        if eventWindowNumber > 0,
+           let numberedWindow = NSApp.windows.first(where: { $0.windowNumber == eventWindowNumber }) {
             return numberedWindow
         }
         return NSApp.keyWindow ?? NSApp.mainWindow
@@ -9608,9 +9621,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return true
         }
 
+        let routedShortcutWindow = windowForShortcutEvent(event)
         let hasEventWindowContext = shortcutEventHasAddressableWindow(event)
         let didSynchronizeShortcutContext = synchronizeShortcutRoutingContext(event: event)
-        if hasEventWindowContext && !didSynchronizeShortcutContext {
+        let requiresMainWindowContext = routedShortcutWindow.map(isMainTerminalWindow) ?? true
+        if hasEventWindowContext && requiresMainWindowContext && !didSynchronizeShortcutContext {
 #if DEBUG
             dlog("handleCustomShortcut: unresolved event window context; bypassing app shortcut handling")
 #endif
