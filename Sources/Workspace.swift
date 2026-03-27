@@ -7780,7 +7780,8 @@ final class Workspace: Identifiable, ObservableObject {
 
         // Keyboard/browser-open paths want "new tab at end" regardless of global new-tab placement.
         if insertAtEnd {
-            let targetIndex = max(0, bonsplitController.tabs(inPane: paneId).count - 1)
+            // Bonsplit reorder indexes are insertion positions; `count` is append-to-end.
+            let targetIndex = bonsplitController.tabs(inPane: paneId).count
             _ = reorderSurface(panelId: browserPanel.id, toIndex: targetIndex)
         }
 

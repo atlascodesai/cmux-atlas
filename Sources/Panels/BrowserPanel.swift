@@ -4449,8 +4449,8 @@ extension BrowserPanel {
             developerToolsDetachedOpenGraceDeadline = nil
         }
 
+        let visibleAfterTransition = inspector.cmuxCallBool(selector: isVisibleSelector) ?? false
         if targetVisible {
-            let visibleAfterTransition = inspector.cmuxCallBool(selector: isVisibleSelector) ?? false
             if visibleAfterTransition {
                 syncDeveloperToolsPresentationPreferenceFromUI()
                 cancelDeveloperToolsRestoreRetry()
@@ -4464,7 +4464,12 @@ extension BrowserPanel {
             forceDeveloperToolsRefreshOnNextAttach = false
         }
 
-        if visible != targetVisible {
+        let shouldKeepSettleWindowOpen =
+            source == "toggle" &&
+            visible != targetVisible &&
+            visibleAfterTransition == targetVisible
+
+        if shouldKeepSettleWindowOpen || (visible != targetVisible && visibleAfterTransition != targetVisible) {
             scheduleDeveloperToolsTransitionSettle(source: source)
         } else {
             developerToolsTransitionTargetVisible = nil
