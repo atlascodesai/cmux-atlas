@@ -3037,9 +3037,15 @@ final class WindowBrowserPortal: NSObject {
                 "reason=\(reason) frame=\(browserPortalDebugFrame(containerView.frame))"
             )
 #endif
+            containerView.setPaneTopChromeHeight(0)
+            containerView.setSearchOverlay(nil)
             containerView.setPaneDropContext(nil)
             containerView.setPortalDragDropZone(nil)
             containerView.setDropZoneOverlay(zone: nil)
+            // Keep the WKWebView attached so transient anchor churn can recover without
+            // a reload, but hide the stale slot immediately so it cannot render in the
+            // wrong pane while SwiftUI/AppKit finishes the rebind.
+            containerView.isHidden = true
             return true
         }
         guard let anchorView = entry.anchorView, let window else {
