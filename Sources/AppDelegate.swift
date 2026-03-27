@@ -10102,17 +10102,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             event: event,
             shortcut: StoredShortcut(key: "l", command: true, shift: false, option: false, control: false)
         ) {
-            if let focusedPanel = tabManager?.focusedBrowserPanel {
+            let routedWindow = mainWindowForShortcutEvent(event) ?? windowForShortcutEvent(event)
+            let routedManager = contextForMainWindow(routedWindow)?.tabManager ?? tabManager
+
+            if let focusedPanel = routedManager?.focusedBrowserPanel {
                 focusBrowserAddressBar(in: focusedPanel)
                 return true
             }
 
             if let browserAddressBarFocusedPanelId,
-               focusBrowserAddressBar(panelId: browserAddressBarFocusedPanelId) {
+               focusBrowserAddressBar(
+                   panelId: browserAddressBarFocusedPanelId,
+                   preferredTabManager: routedManager
+               ) {
                 return true
             }
 
-            if openBrowserAndFocusAddressBar(insertAtEnd: true) != nil {
+            if openBrowserAndFocusAddressBar(insertAtEnd: true, preferredWindow: routedWindow) != nil {
                 return true
             }
         }
@@ -10268,9 +10274,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #endif
 
     @discardableResult
-    private func focusBrowserAddressBar(panelId: UUID) -> Bool {
-        guard let tabManager,
-              let workspace = tabManager.selectedWorkspace,
+    private func focusBrowserAddressBar(
+        panelId: UUID,
+        preferredTabManager: TabManager? = nil
+    ) -> Bool {
+        let targetTabManager = preferredTabManager ?? tabManager
+        guard let targetTabManager,
+              let workspace = targetTabManager.selectedWorkspace,
               let panel = workspace.browserPanel(for: panelId) else {
 #if DEBUG
             dlog(
@@ -10299,11 +10309,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @discardableResult
-    func openBrowserAndFocusAddressBar(url: URL? = nil, insertAtEnd: Bool = false) -> UUID? {
+    func openBrowserAndFocusAddressBar(
+        url: URL? = nil,
+        insertAtEnd: Bool = false,
+        preferredWindow: NSWindow? = nil
+    ) -> UUID? {
+        let targetTabManager =
+            contextForMainWindow(preferredWindow)?.tabManager
+            ?? tabManager
         let preferredProfileID =
-            tabManager?.focusedBrowserPanel?.profileID
-            ?? tabManager?.selectedWorkspace?.preferredBrowserProfileID
-        guard let panelId = tabManager?.openBrowser(
+            targetTabManager?.focusedBrowserPanel?.profileID
+            ?? targetTabManager?.selectedWorkspace?.preferredBrowserProfileID
+        guard let panelId = targetTabManager?.openBrowser(
             url: url,
             preferredProfileID: preferredProfileID,
             insertAtEnd: insertAtEnd
@@ -10323,13 +10340,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
 #endif
 #if DEBUG
-        let didFocus = focusBrowserAddressBar(panelId: panelId)
+        let didFocus = focusBrowserAddressBar(panelId: panelId, preferredTabManager: targetTabManager)
         dlog(
             "browser.focus.openAndFocus result=focus_request panel=\(panelId.uuidString.prefix(5)) " +
             "focused=\(didFocus ? 1 : 0) \(browserFocusStateSnapshot())"
         )
 #else
-        _ = focusBrowserAddressBar(panelId: panelId)
+        _ = focusBrowserAddressBar(panelId: panelId, preferredTabManager: targetTabManager)
 #endif
         return panelId
     }
