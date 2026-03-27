@@ -2018,6 +2018,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let sidebarState: SidebarState
         let sidebarSelectionState: SidebarSelectionState
         weak var window: NSWindow?
+        var windowGeometryObservers: [NSObjectProtocol] = []
 
         init(
             windowId: UUID,
@@ -2372,6 +2373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 // Avoid recursively capturing failed requests from Sentry's own ingestion endpoint.
                 options.enableCaptureFailedRequests = false
             }
+            reportSanitizedMainWindowAutosaveFramesIfNeeded()
         }
 
         if telemetryEnabled && !isRunningUnderXCTest {
@@ -2487,6 +2489,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
 #endif
+    }
+
+    private func reportSanitizedMainWindowAutosaveFramesIfNeeded() {
+        let records = MainWindowAutosaveFrameSanitizer.takePendingTelemetryRecords()
+        guard !records.isEmpty else { return }
+
+        let maxWindowWidth = records.compactMap { $0.parsedFrame?.width }.max() ?? 0
+        let maxWindowHeight = records.compactMap { $0.parsedFrame?.height }.max() ?? 0
+        let maxScreenWidth = records.compactMap { $0.parsedScreenFrame?.width }.max() ?? 0
+        let maxScreenHeight = records.compactMap { $0.parsedScreenFrame?.height }.max() ?? 0
+        let data: [String: Any] = [
+            "removedCount": records.count,
+            "maxWindowWidth": maxWindowWidth,
+            "maxWindowHeight": maxWindowHeight,
+            "maxScreenWidth": maxScreenWidth,
+            "maxScreenHeight": maxScreenHeight,
+        ]
+
+        sentryBreadcrumb(
+            "launch.windowAutosaveFrameSanitized",
+            category: "launch",
+            data: data
+        )
+        sentryCaptureWarning(
+            "Sanitized invalid autosaved main-window frame on launch",
+            category: "launch",
+            data: data,
+            contextKey: "window_autosave_frame_sanitizer"
+        )
     }
 
 #if DEBUG
@@ -2930,6 +2961,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         )
     }
 
+    private func installMainWindowGeometryGuardsIfNeeded(
+        for window: NSWindow,
+        context: MainWindowContext
+    ) {
+        guard context.windowGeometryObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let sources: [(Notification.Name, String)] = [
+            (NSWindow.didResizeNotification, "didResize"),
+            (NSWindow.didChangeScreenNotification, "didChangeScreen"),
+            (NSWindow.didMoveNotification, "didMove"),
+        ]
+
+        for (name, source) in sources {
+            let observer = center.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { [weak self] note in
+                guard let self, let observedWindow = note.object as? NSWindow else { return }
+                self.sanitizeRuntimeMainWindowFrameIfNeeded(observedWindow, source: source)
+            }
+            context.windowGeometryObservers.append(observer)
+        }
+
+        sanitizeRuntimeMainWindowFrameIfNeeded(window, source: "register")
+    }
+
+    private func sanitizeRuntimeMainWindowFrameIfNeeded(_ window: NSWindow, source: String) {
+        let frame = window.frame.standardized
+        guard frame.width.isFinite,
+              frame.height.isFinite,
+              frame.minX.isFinite,
+              frame.minY.isFinite else {
+            return
+        }
+
+        let screen = window.screen
+            ?? NSScreen.screens.first(where: { $0.frame.intersects(frame) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
+
+        let visibleFrame = screen.visibleFrame.standardized
+        let screenFrame = screen.frame.standardized
+        let maxReferenceWidth = max(visibleFrame.width, screenFrame.width, 480)
+        let maxReferenceHeight = max(visibleFrame.height, screenFrame.height, 360)
+        let maximumAllowedWidth = max(maxReferenceWidth * 4, 10_000)
+        let maximumAllowedHeight = max(maxReferenceHeight * 4, 10_000)
+        guard frame.width > maximumAllowedWidth || frame.height > maximumAllowedHeight else {
+            return
+        }
+
+        let clamped = Self.clampFrame(
+            frame,
+            within: visibleFrame,
+            minWidth: CGFloat(SessionPersistencePolicy.minimumWindowWidth),
+            minHeight: CGFloat(SessionPersistencePolicy.minimumWindowHeight)
+        )
+        guard clamped != frame else { return }
+
+        let data: [String: Any] = [
+            "source": source,
+            "beforeWidth": frame.width,
+            "beforeHeight": frame.height,
+            "afterWidth": clamped.width,
+            "afterHeight": clamped.height,
+            "screenWidth": visibleFrame.width,
+            "screenHeight": visibleFrame.height,
+        ]
+        sentryBreadcrumb("launch.windowFrameClamped", category: "launch", data: data)
+        sentryCaptureWarning(
+            "Clamped invalid runtime main-window frame",
+            category: "launch",
+            data: data,
+            contextKey: "window_runtime_frame_guard"
+        )
+        window.setFrame(clamped, display: true, animate: false)
+    }
+
     private func currentDisplayGeometries() -> (
         available: [SessionDisplayGeometry],
         fallback: SessionDisplayGeometry?
@@ -3105,8 +3215,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let minWidth = CGFloat(SessionPersistencePolicy.minimumWindowWidth)
         let minHeight = CGFloat(SessionPersistencePolicy.minimumWindowHeight)
+        // Reject obviously corrupt frames (e.g. 245,700px wide)
+        let maxReasonableSize: CGFloat = 32768
         guard frame.width >= minWidth,
-              frame.height >= minHeight else {
+              frame.height >= minHeight,
+              frame.width <= maxReasonableSize,
+              frame.height <= maxReasonableSize else {
             return nil
         }
 
@@ -3370,10 +3484,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } ?? false
         guard visibleMatches || frameMatches else { return false }
 
-        return frame.width.isFinite
-            && frame.height.isFinite
-            && frame.origin.x.isFinite
-            && frame.origin.y.isFinite
+        guard frame.width.isFinite,
+              frame.height.isFinite,
+              frame.origin.x.isFinite,
+              frame.origin.y.isFinite else {
+            return false
+        }
+
+        // Reject frames that exceed the display bounds — a persisted frame
+        // wider/taller than the display is corrupt or from a stale session.
+        let maxAllowedWidth = targetDisplay.frame.width * 1.5
+        let maxAllowedHeight = targetDisplay.frame.height * 1.5
+        guard frame.width <= maxAllowedWidth,
+              frame.height <= maxAllowedHeight else {
+            return false
+        }
+
+        return true
     }
 
     private nonisolated static func rectApproximatelyEqual(
@@ -3944,17 +4071,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #endif
         if let existing = mainWindowContexts[key] {
             existing.window = window
+            installMainWindowGeometryGuardsIfNeeded(for: window, context: existing)
         } else if let existing = mainWindowContexts.values.first(where: { $0.windowId == windowId }) {
             existing.window = window
             reindexMainWindowContextIfNeeded(existing, for: window)
+            installMainWindowGeometryGuardsIfNeeded(for: window, context: existing)
         } else {
-            mainWindowContexts[key] = MainWindowContext(
+            let context = MainWindowContext(
                 windowId: windowId,
                 tabManager: tabManager,
                 sidebarState: sidebarState,
                 sidebarSelectionState: sidebarSelectionState,
                 window: window
             )
+            mainWindowContexts[key] = context
+            installMainWindowGeometryGuardsIfNeeded(for: window, context: context)
             NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification,
                 object: window,
@@ -11207,6 +11338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // is removed when the last window closes.
         persistWindowGeometry(from: window)
         guard let removed = unregisterMainWindowContext(for: window) else { return }
+        for observer in removed.windowGeometryObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
         commandPaletteVisibilityByWindowId.removeValue(forKey: removed.windowId)
         commandPalettePendingOpenByWindowId.removeValue(forKey: removed.windowId)
         commandPaletteRecentRequestAtByWindowId.removeValue(forKey: removed.windowId)

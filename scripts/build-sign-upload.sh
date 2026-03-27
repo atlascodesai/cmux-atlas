@@ -51,6 +51,8 @@ ENTITLEMENTS="cmux.entitlements"
 RELEASE_REPO="${RELEASE_REPO:-atlascodesai/cmux-atlas}"
 RELEASE_FEED_URL="${RELEASE_FEED_URL:-https://github.com/${RELEASE_REPO}/releases/latest/download/appcast.xml}"
 APP_PATH="build/Build/Products/Release/cmux Atlas.app"
+DMG_RELEASE="cmux-macos.dmg"
+DMG_IMMUTABLE="cmux-macos-${TAG}.dmg"
 HOMEBREW_TAP_REPO="${HOMEBREW_TAP_REPO:-}"
 
 # --- Pre-flight ---
@@ -118,13 +120,14 @@ echo "App notarized"
 
 # --- Create and notarize DMG ---
 echo "Creating DMG..."
-rm -f cmux-macos.dmg
-create-dmg --codesign "$SIGN_HASH" cmux-macos.dmg "$APP_PATH"
+rm -f "$DMG_RELEASE" "$DMG_IMMUTABLE"
+create-dmg --codesign "$SIGN_HASH" "$DMG_RELEASE" "$APP_PATH"
 echo "Notarizing DMG..."
-xcrun notarytool submit cmux-macos.dmg \
+xcrun notarytool submit "$DMG_RELEASE" \
   --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
-xcrun stapler staple cmux-macos.dmg
-xcrun stapler validate cmux-macos.dmg
+xcrun stapler staple "$DMG_RELEASE"
+xcrun stapler validate "$DMG_RELEASE"
+cp "$DMG_RELEASE" "$DMG_IMMUTABLE"
 echo "DMG notarized"
 
 # --- Generate Sparkle appcast ---
@@ -139,7 +142,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
   echo "Release $TAG already exists"
   EXISTING_ASSETS="$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)"
   HAS_CONFLICTING_ASSET="false"
-  for asset in cmux-macos.dmg appcast.xml; do
+  for asset in "$DMG_RELEASE" "$DMG_IMMUTABLE" appcast.xml; do
     if printf '%s\n' "$EXISTING_ASSETS" | grep -Fxq "$asset"; then
       HAS_CONFLICTING_ASSET="true"
       break
@@ -154,14 +157,14 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 
   if [[ "$ALLOW_OVERWRITE" == "true" ]]; then
     echo "Uploading with overwrite enabled for existing release $TAG..."
-    gh release upload "$TAG" cmux-macos.dmg appcast.xml --clobber
+    gh release upload "$TAG" "$DMG_RELEASE" "$DMG_IMMUTABLE" appcast.xml --clobber
   else
     echo "Uploading to existing release $TAG..."
-    gh release upload "$TAG" cmux-macos.dmg appcast.xml
+    gh release upload "$TAG" "$DMG_RELEASE" "$DMG_IMMUTABLE" appcast.xml
   fi
 else
   echo "Creating release $TAG and uploading..."
-  gh release create "$TAG" cmux-macos.dmg appcast.xml --title "$TAG" --notes "See CHANGELOG.md for details"
+  gh release create "$TAG" "$DMG_RELEASE" "$DMG_IMMUTABLE" appcast.xml --title "$TAG" --notes "See CHANGELOG.md for details"
 fi
 
 # --- Verify ---
@@ -219,7 +222,7 @@ elif [[ "$TAG" != *"-nightly"* ]]; then
 fi
 
 # --- Cleanup ---
-rm -rf build/ cmux-macos.dmg appcast.xml
+rm -rf build/ "$DMG_RELEASE" "$DMG_IMMUTABLE" appcast.xml
 echo ""
 echo "=== Release $TAG complete ==="
 say "cmux release complete"

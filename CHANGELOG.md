@@ -4,6 +4,19 @@ All notable changes to cmux are documented here.
 
 ## [1.38.1-atlas.1] - 2026-03-27
 
+## [1.38.1-atlas.2] - 2026-03-27
+
+### Fixed
+- Fix launch crash loops caused by pathological autosaved main-window frames during restore and live-update relaunch
+- Restore the inactive-workspace layout pause guard so hidden workspace stacks do not trigger AppKit layout storms during startup recovery
+- Clamp and reject absurd restored window geometries before they can be applied or re-persisted
+
+### Added
+- Sentry breadcrumbs and warnings for sanitized autosaved frames and runtime frame clamping to confirm whether the issue recurs in production
+- Versioned DMG release asset aliases alongside the stable `cmux-macos.dmg` filename used by Sparkle
+
+## [1.38.1-atlas.1] - 2026-03-27
+
 ### Added
 - Upstream 1.38.x features including `cmux.json` custom commands and layouts, `cmux omo` integration, `cmux ssh --no-focus`, `new-workspace --name`, clickable listening ports, and expanded `send-key` modifier support
 - Additional docs, translations, and test coverage pulled in from the upstream 1.35.0 through 1.38.1 line

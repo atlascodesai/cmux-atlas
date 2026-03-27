@@ -2149,6 +2149,7 @@ struct ContentView: View {
                     )
                     .opacity(presentation.renderOpacity)
                     .allowsHitTesting(isSelectedWorkspace)
+                    .layoutPaused(!presentation.isRenderedVisible)
                     .accessibilityHidden(!presentation.isRenderedVisible)
                     .zIndex(isSelectedWorkspace ? 2 : (isRetiringWorkspace ? 1 : 0))
                     .task(id: shouldPrimeInBackground ? tab.id : nil) {

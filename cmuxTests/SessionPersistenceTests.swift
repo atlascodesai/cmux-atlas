@@ -573,6 +573,29 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(restored.height, 350, accuracy: 0.001)
     }
 
+    func testResolvedWindowFrameRejectsPathologicallyWideFrame() {
+        let savedFrame = SessionRectSnapshot(x: 0, y: 0, width: 245_700, height: 1_290)
+        let savedDisplay = SessionDisplaySnapshot(
+            displayID: 1,
+            frame: SessionRectSnapshot(x: 0, y: 0, width: 2_056, height: 1_329),
+            visibleFrame: SessionRectSnapshot(x: 0, y: 0, width: 2_056, height: 1_290)
+        )
+        let display = AppDelegate.SessionDisplayGeometry(
+            displayID: 1,
+            frame: CGRect(x: 0, y: 0, width: 2_056, height: 1_329),
+            visibleFrame: CGRect(x: 0, y: 0, width: 2_056, height: 1_290)
+        )
+
+        let restored = AppDelegate.resolvedWindowFrame(
+            from: savedFrame,
+            display: savedDisplay,
+            availableDisplays: [display],
+            fallbackDisplay: display
+        )
+
+        XCTAssertNil(restored)
+    }
+
     func testResolvedStartupPrimaryWindowFrameFallsBackToPersistedGeometryWhenPrimaryMissing() {
         let fallbackFrame = SessionRectSnapshot(x: 180, y: 140, width: 900, height: 640)
         let fallbackDisplay = SessionDisplaySnapshot(

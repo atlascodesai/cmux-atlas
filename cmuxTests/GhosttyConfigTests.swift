@@ -1917,6 +1917,65 @@ final class UITestLaunchManifestTests: XCTestCase {
     }
 }
 
+final class MainWindowAutosaveFrameSanitizerTests: XCTestCase {
+    func testInvalidFrameKeysTargetsOnlyCmuxMainWindowAutosaveEntries() {
+        let keys = MainWindowAutosaveFrameSanitizer.invalidFrameKeys(
+            in: [
+                "NSWindow Frame SwiftUI.ModifiedContent<cmux.ContentView>-1-AppWindow-1": "0 0 245700 1290 0 0 2056 1290 ",
+                "NSWindow Frame SwiftUI.Settings": "0 0 900 700 0 0 1440 900 ",
+                "sidebarState": "followWindow",
+            ],
+            screenVisibleFrames: [CGRect(x: 0, y: 0, width: 2056, height: 1290)]
+        )
+
+        XCTAssertEqual(
+            keys,
+            ["NSWindow Frame SwiftUI.ModifiedContent<cmux.ContentView>-1-AppWindow-1"]
+        )
+    }
+
+    func testShouldResetAutosavedFrameRejectsPathologicalWidth() {
+        XCTAssertTrue(
+            MainWindowAutosaveFrameSanitizer.shouldResetAutosavedFrame(
+                "0 0 245700 1290 0 0 2056 1290 ",
+                screenVisibleFrames: [CGRect(x: 0, y: 0, width: 2056, height: 1290)]
+            )
+        )
+    }
+
+    func testShouldResetAutosavedFrameKeepsReasonableFrame() {
+        XCTAssertFalse(
+            MainWindowAutosaveFrameSanitizer.shouldResetAutosavedFrame(
+                "0 0 2056 1290 0 0 2056 1290 ",
+                screenVisibleFrames: [CGRect(x: 0, y: 0, width: 2056, height: 1290)]
+            )
+        )
+    }
+
+    func testSanitizeIfNeededRemovesInvalidStoredFrame() {
+        let suiteName = "cmux-main-window-autosave-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Failed to create isolated UserDefaults suite")
+            return
+        }
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let badKey = "NSWindow Frame SwiftUI.ModifiedContent<cmux.ContentView>-1-AppWindow-1"
+        let goodKey = "NSWindow Frame SwiftUI.Settings"
+        defaults.set("0 0 245700 1290 0 0 2056 1290 ", forKey: badKey)
+        defaults.set("0 0 900 700 0 0 1440 900 ", forKey: goodKey)
+
+        MainWindowAutosaveFrameSanitizer.sanitizeIfNeeded(
+            defaults: defaults,
+            screenVisibleFrames: [CGRect(x: 0, y: 0, width: 2056, height: 1290)]
+        )
+
+        XCTAssertNil(defaults.string(forKey: badKey))
+        XCTAssertEqual(defaults.string(forKey: goodKey), "0 0 900 700 0 0 1440 900 ")
+    }
+}
+
 final class PostHogAnalyticsPropertiesTests: XCTestCase {
     func testDailyActivePropertiesIncludeVersionAndBuild() {
         let properties = PostHogAnalytics.dailyActiveProperties(
