@@ -3167,6 +3167,7 @@ final class TerminalSurface: Identifiable, ObservableObject {
     private var lastFocusState: Bool = false
 #if DEBUG
     private var needsConfirmCloseOverrideForTesting: Bool?
+    private var runtimeSurfaceFreedOutOfBandForTesting = false
 #endif
     private enum PortalLifecycleState: String {
         case live
@@ -3568,6 +3569,19 @@ final class TerminalSurface: Identifiable, ObservableObject {
     @MainActor
     func liveSurfaceForGhosttyAccess(reason: String) -> ghostty_surface_t? {
         guard hasLiveSurface, let surface else { return nil }
+#if DEBUG
+        if runtimeSurfaceFreedOutOfBandForTesting {
+            runtimeSurfaceFreedOutOfBandForTesting = false
+            let callbackContext = surfaceCallbackContext
+            surfaceCallbackContext = nil
+            self.surface = nil
+            activePortalHostLease = nil
+            recordTeardownRequest(reason: reason)
+            markPortalLifecycleClosed(reason: reason)
+            callbackContext?.release()
+            return nil
+        }
+#endif
         guard cmuxSurfacePointerAppearsLive(surface) else {
             let callbackContext = surfaceCallbackContext
             surfaceCallbackContext = nil
@@ -4376,6 +4390,25 @@ final class TerminalSurface: Identifiable, ObservableObject {
         ghostty_surface_free(surfaceToFree)
         callbackContext?.release()
     }
+
+    /// Test-only helper to simulate a stale Swift wrapper whose native surface
+    /// was already freed out-of-band.
+    @MainActor
+    func replaceSurfaceWithFreedPointerForTesting() {
+        guard !runtimeSurfaceFreedOutOfBandForTesting else { return }
+
+        let callbackContext = surfaceCallbackContext
+        surfaceCallbackContext = nil
+
+        guard let surfaceToFree = surface else {
+            callbackContext?.release()
+            return
+        }
+
+        ghostty_surface_free(surfaceToFree)
+        runtimeSurfaceFreedOutOfBandForTesting = true
+        callbackContext?.release()
+    }
 #endif
 
     deinit {
@@ -4401,6 +4434,14 @@ final class TerminalSurface: Identifiable, ObservableObject {
             callbackContext?.release()
             return
         }
+
+#if DEBUG
+        if runtimeSurfaceFreedOutOfBandForTesting {
+            runtimeSurfaceFreedOutOfBandForTesting = false
+            callbackContext?.release()
+            return
+        }
+#endif
 
 #if DEBUG
         let surfaceToken = String(id.uuidString.prefix(5))
