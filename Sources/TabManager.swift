@@ -2767,6 +2767,69 @@ class TabManager: ObservableObject {
         }
     }
 
+    private nonisolated static let fallbackCommandSearchDirectories: [String] = [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/opt/local/bin",
+    ]
+
+    nonisolated static func resolvedCommandPathForTesting(
+        executable: String,
+        environment: [String: String],
+        fallbackDirectories: [String]
+    ) -> String? {
+        resolvedCommandPath(
+            executable: executable,
+            environment: environment,
+            fallbackDirectories: fallbackDirectories
+        )
+    }
+
+    private nonisolated static func resolvedCommandPath(
+        executable: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fallbackDirectories: [String] = fallbackCommandSearchDirectories
+    ) -> String? {
+        guard !executable.isEmpty else { return nil }
+        let fileManager = FileManager.default
+        if executable.contains("/") {
+            return fileManager.isExecutableFile(atPath: executable) ? executable : nil
+        }
+
+        var searchDirectories: [String] = []
+        var seenDirectories: Set<String> = []
+
+        func appendSearchPath(_ path: String?) {
+            guard let path else { return }
+            for rawComponent in path.split(separator: ":") {
+                let component = String(rawComponent).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !component.isEmpty,
+                      seenDirectories.insert(component).inserted else {
+                    continue
+                }
+                searchDirectories.append(component)
+            }
+        }
+
+        appendSearchPath(environment["PATH"])
+        appendSearchPath(getenv("PATH").map { String(cString: $0) })
+        if let bundledBinPath = Bundle.main.resourceURL?.appendingPathComponent("bin").path {
+            appendSearchPath(bundledBinPath)
+        }
+        fallbackDirectories.forEach { appendSearchPath($0) }
+        appendSearchPath("/usr/bin:/bin:/usr/sbin:/sbin")
+
+        for directory in searchDirectories {
+            let candidate = URL(fileURLWithPath: directory, isDirectory: true)
+                .appendingPathComponent(executable)
+                .path
+            if fileManager.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
     private nonisolated static func runCommand(
         directory: String,
         executable: String,
@@ -2796,8 +2859,13 @@ class TabManager: ObservableObject {
         let process = Process()
         let stdout = Pipe()
         let stderr = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
+        if let resolvedExecutable = resolvedCommandPath(executable: executable) {
+            process.executableURL = URL(fileURLWithPath: resolvedExecutable)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executable] + arguments
+        }
         process.currentDirectoryURL = URL(fileURLWithPath: directory)
         process.standardOutput = stdout
         process.standardError = stderr

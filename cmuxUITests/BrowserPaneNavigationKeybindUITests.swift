@@ -819,9 +819,20 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         )
 
         app.typeKey("l", modifierFlags: [.command])
+        XCTAssertTrue(
+            waitForDataMatch(timeout: 6.0) { data in
+                guard data["webViewFocusedAfterAddressBarFocus"] == "false" else { return false }
+                guard let panelId = data["webViewFocusedAfterAddressBarFocusPanelId"] else { return false }
+                return !panelId.isEmpty
+            },
+            "Expected Cmd+L to focus browser omnibar before waiting on XCUI exposure. data=\(String(describing: loadData()))"
+        )
 
         let omnibar = app.textFields["BrowserOmnibarTextField"].firstMatch
-        XCTAssertTrue(omnibar.waitForExistence(timeout: 8.0), "Expected browser omnibar after Cmd+L")
+        XCTAssertTrue(
+            omnibar.waitForExistence(timeout: 8.0),
+            "Expected browser omnibar after Cmd+L. data=\(String(describing: loadData()))"
+        )
 
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
@@ -885,9 +896,20 @@ final class BrowserPaneNavigationKeybindUITests: XCTestCase {
         )
 
         app.typeKey("l", modifierFlags: [.command])
+        XCTAssertTrue(
+            waitForDataMatch(timeout: 6.0) { data in
+                guard data["webViewFocusedAfterAddressBarFocus"] == "false" else { return false }
+                guard let panelId = data["webViewFocusedAfterAddressBarFocusPanelId"] else { return false }
+                return !panelId.isEmpty
+            },
+            "Expected Cmd+L to focus browser omnibar before waiting on XCUI exposure. data=\(String(describing: loadData()))"
+        )
 
         let omnibar = app.textFields["BrowserOmnibarTextField"].firstMatch
-        XCTAssertTrue(omnibar.waitForExistence(timeout: 8.0), "Expected browser omnibar after Cmd+L")
+        XCTAssertTrue(
+            omnibar.waitForExistence(timeout: 8.0),
+            "Expected browser omnibar after Cmd+L. data=\(String(describing: loadData()))"
+        )
 
         app.typeKey("a", modifierFlags: [.command])
         app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
