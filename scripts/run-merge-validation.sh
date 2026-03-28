@@ -23,8 +23,8 @@ echo "Waiting for workflow run to register..."
 sleep 5
 
 RUN_ID="$(
-  gh run list --repo "$REPO" --workflow "$WORKFLOW" --branch "$REF" --limit 1 --json databaseId \
-    --jq '.[0].databaseId'
+  gh run list --repo "$REPO" --workflow "$WORKFLOW" --limit 10 --json databaseId,createdAt,status \
+    --jq 'sort_by(.createdAt) | reverse | .[0].databaseId'
 )"
 
 if [[ -z "${RUN_ID:-}" || "$RUN_ID" == "null" ]]; then
