@@ -2,6 +2,13 @@
 
 All notable changes to cmux are documented here.
 
+## [0.62.2-atlas.5] - 2026-03-28
+
+### Fixed
+- Fix launch crashes caused by corrupt autosaved main-window frames by sanitizing invalid SwiftUI/AppKit window geometry before startup restore
+- Clamp pathological runtime main-window sizes and report the sanitized/clamped frame data to Sentry for follow-up diagnosis
+- Restore inactive-workspace layout pausing so hidden workspace trees do not participate in AppKit layout during window restore churn
+
 ## [0.62.2-atlas.3] - 2026-03-25
 
 ### Fixed

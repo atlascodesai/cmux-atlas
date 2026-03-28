@@ -7,6 +7,84 @@ import ObjectiveC
 import UniformTypeIdentifiers
 import WebKit
 
+private struct LayoutPauseModifier: ViewModifier {
+    let isPaused: Bool
+
+    func body(content: Content) -> some View {
+        content.background(LayoutPauseHelper(isPaused: isPaused))
+    }
+}
+
+private extension View {
+    func layoutPaused(_ paused: Bool) -> some View {
+        modifier(LayoutPauseModifier(isPaused: paused))
+    }
+}
+
+private struct LayoutPauseHelper: NSViewRepresentable {
+    let isPaused: Bool
+
+    func makeNSView(context: Context) -> LayoutPauseNSView {
+        let view = LayoutPauseNSView()
+        view.alphaValue = 0
+        view.frame = .zero
+        return view
+    }
+
+    func updateNSView(_ nsView: LayoutPauseNSView, context: Context) {
+        nsView.updatePauseState(isPaused)
+    }
+}
+
+private final class LayoutPauseNSView: NSView {
+    private weak var container: NSView?
+    private var lastPaused: Bool?
+
+    func updatePauseState(_ isPaused: Bool) {
+        guard isPaused != lastPaused else { return }
+        lastPaused = isPaused
+
+        if container == nil {
+            container = findContainer()
+        }
+
+        guard let container else { return }
+
+        if isPaused {
+            container.isHidden = true
+        } else {
+            container.isHidden = false
+            container.needsLayout = true
+        }
+    }
+
+    private func findContainer() -> NSView? {
+        var current: NSView? = self.superview
+        while let view = current {
+            if let parent = view.superview, parent.subviews.count > 2 {
+                return view
+            }
+            current = view.superview
+        }
+
+        current = self.superview
+        var skippedFirst = false
+        while let view = current {
+            if let parent = view.superview, parent.subviews.count > 1 {
+                if !skippedFirst {
+                    skippedFirst = true
+                    current = view.superview
+                    continue
+                }
+                return view
+            }
+            current = view.superview
+        }
+
+        return nil
+    }
+}
+
 private extension Color {
     init?(hex: String) {
         let hex = hex.trimmingCharacters(in: .init(charactersIn: "#"))
@@ -2141,6 +2219,7 @@ struct ContentView: View {
                     )
                     .opacity(presentation.renderOpacity)
                     .allowsHitTesting(isSelectedWorkspace)
+                    .layoutPaused(!presentation.isRenderedVisible)
                     .accessibilityHidden(!presentation.isRenderedVisible)
                     .zIndex(isSelectedWorkspace ? 2 : (isRetiringWorkspace ? 1 : 0))
                     .task(id: shouldPrimeInBackground ? tab.id : nil) {
