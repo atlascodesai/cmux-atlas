@@ -738,8 +738,8 @@ extension Workspace {
 
 extension Workspace {
     func applyCustomLayout(_ layout: CmuxLayoutNode, baseCwd: String) {
+        guard let rootPaneId = bonsplitController.allPaneIds.first else { return }
         let tree = bonsplitController.treeSnapshot()
-        guard let rootPaneId = tree.id else { return }
 
         var leaves: [(paneId: PaneID, surfaces: [CmuxSurfaceDefinition])] = []
         buildCustomLayoutTree(layout, inPane: rootPaneId, leaves: &leaves)

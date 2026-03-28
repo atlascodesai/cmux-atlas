@@ -1889,6 +1889,7 @@ class TabManager: ObservableObject {
 
     @discardableResult
     func addWorkspace(
+        title: String? = nil,
         workingDirectory overrideWorkingDirectory: String? = nil,
         initialTerminalCommand: String? = nil,
         initialTerminalEnvironment: [String: String] = [:],
@@ -1902,13 +1903,15 @@ class TabManager: ObservableObject {
         let snapshot = workspaceCreationSnapshot()
         let nextTabCount = snapshot.tabs.count + 1
         sentryBreadcrumb("workspace.create", data: ["tabCount": nextTabCount])
+        let requestedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = requestedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Terminal \(nextTabCount)"
         let explicitWorkingDirectory = normalizedWorkingDirectory(overrideWorkingDirectory)
         let workingDirectory = explicitWorkingDirectory ?? preferredWorkingDirectoryForNewTab(snapshot: snapshot)
         let inheritedConfig = inheritedTerminalConfigForNewWorkspace(snapshot: snapshot)
         let ordinal = Self.nextPortOrdinal
         Self.nextPortOrdinal += 1
         let newWorkspace = Workspace(
-            title: "Terminal \(nextTabCount)",
+            title: resolvedTitle,
             workingDirectory: workingDirectory,
             portOrdinal: ordinal,
             configTemplate: inheritedConfig,

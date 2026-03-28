@@ -21,12 +21,12 @@ jobs:
       - name: Select Xcode
         run: |
           set -euo pipefail
-          # Pick the latest Xcode installed on the runner. GitHub-hosted macos-14
-          # defaults to Xcode 15.4, but the project needs Xcode 16+ (Swift tools
-          # version 6.0 required by sentry-cocoa).
-          XCODE_APP="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort | tail -n 1)"
-          if [ -z "$XCODE_APP" ]; then
+          # Pick the newest installed Xcode, tolerating either the default
+          # /Applications/Xcode.app or numbered Xcode_*.app installs.
+          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
             XCODE_APP="/Applications/Xcode.app"
+          else
+            XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort | tail -n 1 || true)"
           fi
           XCODE_DIR="$XCODE_APP/Contents/Developer"
           if [ ! -d "$XCODE_DIR" ]; then

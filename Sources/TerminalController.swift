@@ -5749,7 +5749,6 @@ class TerminalController {
                 // Get terminal grid size from the selected surface
                 if let panelUUID = selectedSurfaceUUID,
                    let panel = ws.panels[panelUUID] as? TerminalPanel,
-                   panel.surface.hasLiveSurface,
                    let ghosttySurface = panel.surface.surface {
                     let size = ghostty_surface_size(ghosttySurface)
                     if size.columns > 0 && size.rows > 0 {
