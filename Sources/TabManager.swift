@@ -154,6 +154,34 @@ struct SidebarWorkspaceAuxiliaryDetailVisibility: Equatable {
     }
 }
 
+struct CmuxSurfaceConfigTemplate: Sendable {
+    var fontSize: Float = 0
+    var workingDirectory: String?
+    var command: String?
+    var environmentVariables: [String: String] = [:]
+
+    init() {}
+
+    init(rawConfig: ghostty_surface_config_s) {
+        fontSize = rawConfig.font_size
+    }
+
+    func sanitizedForWorkspaceCreation() -> CmuxSurfaceConfigTemplate {
+        var sanitized = self
+        sanitized.workingDirectory = nil
+        sanitized.command = nil
+        sanitized.environmentVariables = [:]
+        return sanitized
+    }
+
+    func toGhosttySurfaceConfig() -> ghostty_surface_config_s? {
+        guard fontSize > 0 else { return nil }
+        var config = ghostty_surface_config_new()
+        config.font_size = fontSize
+        return config
+    }
+}
+
 enum SidebarActiveTabIndicatorStyle: String, CaseIterable, Identifiable {
     case leftRail
     case solidFill
@@ -1901,16 +1929,18 @@ class TabManager: ObservableObject {
         // Snapshot current published state once so workspace creation doesn't repeatedly
         // bounce through Combine-backed accessors while we're preparing the new workspace.
         let snapshot = workspaceCreationSnapshot()
+        didCaptureWorkspaceCreationSnapshot()
         let nextTabCount = snapshot.tabs.count + 1
         sentryBreadcrumb("workspace.create", data: ["tabCount": nextTabCount])
         let requestedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = requestedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Terminal \(nextTabCount)"
         let explicitWorkingDirectory = normalizedWorkingDirectory(overrideWorkingDirectory)
         let workingDirectory = explicitWorkingDirectory ?? preferredWorkingDirectoryForNewTab(snapshot: snapshot)
-        let inheritedConfig = inheritedTerminalConfigForNewWorkspace(snapshot: snapshot)
+        let inheritedConfig = inheritedTerminalConfigForNewWorkspace(workspace: snapshot.selectedWorkspace)?
+            .sanitizedForWorkspaceCreation()
         let ordinal = Self.nextPortOrdinal
         Self.nextPortOrdinal += 1
-        let newWorkspace = Workspace(
+        let newWorkspace = makeWorkspaceForCreation(
             title: resolvedTitle,
             workingDirectory: workingDirectory,
             portOrdinal: ordinal,
@@ -2829,6 +2859,26 @@ class TabManager: ObservableObject {
         )
     }
 
+    func didCaptureWorkspaceCreationSnapshot() {}
+
+    func makeWorkspaceForCreation(
+        title: String,
+        workingDirectory: String?,
+        portOrdinal: Int,
+        configTemplate: CmuxSurfaceConfigTemplate?,
+        initialTerminalCommand: String?,
+        initialTerminalEnvironment: [String: String]
+    ) -> Workspace {
+        Workspace(
+            title: title,
+            workingDirectory: workingDirectory,
+            portOrdinal: portOrdinal,
+            configTemplate: configTemplate?.toGhosttySurfaceConfig(),
+            initialTerminalCommand: initialTerminalCommand,
+            initialTerminalEnvironment: initialTerminalEnvironment
+        )
+    }
+
     private func terminalPanelForWorkspaceConfigInheritanceSource(
         snapshot: WorkspaceCreationSnapshot
     ) -> TerminalPanel? {
@@ -2846,8 +2896,10 @@ class TabManager: ObservableObject {
         return workspace.terminalPanelForConfigInheritance()
     }
 
-    private func inheritedTerminalConfigForNewWorkspace() -> ghostty_surface_config_s? {
-        inheritedTerminalConfigForNewWorkspace(snapshot: workspaceCreationSnapshot())
+    func inheritedTerminalConfigForNewWorkspace(workspace: Workspace?) -> CmuxSurfaceConfigTemplate? {
+        inheritedTerminalConfigForNewWorkspace(snapshot: workspaceCreationSnapshot()).map {
+            CmuxSurfaceConfigTemplate(rawConfig: $0)
+        }
     }
 
     private func inheritedTerminalConfigForNewWorkspace(
