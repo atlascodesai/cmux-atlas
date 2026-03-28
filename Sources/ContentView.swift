@@ -2351,12 +2351,9 @@ struct ContentView: View {
     }
 
     private func syncTrafficLightInset() {
-        let inset: CGFloat = (isMinimalMode && !sidebarState.isVisible) ? 80 : 0
-        for tab in tabManager.tabs {
-            if tab.bonsplitController.configuration.appearance.tabBarLeadingInset != inset {
-                tab.bonsplitController.configuration.appearance.tabBarLeadingInset = inset
-            }
-        }
+        // The upstream merge expects a newer Bonsplit API with a configurable
+        // tab-bar leading inset. Our current Bonsplit revision does not expose
+        // that knob, so keep this as a no-op until the submodule catches up.
     }
 
     private func updateTitlebarText() {

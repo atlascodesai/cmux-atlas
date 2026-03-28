@@ -5579,6 +5579,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ = createMainWindow()
     }
 
+    @objc func showOpenFolderPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.title = String(localized: "panel.openFolder.title", defaultValue: "Open Folder")
+        panel.prompt = String(localized: "panel.openFolder.prompt", defaultValue: "Open")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if addWorkspaceInPreferredMainWindow(
+            workingDirectory: url.path,
+            debugSource: "menu.openFolder"
+        ) == nil {
+            _ = createMainWindow(initialWorkingDirectory: url.path)
+        }
+    }
+
     /// Opens a saved organization in a new window.
     func openOrganizationInNewWindow(_ org: WorkspaceOrganization) {
         let snapshot = SessionWindowSnapshot(
