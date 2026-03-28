@@ -3376,6 +3376,34 @@ final class TerminalSurface: Identifiable, ObservableObject {
         portalLifecycleState.rawValue
     }
 
+    @MainActor
+    func liveSurfaceForGhosttyAccess(reason: String) -> ghostty_surface_t? {
+        guard hasLiveSurface, let surface else { return nil }
+        let registry = TerminalSurfaceRegistry.shared
+        let registeredOwnerId = registry.runtimeSurfaceOwnerId(surface)
+        guard registeredOwnerId == id,
+              cmuxSurfacePointerAppearsLive(surface) else {
+            let callbackContext = surfaceCallbackContext
+            surfaceCallbackContext = nil
+            registry.unregisterRuntimeSurface(surface, ownerId: id)
+            self.surface = nil
+            activePortalHostLease = nil
+            recordTeardownRequest(reason: reason)
+            markPortalLifecycleClosed(reason: reason)
+#if DEBUG
+            let registeredOwnerToken = registeredOwnerId.map { String($0.uuidString.prefix(5)) } ?? "nil"
+            dlog(
+                "surface.lifecycle.stale surface=\(id.uuidString.prefix(5)) " +
+                "workspace=\(tabId.uuidString.prefix(5)) reason=\(reason) " +
+                "registryOwner=\(registeredOwnerToken)"
+            )
+#endif
+            callbackContext?.release()
+            return nil
+        }
+        return surface
+    }
+
     private func withDebugMetadataLock<T>(_ body: () -> T) -> T {
         debugMetadataLock.lock()
         defer { debugMetadataLock.unlock() }

@@ -7386,7 +7386,10 @@ final class Workspace: Identifiable, ObservableObject {
 
     private func rememberTerminalConfigInheritanceSource(_ terminalPanel: TerminalPanel) {
         lastTerminalConfigInheritancePanelId = terminalPanel.id
-        if let sourceSurface = terminalPanel.surface.surface,
+        let surface = terminalPanel.surface
+        if let sourceSurface = surface.liveSurfaceForGhosttyAccess(
+            reason: "workspace.inherit.rememberTerminalConfigSource"
+        ),
            let runtimePoints = cmuxCurrentSurfaceFontSizePoints(sourceSurface) {
             let existing = terminalInheritanceFontPointsByPanelId[terminalPanel.id]
             if existing == nil || abs((existing ?? runtimePoints) - runtimePoints) > 0.05 {
@@ -7484,8 +7487,10 @@ final class Workspace: Identifiable, ObservableObject {
             preferredPanelId: preferredPanelId,
             inPane: preferredPaneId
         ) {
-            guard let sourceSurface = terminalPanel.surface.surface else { continue }
-            guard cmuxSurfacePointerAppearsLive(sourceSurface) else { continue }
+            let surface = terminalPanel.surface
+            guard let sourceSurface = surface.liveSurfaceForGhosttyAccess(
+                reason: "workspace.inherit.terminalConfig"
+            ) else { continue }
             var config = cmuxInheritedSurfaceConfig(
                 sourceSurface: sourceSurface,
                 context: GHOSTTY_SURFACE_CONTEXT_SPLIT
@@ -7498,6 +7503,7 @@ final class Workspace: Identifiable, ObservableObject {
                 config.font_size = rootedFontPoints
                 terminalInheritanceFontPointsByPanelId[terminalPanel.id] = rootedFontPoints
             }
+            withExtendedLifetime((terminalPanel, surface)) {}
             rememberTerminalConfigInheritanceSource(terminalPanel)
             if config.font_size > 0 {
                 lastTerminalConfigInheritanceFontPoints = config.font_size
