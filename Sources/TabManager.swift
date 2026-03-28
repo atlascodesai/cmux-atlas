@@ -324,6 +324,10 @@ struct MemoryUsageSnapshot: Equatable {
     func bytes(forPanel panelId: UUID) -> Int64 {
         panelResidentBytes[panelId] ?? 0
     }
+
+    var footerResidentBytes: Int64 {
+        max(0, appResidentBytes + trackedTerminalResidentBytes)
+    }
 }
 
 enum MemoryUsageFormatter {

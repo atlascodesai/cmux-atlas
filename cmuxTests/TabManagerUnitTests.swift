@@ -127,6 +127,27 @@ final class TabManagerAISessionSweepTests: XCTestCase {
     }
 }
 
+final class MemoryUsageSnapshotTests: XCTestCase {
+    func testFooterResidentBytesAddsAppAndTrackedTerminalUsage() {
+        let snapshot = MemoryUsageSnapshot(
+            appResidentBytes: 346_700_000,
+            trackedTerminalResidentBytes: 980_000_000,
+            workspaceResidentBytes: [:],
+            panelResidentBytes: [:],
+            topPanelConsumers: [],
+            topSystemProcesses: [],
+            processGroups: [],
+            systemPressureLevel: .normal,
+            systemTotalBytes: 0,
+            systemAvailableBytes: 0,
+            systemSwapUsedBytes: 0,
+            systemCompressedBytes: 0
+        )
+
+        XCTAssertEqual(snapshot.footerResidentBytes, 1_326_700_000)
+    }
+}
+
 
 @MainActor
 final class TabManagerWorkspaceOwnershipTests: XCTestCase {
