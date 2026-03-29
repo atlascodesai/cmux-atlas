@@ -1,5 +1,11 @@
 # Contributing to cmux
 
+## Contribution Policy
+
+- Internal branches and pull requests are the supported path for code changes.
+- External contributions should start as GitHub issues, not pull requests.
+- Unsolicited external pull requests may be closed and redirected to an issue for discussion first.
+
 ## Prerequisites
 
 - macOS 14+

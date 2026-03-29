@@ -11,6 +11,27 @@ DERIVED_SET=0
 TAG=""
 LAST_SOCKET_PATH_DIR="$HOME/Library/Application Support/cmux-atlas"
 LAST_SOCKET_PATH_FILE="${LAST_SOCKET_PATH_DIR}/last-socket-path"
+AUTO_SKIP_ZIG_BUILD_REASON=""
+
+should_skip_ghostty_cli_helper_zig_build() {
+  if [[ "${CMUX_SKIP_ZIG_BUILD:-}" == "1" ]]; then
+    AUTO_SKIP_ZIG_BUILD_REASON="CMUX_SKIP_ZIG_BUILD=1"
+    return 0
+  fi
+
+  local product_version zig_version major_version
+  product_version="$(sw_vers -productVersion 2>/dev/null || true)"
+  zig_version="$(zig version 2>/dev/null || true)"
+  major_version="${product_version%%.*}"
+
+  if [[ "$zig_version" == "0.15.2" ]] && [[ "$major_version" =~ ^[0-9]+$ ]] && (( major_version >= 26 )); then
+    AUTO_SKIP_ZIG_BUILD_REASON="macOS ${product_version} + zig ${zig_version}"
+    return 0
+  fi
+
+  AUTO_SKIP_ZIG_BUILD_REASON=""
+  return 1
+}
 
 write_last_socket_path() {
   local socket_path="$1"
@@ -105,6 +126,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if should_skip_ghostty_cli_helper_zig_build; then
+  if [[ "${CMUX_SKIP_ZIG_BUILD:-}" != "1" ]]; then
+    echo "Auto-enabling CMUX_SKIP_ZIG_BUILD=1 for Ghostty CLI helper (${AUTO_SKIP_ZIG_BUILD_REASON})"
+  fi
+  export CMUX_SKIP_ZIG_BUILD=1
+fi
+
 if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
@@ -134,6 +162,11 @@ if [[ -z "$TAG" ]]; then
     INFOPLIST_KEY_CFBundleDisplayName="$APP_NAME"
     PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
   )
+fi
+# Forward CMUX_SKIP_ZIG_BUILD to xcodebuild run script phases so release
+# rehearsals follow the same Ghostty helper fallback path as debug builds.
+if [[ "${CMUX_SKIP_ZIG_BUILD:-}" == "1" ]]; then
+  XCODEBUILD_ARGS+=(CMUX_SKIP_ZIG_BUILD=1)
 fi
 XCODEBUILD_ARGS+=(build)
 

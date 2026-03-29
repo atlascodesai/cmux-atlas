@@ -1,0 +1,189 @@
+name: Merge Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or SHA to validate
+        required: false
+        default: ""
+      lane:
+        description: Validation lane to run
+        required: true
+        default: build
+        type: choice
+        options:
+          - build
+          - unit
+          - ui-regressions
+          - compat
+      ui_test_filter:
+        description: UI test class or class/method when lane=ui-regressions
+        required: false
+        default: "DisplayResolutionRegressionUITests"
+
+concurrency:
+  group: merge-validation-${{ inputs.ref || github.ref_name }}-${{ inputs.lane }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: [self-hosted, atlas-macos-arm64]
+    timeout-minutes: 35
+    env:
+      TARGET_REF: ${{ inputs.ref || github.ref }}
+      LANE: ${{ inputs.lane }}
+      UI_TEST_FILTER: ${{ inputs.ui_test_filter || 'DisplayResolutionRegressionUITests' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+            XCODE_APP="/Applications/Xcode.app"
+          else
+            XCODE_APP="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort | tail -n 1 || true)"
+          fi
+          XCODE_DIR="$XCODE_APP/Contents/Developer"
+          if [ ! -d "$XCODE_DIR" ]; then
+            echo "No Xcode found under /Applications" >&2
+            exit 1
+          fi
+          echo "Selected: $XCODE_APP"
+          echo "DEVELOPER_DIR=$XCODE_DIR" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_DIR"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Cache GhosttyKit.xcframework
+        id: cache-ghosttykit
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: GhosttyKit.xcframework
+          key: ghosttykit-${{ hashFiles('.gitmodules', 'ghostty') }}
+
+      - name: Download pre-built GhosttyKit.xcframework
+        if: steps.cache-ghosttykit.outputs.cache-hit != 'true'
+        run: ./scripts/download-prebuilt-ghosttykit.sh
+
+      - name: Install zig
+        run: |
+          ZIG_REQUIRED="0.15.2"
+          if command -v zig >/dev/null 2>&1 && zig version 2>/dev/null | grep -q "^${ZIG_REQUIRED}"; then
+            echo "zig ${ZIG_REQUIRED} already installed"
+          else
+            echo "Installing zig ${ZIG_REQUIRED} from tarball"
+            curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
+            tar xf /tmp/zig.tar.xz -C /tmp
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.local/bin:$PATH"
+            zig version
+          fi
+
+      - name: Cache Swift packages
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4
+        with:
+          path: .ci-source-packages
+          key: merge-validation-spm-${{ hashFiles('GhosttyTabs.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: merge-validation-spm-
+
+      - name: Resolve Swift packages
+        run: |
+          set -euo pipefail
+          SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
+          mkdir -p "$SOURCE_PACKAGES_DIR"
+
+          SCHEME="cmux"
+          if [ "$LANE" = "unit" ] || [ "$LANE" = "compat" ]; then
+            SCHEME="cmux-unit"
+          fi
+
+          for attempt in 1 2 3; do
+            if xcodebuild -project GhosttyTabs.xcodeproj -scheme "$SCHEME" -configuration Debug \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+              -resolvePackageDependencies; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Failed to resolve Swift packages after 3 attempts" >&2
+              exit 1
+            fi
+            echo "Package resolution failed on attempt $attempt, retrying..."
+            sleep $((attempt * 5))
+          done
+
+      - name: Run selected lane
+        env:
+          CMUX_SKIP_ZIG_BUILD: '0'
+        run: |
+          set -euo pipefail
+          SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
+
+          run_unit_tests() {
+            xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux-unit -configuration Debug \
+              -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+              -disableAutomaticPackageResolution \
+              -destination "platform=macOS" \
+              -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace \
+              test
+          }
+
+          case "$LANE" in
+            build)
+              xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+                -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+                -disableAutomaticPackageResolution \
+                -destination "platform=macOS" build
+              ;;
+            unit)
+              run_unit_tests
+              ;;
+            ui-regressions)
+              if [ "$UI_TEST_FILTER" = "DisplayResolutionRegressionUITests" ]; then
+                HELPER_PATH="/tmp/create-virtual-display"
+                MANIFEST_PATH="/tmp/cmux-ui-test-display-harness.json"
+                rm -f "$MANIFEST_PATH"
+                trap 'rm -f "$MANIFEST_PATH"' EXIT
+                clang -framework Foundation -framework CoreGraphics \
+                  -o "$HELPER_PATH" scripts/create-virtual-display.m
+                printf '%s\n' "{\"helperBinaryPath\":\"$HELPER_PATH\"}" > "$MANIFEST_PATH"
+              fi
+
+              xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+                -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+                -disableAutomaticPackageResolution \
+                -destination "platform=macOS" \
+                -only-testing:cmuxUITests/"$UI_TEST_FILTER" \
+                test
+              ;;
+            compat)
+              run_unit_tests
+
+              clang -framework Foundation -framework CoreGraphics \
+                -o /tmp/create-virtual-display scripts/create-virtual-display.m
+              /tmp/create-virtual-display &
+              VDISPLAY_PID=$!
+              trap 'kill "$VDISPLAY_PID" >/dev/null 2>&1 || true; rm -f /tmp/create-virtual-display' EXIT
+              sleep 3
+
+              xcodebuild -project GhosttyTabs.xcodeproj -scheme cmux -configuration Debug \
+                -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
+                -disableAutomaticPackageResolution \
+                -destination "platform=macOS" build
+
+              chmod +x scripts/smoke-test-ci.sh
+              scripts/smoke-test-ci.sh
+              ;;
+            *)
+              echo "Unsupported lane: $LANE" >&2
+              exit 1
+              ;;
+          esac

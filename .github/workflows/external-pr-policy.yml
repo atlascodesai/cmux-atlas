@@ -1,0 +1,50 @@
+name: External PR Policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  policy:
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Best-effort close and redirect to issues
+        id: close_pr
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const message = [
+              "Thanks for the contribution.",
+              "",
+              "This repo does not accept external pull requests directly.",
+              "Please open a GitHub issue first so changes can be discussed and scoped before code is proposed.",
+              "",
+              "Closing this PR for now."
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: message,
+            });
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              state: "closed",
+            });
+
+      - name: Fail with policy message
+        run: |
+          echo "External pull requests are not accepted on this repository."
+          echo "Please open an issue first."
+          exit 1

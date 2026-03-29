@@ -2,6 +2,81 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.6] - 2026-03-29
+
+### Changed
+- Rebuilt the Atlas fork on a clean upstream `1.38.1` base while preserving Atlas branding, AI session resume/editor sync, tracked terminal memory, and markdown panel workflows
+
+### Fixed
+- Release rehearsals on macOS 26 now follow the same Ghostty CLI helper fallback path as tagged Debug builds
+- Restored the Claude/Codex titlebar assets and Claude wrapper session registration behavior on the rebuilt release line
+
+## [1.38.1-atlas.5] - 2026-03-29
+
+### Fixed
+- Refresh memory usage immediately when terminal TTY registration or Claude/Codex live-session tracking changes, so newly restored AI tabs do not lag behind in the sidebar RAM footer
+
+## [1.38.1-atlas.4] - 2026-03-29
+
+### Added
+- File menu and command palette action to refresh AI resume recovery for the current workspace
+- Sentry warnings when AI resume recovery finds no recoverable sessions or cannot construct a Claude/Codex resume command
+
+### Fixed
+- Session restore being incorrectly suppressed on updater relaunches and other non-open launch arguments
+- Zsh shell integration regression where `_cmux_report_tty_once` called a missing `_cmux_send_bg` helper
+
+## [1.38.1-atlas.3] - 2026-03-29
+
+### Added
+- Upstream `cmux.json` custom command support, directory trust flow, and docs updates
+- New remote daemon tmux-compat relay support, `cmux omo`, and `claude-teams` integration updates
+- Internal PR E2E coverage and an external-PR policy workflow to keep self-hosted CI limited to trusted branches
+
+### Changed
+- Synced the Atlas fork onto upstream `1.38.1` while preserving Atlas update, workflow, and AI-session integrations
+- Footer memory reporting now includes tracked terminal process usage instead of app-only resident memory
+
+### Fixed
+- Launch crashes from corrupt autosaved window frames, including runtime frame clamping and Sentry diagnostics
+- Stale Claude/Codex resume prefill so ended sessions do not override a newer live TUI session
+- Browser return/IME routing, stale terminal-surface ownership handling, and inherited-surface quarantine paths lost during merge resolution
+
+## [0.62.2-atlas.5] - 2026-03-28
+
+### Fixed
+- Fix launch crashes caused by corrupt autosaved main-window frames by sanitizing invalid SwiftUI/AppKit window geometry before startup restore
+- Clamp pathological runtime main-window sizes and report the sanitized/clamped frame data to Sentry for follow-up diagnosis
+- Restore inactive-workspace layout pausing so hidden workspace trees do not participate in AppKit layout during window restore churn
+
+## [0.62.2-atlas.3] - 2026-03-25
+
+### Fixed
+- Fix Sparkle auto-update error 4005 (installer fails to start) by porting upstream's SPUStandardUserDriver fallback for menu-triggered updates
+- Fix Sentry DSN pointing to upstream US project instead of fork's DE region project
+- Fix CI codesign applying app entitlements to Sparkle XPC services via --deep; now signs inside-out
+
+### Added
+- Keyboard shortcuts: ⌥⌘C for new Claude Code tab, ⌥⌘X for new Codex tab (respects permissive/yolo settings)
+- Browser link toggle button in titlebar to switch between cmux browser and external browser
+- Organizations submenu in File menu with rename, export, import, and history
+
+### Changed
+- File menu restructured: "New Organization" (⇧⌘N) opens a new window, cleaner layout
+- Organization items removed from workspace right-click context menu (now only in File menu)
+
+## [0.62.2-atlas.2] - 2026-03-25
+
+### Fixed
+- Fix production crashes and high memory/CPU usage from AI session detection scanning large JSONL files
+- AI session resume now pre-populates the terminal input instead of showing an overlay banner
+
+### Added
+- Cmd+Shift+T restores closed terminal tabs with AI session auto-resume
+
+### Changed
+- AI session detection poll interval reduced from 4s to 12s for lower background resource usage
+
 ## [0.62.2] - 2026-03-14
 
 ### Added
