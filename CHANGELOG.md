@@ -2,6 +2,11 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.7] - 2026-03-29
+
+### Fixed
+- Rebuilt release line no longer depends on newer local-only Bonsplit tab bar APIs, so Release builds succeed against the committed submodule revision
+
 ## [1.38.1-atlas.6] - 2026-03-29
 
 ### Changed
