@@ -408,6 +408,7 @@ final class MemoryUsageStore: ObservableObject {
         qos: .utility
     )
     private var timer: DispatchSourceTimer?
+    private var lastImmediateRefreshAt: TimeInterval = 0
 
     private init() {
         startPolling()
@@ -440,6 +441,16 @@ final class MemoryUsageStore: ObservableObject {
             guard let self else { return }
             guard self.snapshot != nextSnapshot else { return }
             self.snapshot = nextSnapshot
+        }
+    }
+
+    func requestImmediateRefresh(minimumInterval: TimeInterval = 0.35) {
+        pollQueue.async { [weak self] in
+            guard let self else { return }
+            let now = Date().timeIntervalSince1970
+            guard now - self.lastImmediateRefreshAt >= minimumInterval else { return }
+            self.lastImmediateRefreshAt = now
+            self.pollOnce()
         }
     }
 

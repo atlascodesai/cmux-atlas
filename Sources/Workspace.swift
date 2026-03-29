@@ -6769,6 +6769,7 @@ final class Workspace: Identifiable, ObservableObject {
                 } else {
                     self.cachedAISessions.removeValue(forKey: panelId)
                 }
+                MemoryUsageStore.shared.requestImmediateRefresh()
             }
         }
     }
@@ -6792,6 +6793,7 @@ final class Workspace: Identifiable, ObservableObject {
         } else {
             cachedAISessions.removeValue(forKey: panelId)
         }
+        MemoryUsageStore.shared.requestImmediateRefresh()
     }
 
     func recomputeListeningPorts() {
