@@ -186,6 +186,40 @@ final class TerminalPanel: Panel, ObservableObject {
         surface.sendCommand(command)
     }
 
+    @discardableResult
+    func prefillResumeAction(_ snapshot: RestoredTerminalActionSnapshot) -> Bool {
+        let permissiveModeEnabled: Bool
+        switch snapshot.agentType {
+        case .claudeCode:
+            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
+        case .codex:
+            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
+        }
+        guard let command = snapshot.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) else {
+            sentryCaptureWarning(
+                "AI resume command missing",
+                category: "ai_resume",
+                data: [
+                    "agentType": snapshot.agentType.rawValue,
+                    "hasSessionId": snapshot.sessionId != nil,
+                    "workingDirectory": snapshot.workingDirectory ?? "",
+                    "projectPath": snapshot.projectPath ?? "",
+                    "panelId": id.uuidString,
+                    "workspaceId": workspaceId.uuidString,
+                ],
+                contextKey: "ai_resume_command_missing"
+            )
+            return false
+        }
+        sendText(command)
+        return true
+    }
+
+#if DEBUG
+    func queuedTextForTesting() -> String {
+        surface.queuedTextForTesting()
+    }
+#endif
     func performBindingAction(_ action: String) -> Bool {
         surface.performBindingAction(action)
     }

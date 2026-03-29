@@ -5208,6 +5208,14 @@ struct ContentView: View {
         )
         contributions.append(
             CommandPaletteCommandContribution(
+                commandId: "palette.refreshAIResumes",
+                title: constant(String(localized: "menu.file.refreshAIResumes", defaultValue: "Refresh AI Resumes")),
+                subtitle: constant(String(localized: "command.refreshAIResumes.subtitle", defaultValue: "AI Sessions")),
+                keywords: ["refresh", "resume", "ai", "claude", "codex", "session"]
+            )
+        )
+        contributions.append(
+            CommandPaletteCommandContribution(
                 commandId: "palette.toggleSidebar",
                 title: constant(String(localized: "command.toggleSidebar.title", defaultValue: "Toggle Sidebar")),
                 subtitle: constant(String(localized: "command.toggleSidebar.subtitle", defaultValue: "Layout")),
@@ -5875,6 +5883,9 @@ struct ContentView: View {
         }
         registry.register(commandId: "palette.reopenClosedBrowserTab") {
             _ = tabManager.reopenMostRecentlyClosedBrowserPanel()
+        }
+        registry.register(commandId: "palette.refreshAIResumes") {
+            _ = tabManager.selectedWorkspace?.refreshAIResumes()
         }
         registry.register(commandId: "palette.toggleSidebar") {
             sidebarState.toggle()
@@ -9434,7 +9445,7 @@ private struct SidebarMemoryUsageButton: View {
     }
 
     private var footerValueText: String {
-        let bytes = memoryUsageStore.snapshot.appResidentBytes
+        let bytes = memoryUsageStore.snapshot.footerResidentBytes
         guard bytes > 0 else {
             return String(localized: "memory.footer.loading", defaultValue: "RAM --")
         }

@@ -516,6 +516,52 @@ extension Workspace {
         )
     }
 
+    @discardableResult
+    func refreshAIResumes(reportTelemetry: Bool = true) -> Int {
+        refreshAISessionCacheNowForTerminalPanels()
+
+        let terminalPanelIds = panels
+            .compactMap { key, value in value is TerminalPanel ? key : nil }
+            .sorted { $0.uuidString < $1.uuidString }
+
+        var appliedCount = 0
+        var skippedLiveCount = 0
+
+        for panelId in terminalPanelIds {
+            guard let terminalPanel = panels[panelId] as? TerminalPanel else { continue }
+            if activeAISessions[panelId] != nil {
+                skippedLiveCount += 1
+                continue
+            }
+            guard let action = currentRestoredTerminalAction(panelId: panelId) else { continue }
+            if terminalPanel.prefillResumeAction(action) {
+                appliedCount += 1
+            }
+        }
+
+        if reportTelemetry {
+            let data: [String: Any] = [
+                "workspaceId": id.uuidString,
+                "terminalPanelCount": terminalPanelIds.count,
+                "appliedCount": appliedCount,
+                "skippedLiveCount": skippedLiveCount,
+                "cachedSessionCount": cachedAISessions.count,
+                "activeSessionCount": activeAISessions.count,
+            ]
+            sentryBreadcrumb("ai.resume.refresh", category: "ai_resume", data: data)
+            if appliedCount == 0 {
+                sentryCaptureWarning(
+                    "Refresh AI Resumes found no recoverable sessions",
+                    category: "ai_resume",
+                    data: data,
+                    contextKey: "ai_resume_refresh"
+                )
+            }
+        }
+
+        return appliedCount
+    }
+
     nonisolated static func resolvedSnapshotTerminalScrollback(
         capturedScrollback: String?,
         fallbackScrollback: String?,

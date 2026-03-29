@@ -129,12 +129,28 @@ enum SessionRestorePolicy {
             return false
         }
 
-        let extraArgs = arguments
-            .dropFirst()
-            .filter { !$0.hasPrefix("-psn_") }
+        let extraArgs = arguments.dropFirst()
+        if extraArgs.isEmpty {
+            return true
+        }
 
-        // Any explicit launch argument is treated as an explicit open intent.
-        return extraArgs.isEmpty
+        let ignorablePrefixes = [
+            "-psn_",
+            UITestLaunchManifest.argumentName,
+        ]
+        let filteredArgs = extraArgs.filter { argument in
+            !ignorablePrefixes.contains(where: { argument.hasPrefix($0) })
+        }
+
+        // Treat launch arguments as non-restoring only when they look like an
+        // actual open intent (e.g. a file path or URL). Updater relaunches and
+        // internal harness args should not suppress session restore.
+        return !filteredArgs.contains { argument in
+            argument.hasPrefix("/") ||
+            argument.hasPrefix("file://") ||
+            argument.hasPrefix("http://") ||
+            argument.hasPrefix("https://")
+        }
     }
 }
 

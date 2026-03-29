@@ -21041,6 +21041,23 @@
         }
       }
     },
+    "command.refreshAIResumes.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI Sessions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AIセッション"
+          }
+        }
+      }
+    },
     "command.restartSocketListener.subtitle": {
       "extractionState": "manual",
       "localizations": {
@@ -38157,6 +38174,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Нова робоча область"
+          }
+        }
+      }
+    },
+    "menu.file.refreshAIResumes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh AI Resumes"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AI再開候補を更新"
           }
         }
       }

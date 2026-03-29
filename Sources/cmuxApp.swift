@@ -660,6 +660,14 @@ struct cmuxApp: App {
                 }
                 .keyboardShortcut("p", modifiers: [.command, .shift])
 
+                Button(String(localized: "menu.file.reopenClosedPanel", defaultValue: "Reopen Closed Panel")) {
+                    _ = activeTabManager.reopenMostRecentlyClosedPanel()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+
+                Button(String(localized: "menu.file.refreshAIResumes", defaultValue: "Refresh AI Resumes")) {
+                    _ = activeTabManager.selectedWorkspace?.refreshAIResumes()
+                }
                 Divider()
 
                 // Terminal semantics:

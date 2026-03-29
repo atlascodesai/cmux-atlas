@@ -277,6 +277,58 @@ final class TabManagerChildExitCloseTests: XCTestCase {
     }
 }
 
+@MainActor
+final class TabManagerAISessionSweepTests: XCTestCase {
+    func testSweepPrefillsResumeCommandWhenTrackedCodexProcessIsDead() {
+        let manager = TabManager()
+        guard let workspace = manager.selectedWorkspace,
+              let panelId = workspace.focusedPanelId,
+              let terminalPanel = workspace.terminalPanel(for: panelId) else {
+            XCTFail("Expected selected workspace with focused terminal panel")
+            return
+        }
+
+        workspace.registerActiveAISession(
+            panelId: panelId,
+            snapshot: ActiveAISessionSnapshot(
+                agentType: .codex,
+                sessionId: "session-dead-pid",
+                workingDirectory: "/tmp/project",
+                projectPath: "/tmp/project",
+                pid: 0,
+                lastUpdatedAt: Date().timeIntervalSince1970
+            )
+        )
+
+        XCTAssertEqual(terminalPanel.queuedTextForTesting(), "")
+
+        manager.sweepAgentProcessesForTesting()
+
+        XCTAssertEqual(terminalPanel.queuedTextForTesting(), "codex resume session-dead-pid")
+        XCTAssertNil(workspace.activeAISession(panelId: panelId, agentType: .codex))
+    }
+}
+
+final class MemoryUsageSnapshotTests: XCTestCase {
+    func testFooterResidentBytesAddsAppAndTrackedTerminalUsage() {
+        let snapshot = MemoryUsageSnapshot(
+            appResidentBytes: 346_700_000,
+            trackedTerminalResidentBytes: 980_000_000,
+            workspaceResidentBytes: [:],
+            panelResidentBytes: [:],
+            topPanelConsumers: [],
+            topSystemProcesses: [],
+            processGroups: [],
+            systemPressureLevel: .normal,
+            systemTotalBytes: 0,
+            systemAvailableBytes: 0,
+            systemSwapUsedBytes: 0,
+            systemCompressedBytes: 0
+        )
+
+        XCTAssertEqual(snapshot.footerResidentBytes, 1_326_700_000)
+    }
+}
 
 @MainActor
 final class TabManagerWorkspaceOwnershipTests: XCTestCase {
