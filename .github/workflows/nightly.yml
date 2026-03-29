@@ -13,8 +13,7 @@ on:
 
 concurrency:
   group: nightly-build-${{ github.ref_name }}
-  # Queue concurrent runs instead of canceling them so no build is lost.
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -26,6 +25,7 @@ env:
 
 jobs:
   decide:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')
     runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.decide.outputs.should_build }}

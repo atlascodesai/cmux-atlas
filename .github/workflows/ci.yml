@@ -8,11 +8,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   workflow-guard-tests:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,6 +44,7 @@ jobs:
         run: ./tests/test_ci_ghosttykit_checksum_present.sh
 
   remote-daemon-tests:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,6 +63,7 @@ jobs:
         run: ./tests/test_remote_daemon_release_assets.sh
 
   web-typecheck:
+    if: github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -80,7 +83,7 @@ jobs:
 
   tests:
     # Never run WarpBuild jobs for fork pull requests (avoid billing on external PRs).
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 30
     steps:
@@ -240,7 +243,7 @@ jobs:
     # Keep lag validation separate from UI regressions so functional UI failures
     # and performance regressions stay isolated. Broader interactive UI suites
     # still run via test-e2e.yml on GitHub-hosted runners.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: (github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'release: ')) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 20
     steps:
