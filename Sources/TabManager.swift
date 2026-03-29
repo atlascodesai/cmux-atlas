@@ -1245,6 +1245,40 @@ final class NotificationBurstCoalescer {
     }
 }
 
+struct RecentlyClosedPanelStack {
+    private(set) var entries: [ClosedPanelRestoreEntry] = []
+    let capacity: Int
+
+    init(capacity: Int) {
+        self.capacity = max(1, capacity)
+    }
+
+    var isEmpty: Bool {
+        entries.isEmpty
+    }
+
+    mutating func push(_ entry: ClosedPanelRestoreEntry) {
+        entries.append(entry)
+        if entries.count > capacity {
+            entries.removeFirst(entries.count - capacity)
+        }
+    }
+
+    mutating func pop() -> ClosedPanelRestoreEntry? {
+        entries.popLast()
+    }
+
+    mutating func popMostRecentBrowser() -> ClosedBrowserPanelRestoreSnapshot? {
+        for index in entries.indices.reversed() {
+            if case .browser(let snapshot) = entries[index] {
+                entries.remove(at: index)
+                return snapshot
+            }
+        }
+        return nil
+    }
+}
+
 struct RecentlyClosedBrowserStack {
     private(set) var entries: [ClosedBrowserPanelRestoreSnapshot] = []
     let capacity: Int
@@ -1551,13 +1585,15 @@ class TabManager: ObservableObject {
                 if let selectedTabId = self.selectedTabId {
                     self.markFocusedPanelReadIfActive(tabId: selectedTabId)
                 }
-                // Sync external editor to the newly selected workspace's directory
-                if let workspace = self.selectedWorkspace {
+                // Only the key window should drive external editor sync.
+                if let workspace = self.selectedWorkspace,
+                   self.window?.isKeyWindow == true {
                     EditorSyncController.shared.workspaceDidChange(directory: workspace.currentDirectory)
                 }
                 // Keep the directory hook up to date for immediate-open
                 EditorSyncController.shared.currentWorkspaceDirectory = { [weak self] in
-                    self?.selectedWorkspace?.currentDirectory
+                    guard self?.window?.isKeyWindow == true else { return nil }
+                    return self?.selectedWorkspace?.currentDirectory
                 }
 #if DEBUG
                 let dtMs = self.debugWorkspaceSwitchStartTime > 0
@@ -1580,7 +1616,7 @@ class TabManager: ObservableObject {
     }
     private var pendingPanelTitleUpdates: [PanelTitleUpdateKey: String] = [:]
     private let panelTitleUpdateCoalescer = NotificationBurstCoalescer(delay: 1.0 / 30.0)
-    private var recentlyClosedBrowsers = RecentlyClosedBrowserStack(capacity: 20)
+    private var recentlyClosedPanels = RecentlyClosedPanelStack(capacity: 20)
     private let initialWorkspaceGitProbeQueue = DispatchQueue(
         label: "com.cmux.initial-workspace-git-probe",
         qos: .utility
@@ -1748,12 +1784,16 @@ class TabManager: ObservableObject {
 
     private func wireClosedBrowserTracking(for workspace: Workspace) {
         workspace.onClosedBrowserPanel = { [weak self] snapshot in
-            self?.recentlyClosedBrowsers.push(snapshot)
+            self?.recentlyClosedPanels.push(.browser(snapshot))
+        }
+        workspace.onClosedTerminalPanel = { [weak self] snapshot in
+            self?.recentlyClosedPanels.push(.terminal(snapshot))
         }
     }
 
     private func unwireClosedBrowserTracking(for workspace: Workspace) {
         workspace.onClosedBrowserPanel = nil
+        workspace.onClosedTerminalPanel = nil
     }
 
     var selectedWorkspace: Workspace? {
@@ -4503,11 +4543,60 @@ class TabManager: ObservableObject {
         )
     }
 
-    /// Reopen the most recently closed browser panel (Cmd+Shift+T).
+    /// Reopen the most recently closed panel (Cmd+Shift+T).
+    /// Handles both browser panels and terminal panels with AI sessions.
+    @discardableResult
+    func reopenMostRecentlyClosedPanel() -> Bool {
+        while let entry = recentlyClosedPanels.pop() {
+            switch entry {
+            case .browser(let snapshot):
+                guard let targetWorkspace =
+                    tabs.first(where: { $0.id == snapshot.workspaceId })
+                    ?? selectedWorkspace
+                    ?? tabs.first else {
+                    return false
+                }
+                let preReopenFocusedPanelId = focusedPanelId(for: targetWorkspace.id)
+
+                if selectedTabId != targetWorkspace.id {
+                    selectedTabId = targetWorkspace.id
+                }
+
+                if let reopenedPanelId = reopenClosedBrowserPanel(snapshot, in: targetWorkspace) {
+                    enforceReopenedBrowserFocus(
+                        tabId: targetWorkspace.id,
+                        reopenedPanelId: reopenedPanelId,
+                        preReopenFocusedPanelId: preReopenFocusedPanelId
+                    )
+                    return true
+                }
+
+            case .terminal(let snapshot):
+                guard let targetWorkspace =
+                    tabs.first(where: { $0.id == snapshot.workspaceId })
+                    ?? selectedWorkspace
+                    ?? tabs.first else {
+                    return false
+                }
+
+                if selectedTabId != targetWorkspace.id {
+                    selectedTabId = targetWorkspace.id
+                }
+
+                if reopenClosedTerminalPanel(snapshot, in: targetWorkspace) {
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    /// Reopen the most recently closed browser panel.
     /// No-op when no browser panel restore snapshot is available.
     @discardableResult
     func reopenMostRecentlyClosedBrowserPanel() -> Bool {
-        while let snapshot = recentlyClosedBrowsers.pop() {
+        while let snapshot = recentlyClosedPanels.popMostRecentBrowser() {
             guard let targetWorkspace =
                 tabs.first(where: { $0.id == snapshot.workspaceId })
                 ?? selectedWorkspace
@@ -4531,6 +4620,31 @@ class TabManager: ObservableObject {
         }
 
         return false
+    }
+
+    private func reopenClosedTerminalPanel(
+        _ snapshot: ClosedTerminalPanelRestoreSnapshot,
+        in workspace: Workspace
+    ) -> Bool {
+        let paneId: UUID
+        if workspace.bonsplitController.allPaneIds.contains(where: { $0.id == snapshot.originalPaneId }) {
+            paneId = snapshot.originalPaneId
+        } else if let focusedPane = workspace.bonsplitController.focusedPaneId {
+            paneId = focusedPane.id
+        } else {
+            return false
+        }
+
+        guard let terminalPanel = workspace.newTerminalSurface(
+            inPane: PaneID(id: paneId),
+            focus: true,
+            workingDirectory: snapshot.workingDirectory
+        ) else {
+            return false
+        }
+
+        terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
+        return true
     }
 
     private func enforceReopenedBrowserFocus(
@@ -5962,7 +6076,7 @@ extension TabManager {
         workspaceCycleCooldownTask = nil
         isWorkspaceCycleHot = false
         selectionSideEffectsGeneration &+= 1
-        recentlyClosedBrowsers = RecentlyClosedBrowserStack(capacity: 20)
+        recentlyClosedPanels = RecentlyClosedPanelStack(capacity: 20)
 
         // Build the new workspace list locally to avoid intermediate @Published
         // emissions (empty tabs, nil selectedTabId) that can leave SwiftUI's

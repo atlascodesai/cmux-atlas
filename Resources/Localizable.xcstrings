@@ -21041,6 +21041,23 @@
         }
       }
     },
+    "command.reopenClosedPanel.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panels"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パネル"
+          }
+        }
+      }
+    },
     "command.refreshAIResumes.subtitle": {
       "extractionState": "manual",
       "localizations": {
@@ -21054,6 +21071,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "AIセッション"
+          }
+        }
+      }
+    },
+    "contextMenu.copyPath": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Path"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "パスをコピー"
           }
         }
       }
@@ -38667,6 +38701,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Відновити закриту панель браузера"
+          }
+        }
+      }
+    },
+    "menu.file.reopenClosedPanel": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reopen Closed Panel"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "閉じたパネルを再度開く"
           }
         }
       }

@@ -21,6 +21,51 @@ import Foundation
 /// - Non-blocking: editor open is async and failures are silently ignored
 @MainActor
 final class EditorSyncController: ObservableObject {
+    struct Environment {
+        var homeDirectoryPath: String
+        var isExecutableFileAtPath: (String) -> Bool
+        var applicationURLForTarget: (TerminalDirectoryOpenTarget) -> URL?
+        var bundleIdentifierForTarget: (TerminalDirectoryOpenTarget) -> String?
+        var isApplicationRunning: (String) -> Bool
+        var inheritedEnvironment: () -> [String: String]
+        var sleep: (Duration) async -> Void
+        var runCLI: (URL, [String], [String: String]) throws -> Void
+        var openDirectory: (URL, URL) -> Void
+
+        static let live = Environment(
+            homeDirectoryPath: FileManager.default.homeDirectoryForCurrentUser.path,
+            isExecutableFileAtPath: { FileManager.default.isExecutableFile(atPath: $0) },
+            applicationURLForTarget: { $0.applicationURL() },
+            bundleIdentifierForTarget: { target in
+                target.applicationURL().flatMap { Bundle(url: $0)?.bundleIdentifier }
+            },
+            isApplicationRunning: { bundleIdentifier in
+                !NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).isEmpty
+            },
+            inheritedEnvironment: { ProcessInfo.processInfo.environment },
+            sleep: { duration in
+                try? await Task.sleep(for: duration)
+            },
+            runCLI: { executableURL, arguments, environment in
+                let process = Process()
+                process.executableURL = executableURL
+                process.arguments = arguments
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                process.environment = environment
+                try process.run()
+            },
+            openDirectory: { directoryURL, applicationURL in
+                let configuration = NSWorkspace.OpenConfiguration()
+                configuration.activates = false
+                NSWorkspace.shared.open(
+                    [directoryURL],
+                    withApplicationAt: applicationURL,
+                    configuration: configuration
+                )
+            }
+        )
+    }
 
     static let shared = EditorSyncController()
 
@@ -29,19 +74,22 @@ final class EditorSyncController: ObservableObject {
     static let enabledKey = "editorSync.enabled"
     static let targetEditorKey = "editorSync.targetEditor"
 
+    private let defaults: UserDefaults
+    private let environment: Environment
+
     // MARK: - Published State
 
     /// Whether editor sync is active.
     @Published var isEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(isEnabled, forKey: Self.enabledKey)
+            defaults.set(isEnabled, forKey: Self.enabledKey)
         }
     }
 
     /// The editor to open on workspace switch.
     @Published var targetEditor: TerminalDirectoryOpenTarget {
         didSet {
-            UserDefaults.standard.set(targetEditor.rawValue, forKey: Self.targetEditorKey)
+            defaults.set(targetEditor.rawValue, forKey: Self.targetEditorKey)
         }
     }
 
@@ -54,28 +102,39 @@ final class EditorSyncController: ObservableObject {
     private var debounceTask: Task<Void, Never>?
 
     /// Delay before triggering editor open (allows rapid tab switching to settle).
-    private let debounceInterval: Duration = .milliseconds(300)
+    private let debounceInterval: Duration
 
     /// Hook for getting the current workspace directory. Set by TabManager.
     var currentWorkspaceDirectory: () -> String? = { nil }
 
     // MARK: - Init
 
-    private init() {
-        self.isEnabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
+    private convenience init() {
+        self.init(defaults: .standard, environment: .live, debounceInterval: .milliseconds(300))
+    }
 
-        if let raw = UserDefaults.standard.string(forKey: Self.targetEditorKey),
+    init(
+        defaults: UserDefaults = .standard,
+        environment: Environment = .live,
+        debounceInterval: Duration = .milliseconds(300)
+    ) {
+        self.defaults = defaults
+        self.environment = environment
+        self.debounceInterval = debounceInterval
+        self.isEnabled = defaults.bool(forKey: Self.enabledKey)
+
+        if let raw = defaults.string(forKey: Self.targetEditorKey),
            let target = TerminalDirectoryOpenTarget(rawValue: raw) {
             self.targetEditor = target
         } else {
             // Auto-detect: prefer Cursor, fall back to VS Code
-            if TerminalDirectoryOpenTarget.cursor.applicationURL() != nil {
+            if environment.applicationURLForTarget(.cursor) != nil {
                 self.targetEditor = .cursor
-            } else if TerminalDirectoryOpenTarget.vscode.applicationURL() != nil {
+            } else if environment.applicationURLForTarget(.vscode) != nil {
                 self.targetEditor = .vscode
-            } else if TerminalDirectoryOpenTarget.zed.applicationURL() != nil {
+            } else if environment.applicationURLForTarget(.zed) != nil {
                 self.targetEditor = .zed
-            } else if TerminalDirectoryOpenTarget.windsurf.applicationURL() != nil {
+            } else if environment.applicationURLForTarget(.windsurf) != nil {
                 self.targetEditor = .windsurf
             } else {
                 self.targetEditor = .vscode
@@ -95,7 +154,7 @@ final class EditorSyncController: ObservableObject {
         debounceTask?.cancel()
 
         debounceTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.debounceInterval ?? .milliseconds(300))
+            await self?.environment.sleep(self?.debounceInterval ?? .milliseconds(300))
             guard !Task.isCancelled else { return }
             self?.openDirectoryInEditor(directory)
         }
@@ -106,6 +165,28 @@ final class EditorSyncController: ObservableObject {
         guard let directory = currentWorkspaceDirectory(), !directory.isEmpty else { return }
         lastOpenedDirectory = nil  // Force re-open even if same directory
         openDirectoryInEditor(directory)
+    }
+
+    @discardableResult
+    func openFileInEditorIfRunning(
+        _ path: String,
+        line: Int? = nil,
+        column: Int? = nil
+    ) -> Bool {
+        guard isEnabled, isTargetEditorRunning() else { return false }
+        guard let cliArgs = fileCLICommand(for: targetEditor, path: path, line: line, column: column) else {
+            return false
+        }
+        launchCLI(cliArgs)
+        return true
+    }
+
+    func isTargetEditorRunning() -> Bool {
+        guard let bundleIdentifier = environment.bundleIdentifierForTarget(targetEditor),
+              !bundleIdentifier.isEmpty else {
+            return false
+        }
+        return environment.isApplicationRunning(bundleIdentifier)
     }
 
     // MARK: - Editor Open (CLI-based, single window)
@@ -128,49 +209,93 @@ final class EditorSyncController: ObservableObject {
     /// Returns the CLI command + arguments to open a directory in the editor,
     /// reusing the existing window. Returns nil if no CLI is known for this editor.
     private func cliCommand(for editor: TerminalDirectoryOpenTarget, directory: String) -> [String]? {
+        guard let executable = cliExecutable(for: editor) else { return nil }
+        switch editor {
+        case .cursor, .vscode, .windsurf:
+            return [executable, "--reuse-window", directory]
+        case .zed:
+            return [executable, "--reuse", directory]
+        case .xcode:
+            return [executable, directory]
+        default:
+            return nil
+        }
+    }
+
+    private func fileCLICommand(
+        for editor: TerminalDirectoryOpenTarget,
+        path: String,
+        line: Int?,
+        column: Int?
+    ) -> [String]? {
+        guard let executable = cliExecutable(for: editor) else { return nil }
+        let positionedPath: String = {
+            guard let line else { return path }
+            guard let column else { return "\(path):\(line)" }
+            return "\(path):\(line):\(column)"
+        }()
+
+        switch editor {
+        case .cursor, .vscode, .windsurf:
+            if line != nil {
+                return [executable, "--reuse-window", "--goto", positionedPath]
+            }
+            return [executable, "--reuse-window", path]
+        case .zed:
+            return [executable, "--reuse", positionedPath]
+        case .xcode:
+            if let line {
+                return [executable, "--line", "\(line)", path]
+            }
+            return [executable, path]
+        default:
+            return nil
+        }
+    }
+
+    private func cliExecutable(for editor: TerminalDirectoryOpenTarget) -> String? {
         switch editor {
         case .cursor:
-            // Cursor CLI: same flags as VS Code
             if let cli = findCLI(names: ["cursor"]) {
-                return [cli, "--reuse-window", directory]
+                return cli
             }
-            // Cursor sometimes installs as 'code' in its own path
-            if let appURL = editor.applicationURL() {
+            if let appURL = environment.applicationURLForTarget(editor) {
                 let embeddedCLI = appURL.path + "/Contents/Resources/app/bin/code"
-                if FileManager.default.isExecutableFile(atPath: embeddedCLI) {
-                    return [embeddedCLI, "--reuse-window", directory]
+                if environment.isExecutableFileAtPath(embeddedCLI) {
+                    return embeddedCLI
                 }
             }
             return nil
 
         case .vscode:
             if let cli = findCLI(names: ["code"]) {
-                return [cli, "--reuse-window", directory]
+                return cli
             }
-            if let appURL = editor.applicationURL() {
+            if let appURL = environment.applicationURLForTarget(editor) {
                 let embeddedCLI = appURL.path + "/Contents/Resources/app/bin/code"
-                if FileManager.default.isExecutableFile(atPath: embeddedCLI) {
-                    return [embeddedCLI, "--reuse-window", directory]
+                if environment.isExecutableFileAtPath(embeddedCLI) {
+                    return embeddedCLI
                 }
             }
             return nil
 
         case .windsurf:
-            if let cli = findCLI(names: ["windsurf"]) {
-                return [cli, "--reuse-window", directory]
-            }
-            return nil
+            return findCLI(names: ["windsurf"])
 
         case .zed:
-            // Zed reuses the existing window by default
             if let cli = findCLI(names: ["zed"]) {
-                return [cli, directory]
+                return cli
+            }
+            if let appURL = environment.applicationURLForTarget(editor) {
+                let embeddedCLI = appURL.path + "/Contents/MacOS/cli"
+                if environment.isExecutableFileAtPath(embeddedCLI) {
+                    return embeddedCLI
+                }
             }
             return nil
 
         case .xcode:
-            // xed opens in Xcode; no --reuse-window but it reuses by default
-            return ["/usr/bin/xed", directory]
+            return "/usr/bin/xed"
 
         default:
             return nil
@@ -182,14 +307,14 @@ final class EditorSyncController: ObservableObject {
         let searchPaths = [
             "/usr/local/bin",
             "/opt/homebrew/bin",
-            NSHomeDirectory() + "/.local/bin",
-            NSHomeDirectory() + "/bin",
+            environment.homeDirectoryPath + "/.local/bin",
+            environment.homeDirectoryPath + "/bin",
         ]
 
         for name in names {
             for dir in searchPaths {
                 let path = "\(dir)/\(name)"
-                if FileManager.default.isExecutableFile(atPath: path) {
+                if environment.isExecutableFileAtPath(path) {
                     return path
                 }
             }
@@ -200,24 +325,22 @@ final class EditorSyncController: ObservableObject {
     /// Launches a CLI command in the background without blocking.
     private func launchCLI(_ arguments: [String]) {
         guard let executable = arguments.first else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = Array(arguments.dropFirst())
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
 
         // Inherit a clean environment but ensure PATH is set
-        var env = ProcessInfo.processInfo.environment
+        var env = environment.inheritedEnvironment()
         let extraPaths = "/usr/local/bin:/opt/homebrew/bin"
         if let existingPath = env["PATH"] {
             env["PATH"] = extraPaths + ":" + existingPath
         } else {
             env["PATH"] = extraPaths + ":/usr/bin:/bin"
         }
-        process.environment = env
 
         do {
-            try process.run()
+            try environment.runCLI(
+                URL(fileURLWithPath: executable),
+                Array(arguments.dropFirst()),
+                env
+            )
         } catch {
             // Silently ignore — editor may not be available
         }
@@ -226,16 +349,8 @@ final class EditorSyncController: ObservableObject {
     /// Fallback: use NSWorkspace.open for editors without CLI support.
     private func fallbackOpen(directory: String) {
         let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
-        guard let applicationURL = targetEditor.applicationURL() else { return }
-
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = false
-
-        NSWorkspace.shared.open(
-            [directoryURL],
-            withApplicationAt: applicationURL,
-            configuration: configuration
-        )
+        guard let applicationURL = environment.applicationURLForTarget(targetEditor) else { return }
+        environment.openDirectory(directoryURL, applicationURL)
     }
 
     // MARK: - Available Editors

@@ -5505,6 +5505,22 @@ struct ClosedBrowserPanelRestoreSnapshot {
     let fallbackAnchorPaneId: UUID?
 }
 
+struct ClosedTerminalPanelRestoreSnapshot {
+    let workspaceId: UUID
+    let originalPaneId: UUID
+    let originalTabIndex: Int
+    let workingDirectory: String?
+    let restoredTerminalAction: RestoredTerminalActionSnapshot
+    let fallbackSplitOrientation: SplitOrientation?
+    let fallbackSplitInsertFirst: Bool
+    let fallbackAnchorPaneId: UUID?
+}
+
+enum ClosedPanelRestoreEntry {
+    case browser(ClosedBrowserPanelRestoreSnapshot)
+    case terminal(ClosedTerminalPanelRestoreSnapshot)
+}
+
 /// Workspace represents a sidebar tab.
 /// Each workspace contains one BonsplitController that manages split panes and nested surfaces.
 @MainActor
@@ -5548,6 +5564,8 @@ final class Workspace: Identifiable, ObservableObject {
 
     /// Callback used by TabManager to capture recently closed browser panels for Cmd+Shift+T restore.
     var onClosedBrowserPanel: ((ClosedBrowserPanelRestoreSnapshot) -> Void)?
+    /// Callback used by TabManager to capture recently closed terminal panels with AI sessions for Cmd+Shift+T restore.
+    var onClosedTerminalPanel: ((ClosedTerminalPanelRestoreSnapshot) -> Void)?
     weak var owningTabManager: TabManager?
 
 
@@ -5939,6 +5957,7 @@ final class Workspace: Identifiable, ObservableObject {
     /// Bonsplit pane-close does not emit per-tab didClose callbacks.
     private var pendingPaneClosePanelIds: [UUID: [UUID]] = [:]
     private var pendingClosedBrowserRestoreSnapshots: [TabID: ClosedBrowserPanelRestoreSnapshot] = [:]
+    private var pendingClosedTerminalRestoreSnapshots: [TabID: ClosedTerminalPanelRestoreSnapshot] = [:]
     private var isApplyingTabSelection = false
     private struct PendingTabSelectionRequest {
         let tabId: TabID
@@ -8378,6 +8397,36 @@ final class Workspace: Identifiable, ObservableObject {
         pendingClosedBrowserRestoreSnapshots.removeValue(forKey: tabId)
     }
 
+    private func stageClosedTerminalRestoreSnapshotIfNeeded(for tab: Bonsplit.Tab, inPane pane: PaneID) {
+        guard let panelId = panelIdFromSurfaceId(tab.id),
+              panels[panelId] is TerminalPanel,
+              let tabIndex = bonsplitController.tabs(inPane: pane).firstIndex(where: { $0.id == tab.id }),
+              let action = currentRestoredTerminalAction(panelId: panelId) else {
+            pendingClosedTerminalRestoreSnapshots.removeValue(forKey: tab.id)
+            return
+        }
+
+        let fallbackPlan = browserCloseFallbackPlan(
+            forPaneId: pane.id.uuidString,
+            in: bonsplitController.treeSnapshot()
+        )
+
+        pendingClosedTerminalRestoreSnapshots[tab.id] = ClosedTerminalPanelRestoreSnapshot(
+            workspaceId: id,
+            originalPaneId: pane.id,
+            originalTabIndex: tabIndex,
+            workingDirectory: panelDirectories[panelId],
+            restoredTerminalAction: action,
+            fallbackSplitOrientation: fallbackPlan?.orientation,
+            fallbackSplitInsertFirst: fallbackPlan?.insertFirst ?? false,
+            fallbackAnchorPaneId: fallbackPlan?.anchorPaneId
+        )
+    }
+
+    private func clearStagedClosedTerminalRestoreSnapshot(for tabId: TabID) {
+        pendingClosedTerminalRestoreSnapshots.removeValue(forKey: tabId)
+    }
+
     private func browserCloseFallbackPlan(
         forPaneId targetPaneId: String,
         in node: ExternalTreeNode
@@ -10409,6 +10458,7 @@ extension Workspace: BonsplitDelegate {
 
         if forceCloseTabIds.contains(tab.id) {
             stageClosedBrowserRestoreSnapshotIfNeeded(for: tab, inPane: pane)
+            stageClosedTerminalRestoreSnapshotIfNeeded(for: tab, inPane: pane)
             recordPostCloseSelection()
             return true
         }
@@ -10416,12 +10466,14 @@ extension Workspace: BonsplitDelegate {
         if let panelId = panelIdFromSurfaceId(tab.id),
            pinnedPanelIds.contains(panelId) {
             clearStagedClosedBrowserRestoreSnapshot(for: tab.id)
+            clearStagedClosedTerminalRestoreSnapshot(for: tab.id)
             NSSound.beep()
             return false
         }
 
         if explicitUserClose && shouldCloseWorkspaceOnLastSurface(for: tab.id) {
             clearStagedClosedBrowserRestoreSnapshot(for: tab.id)
+            clearStagedClosedTerminalRestoreSnapshot(for: tab.id)
             owningTabManager?.closeWorkspaceWithConfirmation(self)
             return false
         }
@@ -10439,6 +10491,7 @@ extension Workspace: BonsplitDelegate {
         // this gating on the second pass.
         if panelNeedsConfirmClose(panelId: panelId, fallbackNeedsConfirmClose: terminalPanel.needsConfirmClose()) {
             clearStagedClosedBrowserRestoreSnapshot(for: tab.id)
+            clearStagedClosedTerminalRestoreSnapshot(for: tab.id)
             if pendingCloseConfirmTabIds.contains(tab.id) {
                 return false
             }
@@ -10465,6 +10518,7 @@ extension Workspace: BonsplitDelegate {
         }
 
         clearStagedClosedBrowserRestoreSnapshot(for: tab.id)
+        stageClosedTerminalRestoreSnapshotIfNeeded(for: tab, inPane: pane)
         recordPostCloseSelection()
         return true
     }
@@ -10473,6 +10527,7 @@ extension Workspace: BonsplitDelegate {
         forceCloseTabIds.remove(tabId)
         let selectTabId = postCloseSelectTabId.removeValue(forKey: tabId)
         let closedBrowserRestoreSnapshot = pendingClosedBrowserRestoreSnapshots.removeValue(forKey: tabId)
+        let closedTerminalRestoreSnapshot = pendingClosedTerminalRestoreSnapshots.removeValue(forKey: tabId)
         let isDetaching = detachingTabIds.remove(tabId) != nil || isDetachingCloseTransaction
 
         // Clean up our panel
@@ -10521,6 +10576,8 @@ extension Workspace: BonsplitDelegate {
         } else {
             if let closedBrowserRestoreSnapshot {
                 onClosedBrowserPanel?(closedBrowserRestoreSnapshot)
+            } else if let closedTerminalRestoreSnapshot {
+                onClosedTerminalPanel?(closedTerminalRestoreSnapshot)
             }
             panel?.close()
         }

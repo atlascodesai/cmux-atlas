@@ -133,6 +133,128 @@ enum UITestLaunchManifest {
     }
 }
 
+enum MainWindowAutosaveFrameSanitizer {
+    struct SanitizedFrameRecord: Equatable {
+        let key: String
+        let encodedValue: String
+        let parsedFrame: CGRect?
+        let parsedScreenFrame: CGRect?
+    }
+
+    private static let keyPrefix = "NSWindow Frame "
+    private static let minimumReasonableScreenDimension: CGFloat = 480
+    private static let maximumDimensionMultiplier: CGFloat = 4
+    private static let absoluteDimensionCeiling: CGFloat = 10_000
+    private static var pendingTelemetryRecords: [SanitizedFrameRecord] = []
+
+    static func sanitizeIfNeeded(
+        defaults: UserDefaults = .standard,
+        screenVisibleFrames: [CGRect] = NSScreen.screens.map(\.visibleFrame)
+    ) {
+        let records = invalidFrameRecords(
+            in: defaults.dictionaryRepresentation(),
+            screenVisibleFrames: screenVisibleFrames
+        )
+        pendingTelemetryRecords = records
+        guard !records.isEmpty else { return }
+
+        for record in records {
+            defaults.removeObject(forKey: record.key)
+        }
+    }
+
+    static func takePendingTelemetryRecords() -> [SanitizedFrameRecord] {
+        let records = pendingTelemetryRecords
+        pendingTelemetryRecords = []
+        return records
+    }
+
+    private static func invalidFrameRecords(
+        in dictionary: [String: Any],
+        screenVisibleFrames: [CGRect]
+    ) -> [SanitizedFrameRecord] {
+        dictionary.compactMap { key, value in
+            guard isMainWindowAutosaveKey(key) else { return nil }
+            guard shouldResetAutosavedFrame(value, screenVisibleFrames: screenVisibleFrames) else { return nil }
+            let encodedValue = value as? String ?? String(describing: value)
+            let parsed = (value as? String).flatMap(parseAutosavedFrame)
+            return SanitizedFrameRecord(
+                key: key,
+                encodedValue: encodedValue,
+                parsedFrame: parsed?.windowFrame,
+                parsedScreenFrame: parsed?.screenFrame
+            )
+        }
+    }
+
+    private static func isMainWindowAutosaveKey(_ key: String) -> Bool {
+        key.hasPrefix(keyPrefix)
+            && key.contains("cmux.ContentView")
+            && key.contains("-AppWindow-")
+    }
+
+    private static func shouldResetAutosavedFrame(
+        _ value: Any,
+        screenVisibleFrames: [CGRect]
+    ) -> Bool {
+        guard let encoded = value as? String,
+              let parsed = parseAutosavedFrame(encoded) else {
+            return true
+        }
+
+        let visibleFrames = screenVisibleFrames
+            .map(\.standardized)
+            .filter { frame in
+                frame.width.isFinite && frame.height.isFinite && frame.width > 0 && frame.height > 0
+            }
+        let maxVisibleWidth = max(
+            visibleFrames.map(\.width).max() ?? 0,
+            parsed.screenFrame?.width ?? 0,
+            minimumReasonableScreenDimension
+        )
+        let maxVisibleHeight = max(
+            visibleFrames.map(\.height).max() ?? 0,
+            parsed.screenFrame?.height ?? 0,
+            minimumReasonableScreenDimension
+        )
+        let maximumAllowedWidth = max(maxVisibleWidth * maximumDimensionMultiplier, absoluteDimensionCeiling)
+        let maximumAllowedHeight = max(maxVisibleHeight * maximumDimensionMultiplier, absoluteDimensionCeiling)
+        let frame = parsed.windowFrame.standardized
+
+        guard frame.width.isFinite,
+              frame.height.isFinite,
+              frame.minX.isFinite,
+              frame.minY.isFinite,
+              frame.width >= CGFloat(SessionPersistencePolicy.minimumWindowWidth),
+              frame.height >= CGFloat(SessionPersistencePolicy.minimumWindowHeight) else {
+            return true
+        }
+
+        return frame.width > maximumAllowedWidth || frame.height > maximumAllowedHeight
+    }
+
+    private static func parseAutosavedFrame(_ encoded: String) -> (windowFrame: CGRect, screenFrame: CGRect?)? {
+        let values = encoded
+            .split(whereSeparator: \.isWhitespace)
+            .compactMap { Double($0) }
+        guard values.count == 8 else { return nil }
+
+        let windowFrame = CGRect(
+            x: values[0],
+            y: values[1],
+            width: values[2],
+            height: values[3]
+        )
+        let screenFrame = CGRect(
+            x: values[4],
+            y: values[5],
+            width: values[6],
+            height: values[7]
+        )
+        return (windowFrame, screenFrame)
+    }
+}
+
 @main
 struct cmuxApp: App {
     @StateObject private var tabManager: TabManager
@@ -185,6 +307,11 @@ struct cmuxApp: App {
 
         // Apply saved language preference before any UI loads
         LanguageSettings.apply(LanguageSettings.languageAtLaunch)
+
+        // SwiftUI restores autosaved main-window geometry before our own session
+        // restore path runs. Drop clearly corrupt entries first so AppKit doesn't
+        // crash in startup layout with a pathological persisted frame.
+        MainWindowAutosaveFrameSanitizer.sanitizeIfNeeded()
 
         let startupAppearance = AppearanceSettings.resolvedMode()
         Self.applyAppearance(startupAppearance)
@@ -691,8 +818,8 @@ struct cmuxApp: App {
                     workspaceCommandMenuContent(manager: activeTabManager)
                 }
 
-                Button(String(localized: "menu.file.reopenClosedBrowserPanel", defaultValue: "Reopen Closed Browser Panel")) {
-                    _ = activeTabManager.reopenMostRecentlyClosedBrowserPanel()
+                Button(String(localized: "menu.file.reopenClosedPanel", defaultValue: "Reopen Closed Panel")) {
+                    _ = activeTabManager.reopenMostRecentlyClosedPanel()
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             }
