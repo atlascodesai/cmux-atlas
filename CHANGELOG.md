@@ -2,6 +2,16 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.4] - 2026-03-29
+
+### Added
+- File menu and command palette action to refresh AI resume recovery for the current workspace
+- Sentry warnings when AI resume recovery finds no recoverable sessions or cannot construct a Claude/Codex resume command
+
+### Fixed
+- Session restore being incorrectly suppressed on updater relaunches and other non-open launch arguments
+- Zsh shell integration regression where `_cmux_report_tty_once` called a missing `_cmux_send_bg` helper
+
 ## [1.38.1-atlas.3] - 2026-03-29
 
 ### Added
