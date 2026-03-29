@@ -229,9 +229,14 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          # Install Apple intermediate certificates for full chain validation
+          curl -fsSL -o /tmp/DeveloperIDG2CA.cer "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer"
+          curl -fsSL -o /tmp/AppleWWDRCAG2.cer "https://www.apple.com/certificateauthority/AppleWWDRCAG2.cer"
+          security import /tmp/DeveloperIDG2CA.cer -k build.keychain -T /usr/bin/codesign
+          security import /tmp/AppleWWDRCAG2.cer -k build.keychain -T /usr/bin/codesign
           security import /tmp/cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security list-keychains -d user -s build.keychain
+          security list-keychains -d user -s build.keychain login.keychain-db /Library/Keychains/System.keychain
 
       - name: Codesign app
         if: steps.guard_release_assets.outputs.skip_all != 'true'

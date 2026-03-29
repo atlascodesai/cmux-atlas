@@ -2,6 +2,11 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.8] - 2026-03-30
+
+### Fixed
+- Release signing now imports the Apple intermediate certificates on the rebuilt release line, restoring Developer ID chain validation during GitHub release publishing
+
 ## [1.38.1-atlas.7] - 2026-03-29
 
 ### Fixed
