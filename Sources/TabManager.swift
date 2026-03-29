@@ -1842,6 +1842,7 @@ class TabManager: ObservableObject {
 
     @discardableResult
     func addWorkspace(
+        title: String? = nil,
         workingDirectory overrideWorkingDirectory: String? = nil,
         initialTerminalCommand: String? = nil,
         initialTerminalEnvironment: [String: String] = [:],
@@ -1855,13 +1856,15 @@ class TabManager: ObservableObject {
         let snapshot = workspaceCreationSnapshot()
         let nextTabCount = snapshot.tabs.count + 1
         sentryBreadcrumb("workspace.create", data: ["tabCount": nextTabCount])
+        let requestedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = requestedTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Terminal \(nextTabCount)"
         let explicitWorkingDirectory = normalizedWorkingDirectory(overrideWorkingDirectory)
         let workingDirectory = explicitWorkingDirectory ?? preferredWorkingDirectoryForNewTab(snapshot: snapshot)
-        let inheritedConfig = inheritedTerminalConfigForNewWorkspace(snapshot: snapshot)
+        let inheritedConfig = inheritedTerminalConfigForNewWorkspace(workspace: snapshot.selectedWorkspace)
         let ordinal = Self.nextPortOrdinal
         Self.nextPortOrdinal += 1
         let newWorkspace = Workspace(
-            title: "Terminal \(nextTabCount)",
+            title: resolvedTitle,
             workingDirectory: workingDirectory,
             portOrdinal: ordinal,
             configTemplate: inheritedConfig,
@@ -2797,13 +2800,13 @@ class TabManager: ObservableObject {
         return workspace.terminalPanelForConfigInheritance()
     }
 
-    private func inheritedTerminalConfigForNewWorkspace() -> ghostty_surface_config_s? {
+    func inheritedTerminalConfigForNewWorkspace(workspace: Workspace?) -> CmuxSurfaceConfigTemplate? {
         inheritedTerminalConfigForNewWorkspace(snapshot: workspaceCreationSnapshot())
     }
 
     private func inheritedTerminalConfigForNewWorkspace(
         snapshot: WorkspaceCreationSnapshot
-    ) -> ghostty_surface_config_s? {
+    ) -> CmuxSurfaceConfigTemplate? {
         if let sourceSurface = terminalPanelForWorkspaceConfigInheritanceSource(snapshot: snapshot)?.surface.surface {
             return cmuxInheritedSurfaceConfig(
                 sourceSurface: sourceSurface,
@@ -2811,8 +2814,8 @@ class TabManager: ObservableObject {
             )
         }
         if let fallbackFontPoints = snapshot.selectedWorkspace?.lastRememberedTerminalFontPointsForConfigInheritance() {
-            var config = ghostty_surface_config_new()
-            config.font_size = fallbackFontPoints
+            var config = CmuxSurfaceConfigTemplate()
+            config.fontSize = fallbackFontPoints
             return config
         }
         return nil

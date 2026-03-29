@@ -960,7 +960,7 @@ extension Workspace {
 
     private func sendInputWhenReady(_ text: String, to panel: TerminalPanel) {
         if panel.surface.surface != nil {
-            panel.sendInput(text)
+            panel.sendText(text)
             return
         }
 
@@ -975,7 +975,7 @@ extension Workspace {
             guard !resolved, let panel else { return }
             resolved = true
             if let observer { NotificationCenter.default.removeObserver(observer) }
-            panel.sendInput(text)
+            panel.sendText(text)
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {

@@ -26,7 +26,7 @@ struct CmuxConfigExecutor {
                 }
             }
             guard let terminal = tabManager.selectedWorkspace?.focusedTerminalPanel else { return }
-            terminal.sendInput(shellCommand + "\n")
+            terminal.sendCommand(shellCommand)
         }
     }
 

@@ -111,7 +111,6 @@
 					FA000000A1B2C3D4E5F60718 /* WorkspaceStressProfileTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA000001A1B2C3D4E5F60718 /* WorkspaceStressProfileTests.swift */; };
 					A5008381 /* BrowserFindJavaScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5008380 /* BrowserFindJavaScriptTests.swift */; };
 					A5008383 /* CommandPaletteSearchEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5008382 /* CommandPaletteSearchEngineTests.swift */; };
-		BB200011 /* Branding.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB200001 /* Branding.swift */; };
 		AA100011 /* AISessionDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA100001 /* AISessionDetector.swift */; };
 		AA100012 /* AISessionResumeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA100002 /* AISessionResumeView.swift */; };
 		AA100014 /* EditorSyncController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA100004 /* EditorSyncController.swift */; };
@@ -312,7 +311,6 @@
 				491751CE2321474474F27DCF /* TerminalControllerSocketSecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalControllerSocketSecurityTests.swift; sourceTree = "<group>"; };
 				10D684CFFB8CDEF89CE2D9E1 /* TabManagerSessionSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabManagerSessionSnapshotTests.swift; sourceTree = "<group>"; };
 				C1A2B3C4D5E6F70800000002 /* CmuxConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CmuxConfigTests.swift; sourceTree = "<group>"; };
-		BB200001 /* Branding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Branding.swift; sourceTree = "<group>"; };
 		AA100001 /* AISessionDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionDetector.swift; sourceTree = "<group>"; };
 		AA100002 /* AISessionResumeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AISessionResumeView.swift; sourceTree = "<group>"; };
 		AA100004 /* EditorSyncController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSyncController.swift; sourceTree = "<group>"; };
@@ -483,7 +481,6 @@
 				A5001241 /* WindowDecorationsController.swift */,
 				A5001222 /* WindowAccessor.swift */,
 				A5001611 /* SessionPersistence.swift */,
-				BB200001 /* Branding.swift */,
 				AA100001 /* AISessionDetector.swift */,
 				AA100002 /* AISessionResumeView.swift */,
 				AA100004 /* EditorSyncController.swift */,
@@ -790,7 +787,6 @@
 				A5001240 /* WindowDecorationsController.swift in Sources */,
 				A500120C /* WindowAccessor.swift in Sources */,
 				A5001610 /* SessionPersistence.swift in Sources */,
-				BB200011 /* Branding.swift in Sources */,
 				AA100011 /* AISessionDetector.swift in Sources */,
 				AA100012 /* AISessionResumeView.swift in Sources */,
 				AA100014 /* EditorSyncController.swift in Sources */,
