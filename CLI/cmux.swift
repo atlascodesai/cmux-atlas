@@ -254,7 +254,7 @@ private final class CLISocketSentryTelemetry {
         }
         var sockets: [String] = []
         for name in entries.sorted() {
-            guard name.hasPrefix("cmux"), name.hasSuffix(".sock") else { continue }
+            guard name.hasPrefix("cmux-atlas"), name.hasSuffix(".sock") else { continue }
             let fullPath = URL(fileURLWithPath: directory)
                 .appendingPathComponent(name, isDirectory: false)
                 .path
@@ -529,9 +529,9 @@ enum CLIIDFormat: String {
 }
 
 enum SocketPasswordResolver {
-    private static let service = "com.cmuxterm.app.socket-control"
+    private static let service = "com.atlascodes.cmux-atlas.socket-control"
     private static let account = "local-socket-password"
-    private static let directoryName = "cmux"
+    private static let directoryName = "cmux-atlas"
     private static let fileName = "socket-control-password"
 
     static func resolve(explicit: String?, socketPath: String) -> String? {
@@ -591,7 +591,7 @@ enum SocketPasswordResolver {
         }
 
         let candidate = URL(fileURLWithPath: socketPath).lastPathComponent
-        let prefixes = ["cmux-debug-", "cmux-"]
+        let prefixes = ["cmux-atlas-debug-", "cmux-atlas-"]
         for prefix in prefixes {
             guard candidate.hasPrefix(prefix), candidate.hasSuffix(".sock") else { continue }
             let start = candidate.index(candidate.startIndex, offsetBy: prefix.count)
@@ -660,13 +660,13 @@ private enum CLISocketPathSource {
 }
 
 private enum CLISocketPathResolver {
-    private static let appSupportDirectoryName = "cmux"
-    private static let stableSocketFileName = "cmux.sock"
+    private static let appSupportDirectoryName = "cmux-atlas"
+    private static let stableSocketFileName = "cmux-atlas.sock"
     private static let lastSocketPathFileName = "last-socket-path"
-    static let legacyDefaultSocketPath = "/tmp/cmux.sock"
-    private static let fallbackSocketPath = "/tmp/cmux-debug.sock"
-    private static let stagingSocketPath = "/tmp/cmux-staging.sock"
-    private static let legacyLastSocketPathFile = "/tmp/cmux-last-socket-path"
+    static let legacyDefaultSocketPath = "/tmp/cmux-atlas.sock"
+    private static let fallbackSocketPath = "/tmp/cmux-atlas-debug.sock"
+    private static let stagingSocketPath = "/tmp/cmux-atlas-staging.sock"
+    private static let legacyLastSocketPathFile = "/tmp/cmux-atlas-last-socket-path"
 
     static var defaultSocketPath: String {
         let stablePath: String? = stableSocketDirectoryURL()?
@@ -708,8 +708,8 @@ private enum CLISocketPathResolver {
 
         if let tag = normalized(environment["CMUX_TAG"]) {
             let slug = sanitizeTagSlug(tag)
-            candidates.append("/tmp/cmux-debug-\(slug).sock")
-            candidates.append("/tmp/cmux-\(slug).sock")
+            candidates.append("/tmp/cmux-atlas-debug-\(slug).sock")
+            candidates.append("/tmp/cmux-atlas-\(slug).sock")
         }
 
         candidates.append(requestedPath)
@@ -748,7 +748,7 @@ private enum CLISocketPathResolver {
                 continue
             }
             discovered.reserveCapacity(min(limit, discovered.count + entries.count))
-            for name in entries where name.hasPrefix("cmux") && name.hasSuffix(".sock") {
+            for name in entries where name.hasPrefix("cmux-atlas") && name.hasSuffix(".sock") {
                 let path = URL(fileURLWithPath: directory)
                     .appendingPathComponent(name, isDirectory: false)
                     .path
@@ -4356,13 +4356,13 @@ struct CMUXCLI {
         let downloadURL = entry?.downloadURL ?? "unknown"
         let checksumsAssetName = manifest?.checksumsAssetName ?? "unknown"
         let checksumsURL = manifest?.checksumsURL ?? "unknown"
-        let downloadCommand = "gh release download \(releaseTag) --repo manaflow-ai/cmux --pattern \(assetName)"
-        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo manaflow-ai/cmux --pattern \(checksumsAssetName)"
+        let downloadCommand = "gh release download \(releaseTag) --repo atlas-fork/cmux-atlas --pattern \(assetName)"
+        let downloadChecksumsCommand = "gh release download \(releaseTag) --repo atlas-fork/cmux-atlas --pattern \(checksumsAssetName)"
         let checksumVerifyCommand = "shasum -a 256 -c \(checksumsAssetName) --ignore-missing"
         let signerWorkflow = releaseTag == "nightly"
-            ? "manaflow-ai/cmux/.github/workflows/nightly.yml"
-            : "manaflow-ai/cmux/.github/workflows/release.yml"
-        let verifyCommand = "gh attestation verify ./\(assetName) --repo manaflow-ai/cmux --signer-workflow \(signerWorkflow)"
+            ? "atlas-fork/cmux-atlas/.github/workflows/nightly.yml"
+            : "atlas-fork/cmux-atlas/.github/workflows/release.yml"
+        let verifyCommand = "gh attestation verify ./\(assetName) --repo atlas-fork/cmux-atlas --signer-workflow \(signerWorkflow)"
 
         let payload: [String: Any] = [
             "app_version": remoteDaemonVersionString(from: info),
@@ -7285,7 +7285,7 @@ struct CMUXCLI {
         return true
     }
 
-    private static let cmuxThemeOverrideBundleIdentifier = "com.cmuxterm.app"
+    private static let cmuxThemeOverrideBundleIdentifier = "com.atlascodes.cmux-atlas"
     private static let cmuxThemesBlockStart = "# cmux themes start"
     private static let cmuxThemesBlockEnd = "# cmux themes end"
     private static let cmuxThemesReloadNotificationName = "com.cmuxterm.themes.reload-config"
@@ -12509,7 +12509,7 @@ struct CMUXCLI {
         print()
         print("  \(bold)Docs\(reset)\(subdued)                https://cmux.com/docs\(reset)")
         print("  \(bold)Discord\(reset)\(subdued)             https://discord.gg/xsgFEVrWCZ\(reset)")
-        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/manaflow-ai/cmux (please leave a star ⭐)\(reset)")
+        print("  \(bold)GitHub\(reset)\(subdued)              https://github.com/atlas-fork/cmux-atlas (please leave a star ⭐)\(reset)")
         print("  \(bold)Email\(reset)\(subdued)               founders@manaflow.com\(reset)")
         print()
         print("  \(subdued)Run \(reset)\(bold)cmux --help\(reset)\(subdued) for all commands.\(reset)")

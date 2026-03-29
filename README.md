@@ -1,9 +1,9 @@
-<h1 align="center">cmux</h1>
+<h1 align="center">cmux Atlas</h1>
 <p align="center">A Ghostty-based macOS terminal with vertical tabs and notifications for AI coding agents</p>
 
 <p align="center">
-  <a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-    <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
+  <a href="https://github.com/atlas-fork/cmux-atlas/releases/latest/download/cmux-macos.dmg">
+    <img src="./docs/assets/macos-badge.png" alt="Download cmux Atlas for macOS" width="180" />
   </a>
 </p>
 
@@ -74,8 +74,8 @@ Sidebar shows git branch, linked PR status/number, working directory, listening 
 
 ### DMG (recommended)
 
-<a href="https://github.com/manaflow-ai/cmux/releases/latest/download/cmux-macos.dmg">
-  <img src="./docs/assets/macos-badge.png" alt="Download cmux for macOS" width="180" />
+<a href="https://github.com/atlas-fork/cmux-atlas/releases/latest/download/cmux-macos.dmg">
+  <img src="./docs/assets/macos-badge.png" alt="Download cmux Atlas for macOS" width="180" />
 </a>
 
 Open the `.dmg` and drag cmux to your Applications folder. cmux auto-updates via Sparkle, so you only need to download once.
@@ -83,7 +83,7 @@ Open the `.dmg` and drag cmux to your Applications folder. cmux auto-updates via
 ### Homebrew
 
 ```bash
-brew tap manaflow-ai/cmux
+brew tap atlas-fork/cmux-atlas
 brew install --cask cmux
 ```
 
@@ -209,11 +209,11 @@ Browser developer-tool shortcuts follow Safari defaults and are customizable in 
 
 ## Nightly Builds
 
-[Download cmux NIGHTLY](https://github.com/manaflow-ai/cmux/releases/download/nightly/cmux-nightly-macos.dmg)
+[Download cmux NIGHTLY](https://github.com/atlas-fork/cmux-atlas/releases/download/nightly/cmux-nightly-macos.dmg)
 
 cmux NIGHTLY is a separate app with its own bundle ID, so it runs alongside the stable version. Built automatically from the latest `main` commit and auto-updates via its own Sparkle feed.
 
-Report nightly bugs on [GitHub Issues](https://github.com/manaflow-ai/cmux/issues) or in [#nightly-bugs on Discord](https://discord.gg/xsgFEVrWCZ).
+Report nightly bugs on [GitHub Issues](https://github.com/atlas-fork/cmux-atlas/issues) or in [#nightly-bugs on Discord](https://discord.gg/xsgFEVrWCZ).
 
 ## Session restore (current behavior)
 
@@ -227,11 +227,11 @@ cmux does **not** restore live process state inside terminal apps. For example, 
 
 ## Star History
 
-<a href="https://star-history.com/#manaflow-ai/cmux&Date">
+<a href="https://star-history.com/#atlas-fork/cmux-atlas&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=manaflow-ai/cmux&type=Date" width="600" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=atlas-fork/cmux-atlas&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=atlas-fork/cmux-atlas&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=atlas-fork/cmux-atlas&type=Date" width="600" />
  </picture>
 </a>
 
@@ -241,13 +241,13 @@ Ways to get involved:
 
 - Follow us on X for updates [@manaflowai](https://x.com/manaflowai), [@lawrencecchen](https://x.com/lawrencecchen), and [@austinywang](https://x.com/austinywang)
 - Join the conversation on [Discord](https://discord.gg/xsgFEVrWCZ)
-- Create and participate in [GitHub issues](https://github.com/manaflow-ai/cmux/issues) and [discussions](https://github.com/manaflow-ai/cmux/discussions)
+- Create and participate in [GitHub issues](https://github.com/atlas-fork/cmux-atlas/issues) and [discussions](https://github.com/atlas-fork/cmux-atlas/discussions)
 - Let us know what you're building with cmux
 
 ## Community
 
 - [Discord](https://discord.gg/xsgFEVrWCZ)
-- [GitHub](https://github.com/manaflow-ai/cmux)
+- [GitHub](https://github.com/atlas-fork/cmux-atlas)
 - [X / Twitter](https://twitter.com/manaflowai)
 - [YouTube](https://www.youtube.com/channel/UCAa89_j-TWkrXfk9A3CbASw)
 - [LinkedIn](https://www.linkedin.com/company/manaflow-ai/)

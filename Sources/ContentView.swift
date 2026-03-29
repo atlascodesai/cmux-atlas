@@ -2513,12 +2513,9 @@ struct ContentView: View {
     }
 
     private func syncTrafficLightInset() {
-        let inset: CGFloat = (isMinimalMode && !sidebarState.isVisible) ? 80 : 0
-        for tab in tabManager.tabs {
-            if tab.bonsplitController.configuration.appearance.tabBarLeadingInset != inset {
-                tab.bonsplitController.configuration.appearance.tabBarLeadingInset = inset
-            }
-        }
+        // The upstream merge expects a newer Bonsplit API with a configurable
+        // tab-bar leading inset. Our current Bonsplit revision does not expose
+        // that knob, so keep this as a no-op until the submodule catches up.
     }
 
     private func updateTitlebarText() {
@@ -10309,8 +10306,8 @@ enum FeedbackComposerBridge {
 private struct SidebarHelpMenuButton: View {
     private let docsURL = URL(string: "https://cmux.com/docs")
     private let changelogURL = URL(string: "https://cmux.com/docs/changelog")
-    private let githubURL = URL(string: "https://github.com/manaflow-ai/cmux")
-    private let githubIssuesURL = URL(string: "https://github.com/manaflow-ai/cmux/issues")
+    private let githubURL = URL(string: "https://github.com/atlas-fork/cmux-atlas")
+    private let githubIssuesURL = URL(string: "https://github.com/atlas-fork/cmux-atlas/issues")
     private let discordURL = URL(string: "https://discord.gg/xsgFEVrWCZ")
     private let helpTitle = String(localized: "sidebar.help.button", defaultValue: "Help")
     private let buttonSize: CGFloat = 22

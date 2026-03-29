@@ -6,6 +6,10 @@ on:
       - "v*"
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   attestations: write
@@ -13,10 +17,12 @@ permissions:
 
 env:
   CREATE_DMG_VERSION: 8.0.0
+  RELEASE_REPO: atlas-fork/cmux-atlas
+  RELEASE_APP_PATH: build/Build/Products/Release/cmux Atlas.app
 
 jobs:
   build-sign-notarize:
-    runs-on: warp-macos-26-arm64-6x
+    runs-on: [self-hosted, atlas-macos-arm64]
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -109,13 +115,16 @@ jobs:
             echo "Installing zig ${ZIG_REQUIRED} from tarball"
             curl -fSL "https://ziglang.org/download/${ZIG_REQUIRED}/zig-aarch64-macos-${ZIG_REQUIRED}.tar.xz" -o /tmp/zig.tar.xz
             tar xf /tmp/zig.tar.xz -C /tmp
-            sudo mkdir -p /usr/local/bin /usr/local/lib
-            sudo cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig /usr/local/bin/zig
-            sudo cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib /usr/local/lib/zig
-            export PATH="/usr/local/bin:$PATH"
+            mkdir -p "$HOME/.local/bin" "$HOME/.local/lib"
+            cp -f /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/zig "$HOME/.local/bin/zig"
+            cp -rf /tmp/zig-aarch64-macos-${ZIG_REQUIRED}/lib "$HOME/.local/lib/zig"
+            export PATH="$HOME/.local/bin:$PATH"
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
             zig version
           fi
           npm install --global "create-dmg@${CREATE_DMG_VERSION}"
+          NPM_GLOBAL_BIN="$(npm prefix -g)/bin"
+          echo "$NPM_GLOBAL_BIN" >> "$GITHUB_PATH"
 
       - name: Download pre-built GhosttyKit.xcframework
         if: steps.guard_release_assets.outputs.skip_all != 'true'
@@ -160,12 +169,12 @@ jobs:
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           set -euo pipefail
-          APP_PLIST="build/Build/Products/Release/cmux.app/Contents/Info.plist"
+          APP_PLIST="$RELEASE_APP_PATH/Contents/Info.plist"
           APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PLIST")
           ./scripts/build_remote_daemon_release_assets.sh \
             --version "$APP_VERSION" \
             --release-tag "$GITHUB_REF_NAME" \
-            --repo "manaflow-ai/cmux" \
+            --repo "$RELEASE_REPO" \
             --output-dir "remote-daemon-assets"
           MANIFEST_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8")), separators=(",",":")))' remote-daemon-assets/cmuxd-remote-manifest.json)"
           plutil -remove CMUXRemoteDaemonManifestJSON "$APP_PLIST" >/dev/null 2>&1 || true
@@ -175,7 +184,7 @@ jobs:
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           set -euo pipefail
-          CLI_BINARY="build/Build/Products/Release/cmux.app/Contents/Resources/bin/cmux"
+          CLI_BINARY="$RELEASE_APP_PATH/Contents/Resources/bin/cmux"
           [ -x "$CLI_BINARY" ] || { echo "cmux CLI binary not found at $CLI_BINARY" >&2; exit 1; }
           CMUX_CLI_BIN="$CLI_BINARY" python3 tests/test_cli_version_memory_guard.py
 
@@ -183,19 +192,19 @@ jobs:
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
           set -euo pipefail
-          HELPER_BINARY="build/Build/Products/Release/cmux.app/Contents/Resources/bin/ghostty"
+          HELPER_BINARY="$RELEASE_APP_PATH/Contents/Resources/bin/ghostty"
           [ -x "$HELPER_BINARY" ] || { echo "Ghostty theme picker helper not found at $HELPER_BINARY" >&2; exit 1; }
 
       - name: Inject Sparkle keys into Info.plist
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         run: |
-          APP_PLIST="build/Build/Products/Release/cmux.app/Contents/Info.plist"
+          APP_PLIST="$RELEASE_APP_PATH/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$APP_PLIST" >/dev/null 2>&1 || true
           /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP_PLIST" >/dev/null 2>&1 || true
           echo "Adding SUPublicEDKey to Info.plist..."
           /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string ${SPARKLE_PUBLIC_KEY}" "$APP_PLIST"
           echo "Adding SUFeedURL to Info.plist..."
-          /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/manaflow-ai/cmux/releases/latest/download/appcast.xml" "$APP_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/${RELEASE_REPO}/releases/latest/download/appcast.xml" "$APP_PLIST"
           echo "Verifying:"
           /usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP_PLIST"
           /usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP_PLIST"
@@ -233,7 +242,7 @@ jobs:
             echo "Missing APPLE_SIGNING_IDENTITY secret" >&2
             exit 1
           fi
-          APP_PATH="build/Build/Products/Release/cmux.app"
+          APP_PATH="$RELEASE_APP_PATH"
           ENTITLEMENTS="cmux.entitlements"
           CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
           HELPER_PATH="$APP_PATH/Contents/Resources/bin/ghostty"
@@ -243,7 +252,26 @@ jobs:
           if [ -f "$HELPER_PATH" ]; then
             /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$HELPER_PATH"
           fi
-          /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" --deep "$APP_PATH"
+
+          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+          if [ -d "$SPARKLE_FW" ]; then
+            for xpc in "$SPARKLE_FW/Versions/B/XPCServices/"*.xpc; do
+              [ -d "$xpc" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$xpc"
+            done
+            [ -d "$SPARKLE_FW/Versions/B/Updater.app" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW/Versions/B/Updater.app"
+            [ -f "$SPARKLE_FW/Versions/B/Autoupdate" ] && /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW/Versions/B/Autoupdate"
+            /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$SPARKLE_FW"
+          fi
+
+          FRAMEWORKS_DIR="$APP_PATH/Contents/Frameworks"
+          if [ -d "$FRAMEWORKS_DIR" ]; then
+            find "$FRAMEWORKS_DIR" -mindepth 1 -maxdepth 1 \( -name '*.framework' -o -name '*.bundle' -o -name '*.dylib' \) -print | sort | while IFS= read -r dep; do
+              [ "$dep" = "$SPARKLE_FW" ] && continue
+              /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$dep"
+            done
+          fi
+
+          /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" --entitlements "$ENTITLEMENTS" "$APP_PATH"
           /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Notarize app
@@ -258,7 +286,7 @@ jobs:
             echo "Missing notarization secrets (APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID)" >&2
             exit 1
           fi
-          APP_PATH="build/Build/Products/Release/cmux.app"
+          APP_PATH="$RELEASE_APP_PATH"
           ZIP_SUBMIT="cmux-notary.zip"
           DMG_RELEASE="cmux-macos.dmg"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_SUBMIT"
@@ -295,8 +323,8 @@ jobs:
         if: steps.guard_release_assets.outputs.skip_all != 'true'
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: manaflow
-          SENTRY_PROJECT: cmuxterm-macos
+          SENTRY_ORG: codes-o3
+          SENTRY_PROJECT: cmux-atlas
         run: |
           if [ -z "$SENTRY_AUTH_TOKEN" ]; then
             echo "SENTRY_AUTH_TOKEN not set, skipping dSYM upload"
@@ -314,7 +342,10 @@ jobs:
             echo "Missing SPARKLE_PRIVATE_KEY secret" >&2
             exit 1
           fi
-          ./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "$GITHUB_REF_NAME" appcast.xml
+          RELEASE_REPO="$RELEASE_REPO" \
+            DOWNLOAD_URL_PREFIX="https://github.com/${RELEASE_REPO}/releases/download/${GITHUB_REF_NAME}/" \
+            RELEASE_NOTES_URL="https://github.com/${RELEASE_REPO}/releases/tag/${GITHUB_REF_NAME}" \
+            ./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "$GITHUB_REF_NAME" appcast.xml
 
       - name: Attest remote daemon release assets
         if: steps.guard_release_assets.outputs.skip_all != 'true'

@@ -48,7 +48,10 @@ fi
 TAG="$1"
 SIGN_HASH="A050CC7E193C8221BDBA204E731B046CDCCC1B30"
 ENTITLEMENTS="cmux.entitlements"
-APP_PATH="build/Build/Products/Release/cmux.app"
+RELEASE_REPO="${RELEASE_REPO:-atlas-fork/cmux-atlas}"
+RELEASE_FEED_URL="${RELEASE_FEED_URL:-https://github.com/${RELEASE_REPO}/releases/latest/download/appcast.xml}"
+APP_PATH="build/Build/Products/Release/cmux Atlas.app"
+HOMEBREW_TAP_REPO="${HOMEBREW_TAP_REPO:-}"
 
 # --- Pre-flight ---
 source ~/.secrets/cmuxterm.env
@@ -87,7 +90,7 @@ APP_PLIST="$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Delete :SUPublicEDKey" "$APP_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Delete :SUFeedURL" "$APP_PLIST" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_KEY_DERIVED" "$APP_PLIST"
-/usr/libexec/PlistBuddy -c "Add :SUFeedURL string https://github.com/manaflow-ai/cmux/releases/latest/download/appcast.xml" "$APP_PLIST"
+/usr/libexec/PlistBuddy -c "Add :SUFeedURL string $RELEASE_FEED_URL" "$APP_PLIST"
 echo "Sparkle keys injected"
 
 # --- Codesign ---
@@ -126,7 +129,10 @@ echo "DMG notarized"
 
 # --- Generate Sparkle appcast ---
 echo "Generating appcast..."
-./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "$TAG" appcast.xml
+RELEASE_REPO="$RELEASE_REPO" \
+  DOWNLOAD_URL_PREFIX="https://github.com/${RELEASE_REPO}/releases/download/${TAG}/" \
+  RELEASE_NOTES_URL="https://github.com/${RELEASE_REPO}/releases/tag/${TAG}" \
+  ./scripts/sparkle_generate_appcast.sh cmux-macos.dmg "$TAG" appcast.xml
 
 # --- Create GitHub release (if needed) and upload ---
 if gh release view "$TAG" >/dev/null 2>&1; then
@@ -161,8 +167,8 @@ fi
 # --- Verify ---
 gh release view "$TAG"
 
-# --- Update Homebrew cask (skip for nightlies) ---
-if [[ "$TAG" != *"-nightly"* ]]; then
+# --- Update Homebrew cask (optional, skip for nightlies) ---
+if [[ "$TAG" != *"-nightly"* && -n "$HOMEBREW_TAP_REPO" ]]; then
   VERSION="${TAG#v}"
   DMG_SHA256=$(shasum -a 256 cmux-macos.dmg | cut -d' ' -f1)
   echo "Updating homebrew cask to $VERSION (SHA: $DMG_SHA256)..."
@@ -173,10 +179,10 @@ cask "cmux" do
   version "${VERSION}"
   sha256 "${DMG_SHA256}"
 
-  url "https://github.com/manaflow-ai/cmux/releases/download/v#{version}/cmux-macos.dmg"
+  url "https://github.com/${RELEASE_REPO}/releases/download/v#{version}/cmux-macos.dmg"
   name "cmux"
   desc "Lightweight native macOS terminal with vertical tabs for AI coding agents"
-  homepage "https://github.com/manaflow-ai/cmux"
+  homepage "https://github.com/${RELEASE_REPO}"
 
   livecheck do
     url :url
@@ -185,13 +191,13 @@ cask "cmux" do
 
   depends_on macos: ">= :ventura"
 
-  app "cmux.app"
-  binary "#{appdir}/cmux.app/Contents/Resources/bin/cmux"
+  app "cmux Atlas.app"
+  binary "#{appdir}/cmux Atlas.app/Contents/Resources/bin/cmux"
 
   zap trash: [
-    "~/Library/Application Support/cmux",
-    "~/Library/Caches/cmux",
-    "~/Library/Preferences/ai.manaflow.cmuxterm.plist",
+    "~/Library/Application Support/cmux-atlas",
+    "~/Library/Caches/cmux-atlas",
+    "~/Library/Preferences/com.atlascodes.cmux-atlas.plist",
   ]
 end
 CASKEOF
@@ -208,6 +214,8 @@ CASKEOF
   else
     echo "WARNING: homebrew-cmux submodule not found, skipping cask update"
   fi
+elif [[ "$TAG" != *"-nightly"* ]]; then
+  echo "Homebrew tap update skipped; set HOMEBREW_TAP_REPO to enable it."
 fi
 
 # --- Cleanup ---

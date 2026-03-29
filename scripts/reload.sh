@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cmux DEV"
-BUNDLE_ID="com.cmuxterm.app.debug"
-BASE_APP_NAME="cmux DEV"
+APP_NAME="cmux Atlas DEV"
+BUNDLE_ID="com.atlascodes.cmux-atlas.debug"
+BASE_APP_NAME="cmux Atlas DEV"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
@@ -12,7 +12,7 @@ TAG=""
 LAUNCH=0
 CMUX_DEBUG_LOG=""
 CLI_PATH=""
-LAST_SOCKET_PATH_DIR="$HOME/Library/Application Support/cmux"
+LAST_SOCKET_PATH_DIR="$HOME/Library/Application Support/cmux-atlas"
 LAST_SOCKET_PATH_FILE="${LAST_SOCKET_PATH_DIR}/last-socket-path"
 AUTO_SKIP_ZIG_BUILD_REASON=""
 
@@ -65,7 +65,7 @@ EOF
 }
 
 select_cmux_shim_target() {
-  local app_cli_dir="/Applications/cmux.app/Contents/Resources/bin"
+  local app_cli_dir="/Applications/cmux Atlas.app/Contents/Resources/bin"
   local marker="cmux dev shim (managed by scripts/reload.sh)"
   local target=""
   local path_entry=""
@@ -118,7 +118,7 @@ write_last_socket_path() {
   local socket_path="$1"
   mkdir -p "$LAST_SOCKET_PATH_DIR"
   echo "$socket_path" > "$LAST_SOCKET_PATH_FILE" || true
-  echo "$socket_path" > /tmp/cmux-last-socket-path || true
+  echo "$socket_path" > /tmp/cmux-atlas-last-socket-path || true
 }
 
 usage() {
@@ -159,7 +159,7 @@ sanitize_path() {
 
 tagged_derived_data_path() {
   local slug="$1"
-  echo "$HOME/Library/Developer/Xcode/DerivedData/cmux-${slug}"
+  echo "$HOME/Library/Developer/Xcode/DerivedData/cmux-atlas-${slug}"
 }
 
 print_tag_cleanup_reminder() {
@@ -170,10 +170,10 @@ print_tag_cleanup_reminder() {
   local -a stale_tags=()
 
   while IFS= read -r -d '' path; do
-    if [[ "$path" == /tmp/cmux-* ]]; then
-      tag="${path#/tmp/cmux-}"
-    elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/cmux-"* ]]; then
-      tag="${path#$HOME/Library/Developer/Xcode/DerivedData/cmux-}"
+    if [[ "$path" == /tmp/cmux-atlas-* ]]; then
+      tag="${path#/tmp/cmux-atlas-}"
+    elif [[ "$path" == "$HOME/Library/Developer/Xcode/DerivedData/cmux-atlas-"* ]]; then
+      tag="${path#$HOME/Library/Developer/Xcode/DerivedData/cmux-atlas-}"
     else
       continue
     fi
@@ -190,8 +190,8 @@ print_tag_cleanup_reminder() {
     seen="${seen}${tag} "
     stale_tags+=("$tag")
   done < <(
-    find /tmp -maxdepth 1 -name 'cmux-*' -print0 2>/dev/null
-    find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'cmux-*' -print0 2>/dev/null
+    find /tmp -maxdepth 1 -name 'cmux-atlas-*' -print0 2>/dev/null
+    find "$HOME/Library/Developer/Xcode/DerivedData" -maxdepth 1 -type d -name 'cmux-atlas-*' -print0 2>/dev/null
   )
 
   echo
@@ -207,17 +207,17 @@ print_tag_cleanup_reminder() {
     done
     echo "Cleanup stale tags only:"
     for tag in "${stale_tags[@]}"; do
-      echo "  pkill -f \"cmux DEV ${tag}.app/Contents/MacOS/cmux DEV\""
-      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/cmux-${tag}\" \"/tmp/cmux-debug-${tag}.sock\""
-      echo "  rm -f \"/tmp/cmux-debug-${tag}.log\""
-      echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${tag}.sock\""
+      echo "  pkill -f \"cmux Atlas DEV ${tag}.app/Contents/MacOS/cmux Atlas DEV\""
+      echo "  rm -rf \"$(tagged_derived_data_path "$tag")\" \"/tmp/cmux-atlas-${tag}\" \"/tmp/cmux-atlas-debug-${tag}.sock\""
+      echo "  rm -f \"/tmp/cmux-atlas-debug-${tag}.log\""
+      echo "  rm -f \"$HOME/Library/Application Support/cmux-atlas/cmuxd-dev-${tag}.sock\""
     done
   fi
   echo "After you verify current tag, cleanup command:"
-  echo "  pkill -f \"cmux DEV ${current_slug}.app/Contents/MacOS/cmux DEV\""
-  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/cmux-${current_slug}\" \"/tmp/cmux-debug-${current_slug}.sock\""
-  echo "  rm -f \"/tmp/cmux-debug-${current_slug}.log\""
-  echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${current_slug}.sock\""
+  echo "  pkill -f \"cmux Atlas DEV ${current_slug}.app/Contents/MacOS/cmux Atlas DEV\""
+  echo "  rm -rf \"$(tagged_derived_data_path "$current_slug")\" \"/tmp/cmux-atlas-${current_slug}\" \"/tmp/cmux-atlas-debug-${current_slug}.sock\""
+  echo "  rm -f \"/tmp/cmux-atlas-debug-${current_slug}.log\""
+  echo "  rm -f \"$HOME/Library/Application Support/cmux-atlas/cmuxd-dev-${current_slug}.sock\""
 }
 
 while [[ $# -gt 0 ]]; do
@@ -290,10 +290,10 @@ if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
   if [[ "$NAME_SET" -eq 0 ]]; then
-    APP_NAME="cmux DEV ${TAG}"
+    APP_NAME="cmux Atlas DEV ${TAG}"
   fi
   if [[ "$BUNDLE_SET" -eq 0 ]]; then
-    BUNDLE_ID="com.cmuxterm.app.debug.${TAG_ID}"
+    BUNDLE_ID="com.atlascodes.cmux-atlas.debug.${TAG_ID}"
   fi
   if [[ "$DERIVED_SET" -eq 0 ]]; then
     DERIVED_DATA="$(tagged_derived_data_path "$TAG_SLUG")"
@@ -440,11 +440,11 @@ if [[ -x "$CLI_PATH" ]]; then
 
   # Stable shim that always follows the last reload-selected dev CLI.
   DEV_CLI_SHIM="$HOME/.local/bin/cmux-dev"
-  write_dev_cli_shim "$DEV_CLI_SHIM" "/Applications/cmux.app/Contents/Resources/bin/cmux"
+  write_dev_cli_shim "$DEV_CLI_SHIM" "/Applications/cmux Atlas.app/Contents/Resources/bin/cmux"
 
   CMUX_SHIM_TARGET="$(select_cmux_shim_target || true)"
   if [[ -n "${CMUX_SHIM_TARGET:-}" ]]; then
-    write_dev_cli_shim "$CMUX_SHIM_TARGET" "/Applications/cmux.app/Contents/Resources/bin/cmux"
+    write_dev_cli_shim "$CMUX_SHIM_TARGET" "/Applications/cmux Atlas.app/Contents/Resources/bin/cmux"
   fi
 fi
 
