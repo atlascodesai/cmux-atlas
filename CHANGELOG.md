@@ -2,52 +2,26 @@
 
 All notable changes to cmux are documented here.
 
-## [1.38.1-atlas.8] - 2026-03-30
-
-### Fixed
-- Release signing now imports the Apple intermediate certificates on the rebuilt release line, restoring Developer ID chain validation during GitHub release publishing
-
-## [1.38.1-atlas.7] - 2026-03-29
-
-### Fixed
-- Rebuilt release line no longer depends on newer local-only Bonsplit tab bar APIs, so Release builds succeed against the committed submodule revision
-
-## [1.38.1-atlas.6] - 2026-03-29
-
-### Changed
-- Rebuilt the Atlas fork on a clean upstream `1.38.1` base while preserving Atlas branding, AI session resume/editor sync, tracked terminal memory, and markdown panel workflows
-
-### Fixed
-- Release rehearsals on macOS 26 now follow the same Ghostty CLI helper fallback path as tagged Debug builds
-- Restored the Claude/Codex titlebar assets and Claude wrapper session registration behavior on the rebuilt release line
-
-## [1.38.1-atlas.5] - 2026-03-29
-
-### Fixed
-- Refresh memory usage immediately when terminal TTY registration or Claude/Codex live-session tracking changes, so newly restored AI tabs do not lag behind in the sidebar RAM footer
-
-## [1.38.1-atlas.4] - 2026-03-29
+## [0.63.1-atlas.1] - 2026-03-31
 
 ### Added
 - File menu and command palette action to refresh AI resume recovery for the current workspace
 - Sentry warnings when AI resume recovery finds no recoverable sessions or cannot construct a Claude/Codex resume command
 
+### Changed
+- Rebuilt the Atlas fork on a clean upstream `0.63.1` base while preserving Atlas branding, AI session resume/editor sync, tracked terminal memory, and markdown panel workflows
+
 ### Fixed
+- Release signing now imports the Apple intermediate certificates on the rebuilt release line, restoring Developer ID chain validation during GitHub release publishing
+- Rebuilt release line no longer depends on newer local-only Bonsplit tab bar APIs, so Release builds succeed against the committed submodule revision
+- Refresh memory usage immediately when terminal TTY registration or Claude/Codex live-session tracking changes, so newly restored AI tabs do not lag behind in the sidebar RAM footer
 - Session restore being incorrectly suppressed on updater relaunches and other non-open launch arguments
 - Zsh shell integration regression where `_cmux_report_tty_once` called a missing `_cmux_send_bg` helper
-
-## [1.38.1-atlas.3] - 2026-03-29
-
-### Added
 - Upstream `cmux.json` custom command support, directory trust flow, and docs updates
 - New remote daemon tmux-compat relay support, `cmux omo`, and `claude-teams` integration updates
 - Internal PR E2E coverage and an external-PR policy workflow to keep self-hosted CI limited to trusted branches
-
-### Changed
-- Synced the Atlas fork onto upstream `1.38.1` while preserving Atlas update, workflow, and AI-session integrations
 - Footer memory reporting now includes tracked terminal process usage instead of app-only resident memory
 
-### Fixed
 - Launch crashes from corrupt autosaved window frames, including runtime frame clamping and Sentry diagnostics
 - Stale Claude/Codex resume prefill so ended sessions do not override a newer live TUI session
 - Browser return/IME routing, stale terminal-surface ownership handling, and inherited-surface quarantine paths lost during merge resolution

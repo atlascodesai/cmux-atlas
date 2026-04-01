@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
 import Bonsplit
@@ -448,7 +449,29 @@ enum ClaudeHookSessionSnapshotStore: RestoredTerminalActionProvider {
         let path = statePath(processEnv: processEnv)
         guard fileManager.fileExists(atPath: path) else { return nil }
         guard let data = fileManager.contents(atPath: path) else { return nil }
-        return try? JSONDecoder().decode(ClaudeHookSessionStoreFile.self, from: data)
+        guard var state = try? JSONDecoder().decode(ClaudeHookSessionStoreFile.self, from: data) else {
+            return nil
+        }
+
+        let originalCount = state.sessions.count
+        state.sessions = state.sessions.filter { _, record in
+            isEligibleLiveRecord(record)
+        }
+
+        let removedCount = originalCount - state.sessions.count
+        if removedCount > 0 {
+            sentryBreadcrumb(
+                "ai.resume.claude.pruned_stale_hook_sessions",
+                category: "ai_resume",
+                data: [
+                    "removedCount": removedCount,
+                    "remainingCount": state.sessions.count,
+                ]
+            )
+            saveState(state, to: path)
+        }
+
+        return state
     }
 
     private static func statePath(processEnv: [String: String]) -> String {
@@ -462,6 +485,45 @@ enum ClaudeHookSessionSnapshotStore: RestoredTerminalActionProvider {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func isEligibleLiveRecord(_ record: ClaudeHookSessionRecord) -> Bool {
+        guard let pid = record.pid, pid > 0 else { return false }
+        return processExists(pid)
+    }
+
+    private static func processExists(_ pid: Int) -> Bool {
+        errno = 0
+        if Darwin.kill(pid_t(pid), 0) == 0 {
+            return true
+        }
+        return POSIXErrorCode(rawValue: errno) != .ESRCH
+    }
+
+    private static func saveState(_ state: ClaudeHookSessionStoreFile, to path: String) {
+        let url = URL(fileURLWithPath: path)
+        let directory = url.deletingLastPathComponent()
+        do {
+            try fileManagerCreateDirectoryIfNeeded(directory)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(state)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            sentryCaptureWarning(
+                "Failed to rewrite pruned Claude hook state",
+                category: "ai_resume",
+                data: [
+                    "path": path,
+                    "error": String(describing: error),
+                ],
+                contextKey: "ai_resume_claude_hook_prune"
+            )
+        }
+    }
+
+    private static func fileManagerCreateDirectoryIfNeeded(_ url: URL) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
     }
 }
 

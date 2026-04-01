@@ -111,25 +111,6 @@ set -- "${NORMALIZED_ARGS[@]}"
 # the actual claude process PID, which hooks use for stale-session detection.
 export CMUX_CLAUDE_PID=$$
 
-best_effort_register_session() {
-    local session_id="$1"
-    [[ -n "$session_id" ]] || return 0
-    [[ -n "${CMUX_WORKSPACE_ID:-}" && -n "${CMUX_SURFACE_ID:-}" ]] || return 0
-
-    local self_dir cmux_bin
-    self_dir="$(cd "$(dirname "$0")" && pwd)"
-    cmux_bin="$self_dir/cmux"
-    [[ -x "$cmux_bin" ]] || cmux_bin="$(command -v cmux || true)"
-    [[ -n "$cmux_bin" ]] || return 0
-
-    printf '{"session_id":"%s","cwd":"%s"}\n' \
-        "$session_id" \
-        "${PWD//\"/\\\"}" \
-        | "$cmux_bin" --socket "${CMUX_SOCKET_PATH}" claude-hook session-start \
-            --workspace "${CMUX_WORKSPACE_ID}" \
-            --surface "${CMUX_SURFACE_ID}" >/dev/null 2>&1 || true
-}
-
 # Build hooks settings JSON.
 # Claude Code merges --settings additively with the user's own settings.json.
 # - SessionStart/Stop/Notification: existing lifecycle hooks
@@ -139,10 +120,8 @@ best_effort_register_session() {
 HOOKS_JSON='{"hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook session-start","timeout":10}]}],"Stop":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook stop","timeout":10}]}],"SessionEnd":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook session-end","timeout":1}]}],"Notification":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook notification","timeout":10}]}],"UserPromptSubmit":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook prompt-submit","timeout":10}]}],"PreToolUse":[{"matcher":"","hooks":[{"type":"command","command":"cmux claude-hook pre-tool-use","timeout":5,"async":true}]}]}}'
 
 if [[ "$SKIP_SESSION_ID" == true ]]; then
-    best_effort_register_session "$RESUME_SESSION_ID"
     exec "$REAL_CLAUDE" --settings "$HOOKS_JSON" "$@"
 else
     SESSION_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-    best_effort_register_session "$SESSION_ID"
     exec "$REAL_CLAUDE" --session-id "$SESSION_ID" --settings "$HOOKS_JSON" "$@"
 fi
