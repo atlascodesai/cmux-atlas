@@ -416,17 +416,29 @@ enum TerminalOpenURLTarget: Equatable {
     case embeddedBrowser(URL)
     case external(URL)
     /// A local markdown file to render in a native markdown panel.
-    case markdownFile(String)
-    /// A local file (relative path) to open in the browser via file:// URL.
-    case localFile(String)
+    case markdownFile(TerminalOpenFileReference)
+    /// A local file to open in cmux or in the linked editor.
+    case localFile(TerminalOpenFileReference)
 
     var url: URL {
         switch self {
         case let .embeddedBrowser(url), let .external(url):
             return url
-        case let .markdownFile(path), let .localFile(path):
-            return URL(fileURLWithPath: path)
+        case let .markdownFile(reference), let .localFile(reference):
+            return URL(fileURLWithPath: reference.path)
         }
+    }
+}
+
+struct TerminalOpenFileReference: Equatable {
+    let path: String
+    let line: Int?
+    let column: Int?
+
+    var pathWithPosition: String {
+        guard let line else { return path }
+        guard let column else { return "\(path):\(line)" }
+        return "\(path):\(line):\(column)"
     }
 }
 
@@ -503,6 +515,75 @@ final class GhosttyDefaultBackgroundNotificationDispatcher {
     }
 }
 
+private let terminalPositionedFileReferenceBareExtensions: Set<String> = [
+    "c", "cc", "conf", "cpp", "css", "csv", "go", "h", "hpp", "html", "ini", "java",
+    "js", "json", "jsx", "kt", "kts", "log", "lua", "m", "markdown", "md", "mdx", "mm",
+    "php", "plist", "py", "rb", "rs", "scss", "sh", "sql", "swift", "toml", "ts",
+    "tsx", "txt", "xml", "yaml", "yml", "zig", "zsh"
+]
+
+private func terminalFileReferenceType(for path: String) -> TerminalOpenURLTarget? {
+    let lowercasedPath = path.lowercased()
+    let lastComponent = NSString(string: path).lastPathComponent
+    let hasFileExtension = lastComponent.contains(".")
+
+    if lowercasedPath.hasSuffix(".md") || lowercasedPath.hasSuffix(".markdown") {
+        return .markdownFile(TerminalOpenFileReference(path: path, line: nil, column: nil))
+    }
+    if hasFileExtension {
+        return .localFile(TerminalOpenFileReference(path: path, line: nil, column: nil))
+    }
+    return nil
+}
+
+private func terminalLooksLikePositionedFileReferencePath(_ path: String) -> Bool {
+    guard !path.isEmpty else { return false }
+    if NSString(string: path).isAbsolutePath || path.hasPrefix("./") || path.hasPrefix("../")
+        || path.hasPrefix("~/") || path.contains("/") {
+        return true
+    }
+
+    let lastComponent = NSString(string: path).lastPathComponent
+    guard lastComponent.contains(".") else { return false }
+    let fileExtension = URL(fileURLWithPath: lastComponent).pathExtension.lowercased()
+    guard !fileExtension.isEmpty else { return false }
+    return terminalPositionedFileReferenceBareExtensions.contains(fileExtension)
+}
+
+private func terminalPositionedFileReference(_ rawValue: String) -> TerminalOpenFileReference? {
+    guard !rawValue.contains("://"),
+          rawValue.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil else {
+        return nil
+    }
+
+    func parseIntSuffix(_ value: String) -> (prefix: String, integer: Int)? {
+        guard let separator = value.lastIndex(of: ":") else { return nil }
+        let prefix = String(value[..<separator])
+        let suffixStart = value.index(after: separator)
+        let suffix = String(value[suffixStart...])
+        guard let integer = Int(suffix), integer > 0 else { return nil }
+        return (prefix, integer)
+    }
+
+    guard let trailingNumber = parseIntSuffix(rawValue) else { return nil }
+
+    let path: String
+    let line: Int
+    let column: Int?
+    if let leadingNumber = parseIntSuffix(trailingNumber.prefix) {
+        path = leadingNumber.prefix
+        line = leadingNumber.integer
+        column = trailingNumber.integer
+    } else {
+        path = trailingNumber.prefix
+        line = trailingNumber.integer
+        column = nil
+    }
+
+    guard terminalLooksLikePositionedFileReferencePath(path) else { return nil }
+    return TerminalOpenFileReference(path: path, line: line, column: column)
+}
+
 func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? {
     let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
     #if DEBUG
@@ -515,13 +596,34 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         return nil
     }
 
-    if NSString(string: trimmed).isAbsolutePath {
-        // Absolute markdown files → native markdown panel
-        if trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown") {
+    if let reference = terminalPositionedFileReference(trimmed) {
+        if reference.path.lowercased().hasSuffix(".md") || reference.path.lowercased().hasSuffix(".markdown") {
             #if DEBUG
-            dlog("link.resolve result=markdownFile(absolutePath) path=\(trimmed)")
+            dlog("link.resolve result=markdownFile(positioned) path=\(reference.pathWithPosition)")
             #endif
-            return .markdownFile(trimmed)
+            return .markdownFile(reference)
+        }
+        #if DEBUG
+        dlog("link.resolve result=localFile(positioned) path=\(reference.pathWithPosition)")
+        #endif
+        return .localFile(reference)
+    }
+
+    if NSString(string: trimmed).isAbsolutePath {
+        // Absolute local file paths should stay inside cmux rather than opening
+        // in the system default app.
+        if let target = terminalFileReferenceType(for: trimmed) {
+            #if DEBUG
+            switch target {
+            case .markdownFile(_):
+                dlog("link.resolve result=markdownFile(absolutePath) path=\(trimmed)")
+            case .localFile(_):
+                dlog("link.resolve result=localFile(absolutePath) path=\(trimmed)")
+            default:
+                break
+            }
+            #endif
+            return target
         }
         #if DEBUG
         dlog("link.resolve result=external(absolutePath) url=\(trimmed)")
@@ -538,7 +640,7 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         #if DEBUG
         dlog("link.resolve result=markdownFile(relativePath) path=\(trimmed)")
         #endif
-        return .markdownFile(trimmed)
+        return .markdownFile(TerminalOpenFileReference(path: trimmed, line: nil, column: nil))
     }
 
     if let parsed = URL(string: trimmed),
@@ -572,7 +674,7 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
             #if DEBUG
             dlog("link.resolve result=localFile(relative) path=\(trimmed)")
             #endif
-            return .localFile(trimmed)
+            return .localFile(TerminalOpenFileReference(path: trimmed, line: nil, column: nil))
         }
     }
 
@@ -2748,22 +2850,14 @@ class GhosttyApp {
                 #endif
                 return false
             }
-            if !BrowserLinkOpenSettings.openTerminalLinksInCmuxBrowser() {
-                #if DEBUG
-                dlog("link.openURL cmuxBrowser=disabled, opening externally url=\(target.url)")
-                #endif
-                return performOnMain {
-                    NSWorkspace.shared.open(target.url)
-                }
-            }
             switch target {
-            case let .markdownFile(relativePath):
+            case let .markdownFile(reference):
                 // Resolve relative markdown paths against the workspace directory and
                 // open in a native markdown panel split beside the terminal.
                 let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
                 let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
                 #if DEBUG
-                dlog("link.openURL target=markdownFile path=\(relativePath)")
+                dlog("link.openURL target=markdownFile path=\(reference.pathWithPosition)")
                 #endif
                 return performOnMain {
                     guard let sourceWorkspaceId, let sourcePanelId,
@@ -2776,11 +2870,11 @@ class GhosttyApp {
                     }
                     let workspace = resolved.workspace
                     let absolutePath: String
-                    if NSString(string: relativePath).isAbsolutePath {
-                        absolutePath = relativePath
+                    if NSString(string: reference.path).isAbsolutePath {
+                        absolutePath = reference.path
                     } else {
                         let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
-                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                        absolutePath = (baseDir as NSString).appendingPathComponent(reference.path)
                     }
                     let standardized = NSString(string: absolutePath).standardizingPath
                     guard FileManager.default.fileExists(atPath: standardized) else {
@@ -2788,6 +2882,16 @@ class GhosttyApp {
                         dlog("link.openURL markdownFile not found at \(standardized), falling back to external")
                         #endif
                         NSWorkspace.shared.open(URL(fileURLWithPath: standardized))
+                        return true
+                    }
+                    if EditorSyncController.shared.openFileInEditorIfRunning(
+                        standardized,
+                        line: reference.line,
+                        column: reference.column
+                    ) {
+                        #if DEBUG
+                        dlog("link.openURL markdownFile opened in linked editor path=\(reference.pathWithPosition)")
+                        #endif
                         return true
                     }
                     // Open as a markdown panel split to the right of the terminal
@@ -2798,13 +2902,13 @@ class GhosttyApp {
                     )
                     return true
                 }
-            case let .localFile(relativePath):
+            case let .localFile(reference):
                 // Resolve relative file paths against the workspace directory and
                 // open as file:// URL in the embedded browser.
                 let sourceWorkspaceId = callbackTabId ?? surfaceView.tabId
                 let sourcePanelId = callbackSurfaceId ?? surfaceView.terminalSurface?.id
                 #if DEBUG
-                dlog("link.openURL target=localFile path=\(relativePath)")
+                dlog("link.openURL target=localFile path=\(reference.pathWithPosition)")
                 #endif
                 return performOnMain {
                     guard let sourceWorkspaceId, let sourcePanelId,
@@ -2817,11 +2921,11 @@ class GhosttyApp {
                     }
                     let workspace = resolved.workspace
                     let absolutePath: String
-                    if NSString(string: relativePath).isAbsolutePath {
-                        absolutePath = relativePath
+                    if NSString(string: reference.path).isAbsolutePath {
+                        absolutePath = reference.path
                     } else {
                         let baseDir = workspace.currentDirectory ?? FileManager.default.currentDirectoryPath
-                        absolutePath = (baseDir as NSString).appendingPathComponent(relativePath)
+                        absolutePath = (baseDir as NSString).appendingPathComponent(reference.path)
                     }
                     let standardized = NSString(string: absolutePath).standardizingPath
                     guard FileManager.default.fileExists(atPath: standardized) else {
@@ -2829,10 +2933,20 @@ class GhosttyApp {
                         dlog("link.openURL localFile not found at \(standardized), falling back to web URL")
                         #endif
                         // File doesn't exist — fall back to treating as web URL
-                        if let webURL = resolveBrowserNavigableURL(relativePath) {
+                        if let webURL = resolveBrowserNavigableURL(reference.path) {
                             return NSWorkspace.shared.open(webURL)
                         }
                         return false
+                    }
+                    if EditorSyncController.shared.openFileInEditorIfRunning(
+                        standardized,
+                        line: reference.line,
+                        column: reference.column
+                    ) {
+                        #if DEBUG
+                        dlog("link.openURL localFile opened in linked editor path=\(reference.pathWithPosition)")
+                        #endif
+                        return true
                     }
                     let fileURL = URL(fileURLWithPath: standardized)
                     if let targetPane = workspace.preferredBrowserTargetPane(fromPanelId: sourcePanelId) {
@@ -2849,6 +2963,14 @@ class GhosttyApp {
                     NSWorkspace.shared.open(url)
                 }
             case let .embeddedBrowser(url):
+                if !BrowserLinkOpenSettings.openTerminalLinksInCmuxBrowser() {
+                    #if DEBUG
+                    dlog("link.openURL cmuxBrowser=disabled, opening externally url=\(url)")
+                    #endif
+                    return performOnMain {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
                 if BrowserLinkOpenSettings.shouldOpenExternally(url) {
                     #if DEBUG
                     dlog("link.openURL target=embedded but shouldOpenExternally=true url=\(url)")

@@ -3342,14 +3342,83 @@ final class TerminalOpenURLTargetResolutionTests: XCTestCase {
         }
     }
 
-    func testResolvesAbsolutePathAsExternalFileURL() throws {
+    func testResolvesAbsolutePathAsLocalFile() throws {
         let target = try XCTUnwrap(resolveTerminalOpenURLTarget("/tmp/cmux-path.txt"))
         switch target {
-        case let .external(url):
-            XCTAssertTrue(url.isFileURL)
-            XCTAssertEqual(url.path, "/tmp/cmux-path.txt")
+        case let .localFile(reference):
+            XCTAssertEqual(reference.path, "/tmp/cmux-path.txt")
+            XCTAssertNil(reference.line)
+            XCTAssertNil(reference.column)
         default:
-            XCTFail("Expected absolute file path to open externally")
+            XCTFail("Expected absolute file path to stay inside cmux")
+        }
+    }
+
+    func testResolvesRelativeFileLikePathAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("./report.html"))
+        switch target {
+        case let .localFile(reference):
+            XCTAssertEqual(reference.path, "./report.html")
+            XCTAssertNil(reference.line)
+            XCTAssertNil(reference.column)
+        default:
+            XCTFail("Expected relative file-like path to route as a local file")
+        }
+    }
+
+    func testResolvesNestedRelativeFileLikePathAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("artifacts/output/report.pdf"))
+        switch target {
+        case let .localFile(reference):
+            XCTAssertEqual(reference.path, "artifacts/output/report.pdf")
+            XCTAssertNil(reference.line)
+            XCTAssertNil(reference.column)
+        default:
+            XCTFail("Expected nested relative file-like path to route as a local file")
+        }
+    }
+
+    func testResolvesPositionedRelativeSourceFileAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("Sources/AppDelegate.swift:451:58"))
+        switch target {
+        case let .localFile(reference):
+            XCTAssertEqual(reference.path, "Sources/AppDelegate.swift")
+            XCTAssertEqual(reference.line, 451)
+            XCTAssertEqual(reference.column, 58)
+        default:
+            XCTFail("Expected positioned source file path to route as a local file")
+        }
+    }
+
+    func testResolvesPositionedAbsoluteMarkdownFileAsMarkdownFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("/tmp/README.md:12"))
+        switch target {
+        case let .markdownFile(reference):
+            XCTAssertEqual(reference.path, "/tmp/README.md")
+            XCTAssertEqual(reference.line, 12)
+            XCTAssertNil(reference.column)
+        default:
+            XCTFail("Expected positioned markdown file path to route as markdown")
+        }
+    }
+
+    func testDoesNotTreatHostPortValueAsPositionedFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("example.com:8080"))
+        switch target {
+        case .external:
+            break
+        default:
+            XCTFail("Expected host:port value to avoid the positioned-file path")
+        }
+    }
+
+    func testPrefersBareDomainOverRelativeFileHeuristic() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("example.com/docs"))
+        switch target {
+        case let .embeddedBrowser(url):
+            XCTAssertEqual(url.host, "example.com")
+        default:
+            XCTFail("Expected bare domain to remain a browser URL")
         }
     }
 

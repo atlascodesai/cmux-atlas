@@ -11398,7 +11398,7 @@ private struct TabItemView: View, Equatable {
         }()
 
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if unreadCount > 0 {
                     ZStack {
                         Circle()
@@ -11424,8 +11424,12 @@ private struct TabItemView: View, Equatable {
                     .truncationMode(.tail)
                     .layoutPriority(1)
 
+                Spacer(minLength: 0)
+
                 if let workspaceMemorySummary {
                     Text(workspaceMemorySummary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: true)
                         .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundColor(activeSecondaryColor(0.82))
@@ -11440,8 +11444,6 @@ private struct TabItemView: View, Equatable {
                                 )
                         )
                 }
-
-                Spacer(minLength: 0)
 
                 ZStack(alignment: .trailing) {
                     Button(action: {
