@@ -2,7 +2,7 @@
 
 All notable changes to cmux are documented here.
 
-## [0.63.1-atlas.5] - 2026-04-02
+## [0.63.1-atlas.6] - 2026-04-02
 
 ### Changed
 - Move current-workspace organization actions out of the sidebar workspace right-click menu and into File > Organizations, keeping organization management in the top menu where it belongs
@@ -10,6 +10,7 @@ All notable changes to cmux are documented here.
 
 ### Fixed
 - Add a direct titlebar context-menu affordance to rename or clear the current workspace organization without going back to the sidebar workspace menu
+- Stabilize release signing by making the temporary CI signing keychain the default before re-signing bundled helper binaries
 
 ## [0.63.1-atlas.4] - 2026-04-02
 
