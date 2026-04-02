@@ -346,7 +346,9 @@ extension Workspace {
                 timestamp: Date(timeIntervalSince1970: entry.timestamp)
             )
         }
-        progress = snapshot.progress.map { SidebarProgressState(value: $0.value, label: $0.label) }
+        // Progress labels are runtime task state. Restoring them across relaunch makes the
+        // sidebar look stale even when the underlying process/task is gone.
+        progress = nil
         gitBranch = snapshot.gitBranch.map { SidebarGitBranchState(branch: $0.branch, isDirty: $0.isDirty) }
 
         recomputeListeningPorts()
@@ -513,7 +515,7 @@ extension Workspace {
         RestoredTerminalActionRegistry.latestAction(
             workspaceId: id,
             panelId: panelId
-        )
+        ) ?? restoredTerminalActions[panelId]
     }
 
     @discardableResult
@@ -711,6 +713,7 @@ extension Workspace {
             }
             if let restoredTerminalAction = snapshot.restoredTerminalAction {
                 restoredTerminalActions[terminalPanel.id] = restoredTerminalAction
+                _ = terminalPanel.prefillResumeAction(restoredTerminalAction)
             } else {
                 restoredTerminalActions.removeValue(forKey: terminalPanel.id)
             }
@@ -5839,7 +5842,24 @@ final class Workspace: Identifiable, ObservableObject {
             appearance: appearance
         )
         self.bonsplitController = BonsplitController(configuration: config)
+        bonsplitController.extraTabBarLeadingButtons = AnyView(
+            WorkspaceTabBarLeadingButtons(
+                config: nil,
+                launchAgent: { [weak self] agent in
+                    self?.launchQuickAIAgent(agent)
+                }
+            )
+        )
+        bonsplitController.browserButtonContextMenu = AnyView(
+            BrowserLinkToggleContextMenu()
+        )
         bonsplitController.contextMenuShortcuts = Self.buildContextMenuShortcuts()
+        bonsplitController.tabHasDirectory = { [weak self] tabId in
+            guard let self,
+                  let panelId = self.panelIdFromSurfaceId(TabID(uuid: tabId)),
+                  let dir = self.panelDirectories[panelId] else { return false }
+            return !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
 
         // Remove the default "Welcome" tab that bonsplit creates
         let welcomeTabIds = bonsplitController.allTabIds
@@ -11023,6 +11043,18 @@ extension Workspace: BonsplitDelegate {
         case .toggleZoom:
             guard let panelId = panelIdFromSurfaceId(tab.id) else { return }
             toggleSplitZoom(panelId: panelId)
+        case .revealInFinder:
+            guard let panelId = panelIdFromSurfaceId(tab.id),
+                  let dir = panelDirectories[panelId],
+                  !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir)
+        case .copyPath:
+            guard let panelId = panelIdFromSurfaceId(tab.id),
+                  let dir = panelDirectories[panelId],
+                  !dir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(dir, forType: .string)
         @unknown default:
             break
         }

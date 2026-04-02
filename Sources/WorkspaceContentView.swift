@@ -182,25 +182,12 @@ struct WorkspaceContentView: View {
                         workspace.focusPanel(panel.id)
                     },
                     onTriggerFlash: { workspace.triggerDebugFlash(panelId: panel.id) },
-                    restoredTerminalAction: workspace.restoredTerminalActions[panel.id],
-                    onRunRestoredTerminalAction: { restoredAction in
-                        let permissiveModeEnabled: Bool
-                        switch restoredAction.agentType {
-                        case .claudeCode:
-                            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .claudeCode)
-                        case .codex:
-                            permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
-                        }
-                        guard let resumeCommand = restoredAction.resumeCommand(
-                                permissiveModeEnabled: permissiveModeEnabled
-                              ),
-                              let terminalPanel = panel as? TerminalPanel else { return }
-                        terminalPanel.sendCommand(resumeCommand)
-                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
-                    },
-                    onDismissRestoredTerminalAction: {
-                        workspace.restoredTerminalActions.removeValue(forKey: panel.id)
-                    }
+                    // Keep the banner plumbing dormant for now. Inline CLI prefill on restore is
+                    // more reliable for multi-workspace recovery, and we can reintroduce the
+                    // explicit banner once the persisted resume-state model is stable again.
+                    restoredTerminalAction: nil,
+                    onRunRestoredTerminalAction: nil,
+                    onDismissRestoredTerminalAction: nil
                 )
                 .onTapGesture {
                     workspace.bonsplitController.focusPane(paneId)
