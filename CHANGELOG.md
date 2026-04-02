@@ -2,6 +2,15 @@
 
 All notable changes to cmux are documented here.
 
+## [0.63.1-atlas.2] - 2026-04-02
+
+### Fixed
+- Restore the workspace tab quick-launch buttons for Claude, Codex, and Editor Sync on the rebuilt Atlas line
+- Restore the native workspace-tab `Reveal in Finder` and `Copy Path` actions that were dropped during the clean rebuild parity pass
+- Revert restored AI sessions back to inline CLI prefill instead of the overlay banner while the persisted resume-state model is being redesigned
+- Preserve already-restored terminal resume actions across autosave misses so non-primary workspaces stop losing their saved Claude/Codex resume state
+- Stop restoring transient sidebar progress chips across relaunch, preventing stale task labels from persisting in the workspace list
+
 ## [0.63.1-atlas.1] - 2026-03-31
 
 ### Added
