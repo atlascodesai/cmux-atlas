@@ -2,9 +2,10 @@
 
 All notable changes to cmux are documented here.
 
-## [0.63.1-atlas.2] - 2026-04-02
+## [0.63.1-atlas.3] - 2026-04-02
 
 ### Fixed
+- Update the Bonsplit submodule on the rebuilt Atlas line so the restored workspace-tab affordances ship in release builds, not just local dirty checkouts
 - Restore the workspace tab quick-launch buttons for Claude, Codex, and Editor Sync on the rebuilt Atlas line
 - Restore the native workspace-tab `Reveal in Finder` and `Copy Path` actions that were dropped during the clean rebuild parity pass
 - Revert restored AI sessions back to inline CLI prefill instead of the overlay banner while the persisted resume-state model is being redesigned
