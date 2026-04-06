@@ -6053,6 +6053,10 @@ final class Workspace: Identifiable, ObservableObject {
     // shared SSH control master that is still serving the moved terminal.
     private var skipControlMasterCleanupAfterDetachedRemoteTransfer = false
     private var transferredRemoteCleanupConfigurationsByPanelId: [UUID: WorkspaceRemoteConfiguration] = [:]
+    private static let terminalProcessCleanupQueue = DispatchQueue(
+        label: "com.cmux.workspace-terminal-process-cleanup",
+        qos: .utility
+    )
 
 #if DEBUG
     private func debugElapsedMs(since start: TimeInterval) -> String {
@@ -8121,6 +8125,7 @@ final class Workspace: Identifiable, ObservableObject {
         for (panelId, panel) in panelEntries {
             panelSubscriptions.removeValue(forKey: panelId)
             PortScanner.shared.unregisterPanel(workspaceId: id, panelId: panelId)
+            scheduleTerminalDescendantCleanupIfNeeded(panelId: panelId, panel: panel, reason: "workspace.teardownAllPanels")
             panel.close()
         }
 
@@ -10588,6 +10593,9 @@ extension Workspace: BonsplitDelegate {
             } else if let closedTerminalRestoreSnapshot {
                 onClosedTerminalPanel?(closedTerminalRestoreSnapshot)
             }
+            if let panel {
+                scheduleTerminalDescendantCleanupIfNeeded(panelId: panelId, panel: panel, reason: "workspace.didCloseTab")
+            }
             panel?.close()
         }
 
@@ -10745,6 +10753,9 @@ extension Workspace: BonsplitDelegate {
 
         if !closedPanelIds.isEmpty {
             for panelId in closedPanelIds {
+                if let panel = panels[panelId] {
+                    scheduleTerminalDescendantCleanupIfNeeded(panelId: panelId, panel: panel, reason: "workspace.didClosePane")
+                }
                 panels[panelId]?.close()
                 panels.removeValue(forKey: panelId)
                 untrackRemoteTerminalSurface(panelId)
@@ -10782,6 +10793,101 @@ extension Workspace: BonsplitDelegate {
         if shouldScheduleFocusReconcile {
             scheduleFocusReconcile()
         }
+    }
+
+    private func scheduleTerminalDescendantCleanupIfNeeded(
+        panelId: UUID,
+        panel: any Panel,
+        reason: String
+    ) {
+        guard panel is TerminalPanel else { return }
+        guard let trackedOwner = trackedProcessOwner(for: panelId, panel: panel) else { return }
+
+        let rows = MemoryUsageStore.loadProcessRows()
+        let processTree = ProcessTreeSnapshot(rows: rows, trackedOwners: [trackedOwner])
+        let allOwnedPIDs = Set(processTree.descendantPIDs(forPanel: panelId))
+            .subtracting([getpid()])
+        guard !allOwnedPIDs.isEmpty else { return }
+
+        let ttyRootPIDs = Set(processTree.ttyRootPIDs(forPanel: panelId))
+        Self.terminalProcessCleanupQueue.async {
+            Self.terminateTerminalProcessTree(
+                allOwnedPIDs: allOwnedPIDs,
+                ttyRootPIDs: ttyRootPIDs,
+                reason: reason,
+                panelId: panelId
+            )
+        }
+    }
+
+    private func trackedProcessOwner(for panelId: UUID, panel: any Panel) -> TrackedProcessOwner? {
+        guard let ttyName = surfaceTTYNames[panelId]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !ttyName.isEmpty else {
+            return nil
+        }
+        let rawPanelTitle = (panelTitles[panelId] ?? panel.displayTitle)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let panelTitle = rawPanelTitle.isEmpty
+            ? String(localized: "memory.panel.fallbackTitle", defaultValue: "Terminal")
+            : rawPanelTitle
+        let rawWorkspaceTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let workspaceTitle = rawWorkspaceTitle.isEmpty
+            ? String(localized: "memory.workspace.fallbackTitle", defaultValue: "Workspace")
+            : rawWorkspaceTitle
+
+        return TrackedProcessOwner(
+            panelId: panelId,
+            workspaceId: id,
+            workspaceTitle: workspaceTitle,
+            panelTitle: panelTitle,
+            ttyName: ttyName
+        )
+    }
+
+    nonisolated private static func terminateTerminalProcessTree(
+        allOwnedPIDs: Set<Int32>,
+        ttyRootPIDs: Set<Int32>,
+        reason: String,
+        panelId: UUID
+    ) {
+        func alivePIDs(in pids: Set<Int32>) -> [Int32] {
+            pids.filter { pid in
+                guard pid > 0 else { return false }
+                if Darwin.kill(pid, 0) == 0 { return true }
+                return POSIXErrorCode(rawValue: errno) != .ESRCH
+            }
+        }
+
+#if DEBUG
+        dlog(
+            "terminal.cleanup.begin panel=\(panelId.uuidString.prefix(5)) reason=\(reason) " +
+            "owned=\(allOwnedPIDs.count) ttyRoots=\(ttyRootPIDs.count)"
+        )
+#endif
+
+        for pid in ttyRootPIDs {
+            _ = Darwin.kill(pid, SIGHUP)
+        }
+        usleep(250_000)
+
+        var remaining = alivePIDs(in: allOwnedPIDs)
+        for pid in remaining {
+            _ = Darwin.kill(pid, SIGTERM)
+        }
+        usleep(750_000)
+
+        remaining = alivePIDs(in: Set(remaining))
+        for pid in remaining {
+            _ = Darwin.kill(pid, SIGKILL)
+        }
+
+#if DEBUG
+        let survivors = alivePIDs(in: Set(remaining))
+        dlog(
+            "terminal.cleanup.end panel=\(panelId.uuidString.prefix(5)) reason=\(reason) " +
+            "survivors=\(survivors.count)"
+        )
+#endif
     }
 
     func splitTabBar(_ controller: BonsplitController, shouldClosePane pane: PaneID) -> Bool {

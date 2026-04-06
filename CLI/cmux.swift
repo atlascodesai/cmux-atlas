@@ -2389,6 +2389,42 @@ struct CMUXCLI {
             )
             print(response)
 
+        case "memory-history":
+            let limit = optionValue(commandArgs, name: "--limit")
+            var command = "memory_history"
+            if let limit, !limit.isEmpty {
+                command += " --limit=\(limit)"
+            }
+            let response = try sendV1Command(command, client: client)
+            print(response)
+
+        case "memory-incidents":
+            let limit = optionValue(commandArgs, name: "--limit")
+            var command = "memory_incidents"
+            if let limit, !limit.isEmpty {
+                command += " --limit=\(limit)"
+            }
+            let response = try sendV1Command(command, client: client)
+            print(response)
+
+        case "memory-metrickit":
+            let limit = optionValue(commandArgs, name: "--limit")
+            var command = "memory_metrickit"
+            if let limit, !limit.isEmpty {
+                command += " --limit=\(limit)"
+            }
+            let response = try sendV1Command(command, client: client)
+            print(response)
+
+        case "memory-dump":
+            let reason = optionValue(commandArgs, name: "--reason")
+            var command = "memory_dump"
+            if let reason, !reason.isEmpty {
+                command += " --reason=\(socketQuote(reason))"
+            }
+            let response = try sendV1Command(command, client: client)
+            print(response)
+
         case "claude-hook":
             cliTelemetry.breadcrumb("claude-hook.dispatch")
             do {
@@ -7223,6 +7259,58 @@ struct CMUXCLI {
             Example:
               cmux sidebar-state
               cmux sidebar-state --workspace workspace:2
+            """
+        case "memory-history":
+            return """
+            Usage: cmux memory-history [flags]
+
+            Print recent persisted memory samples as JSON.
+
+            Flags:
+              --limit <n>            Maximum number of samples to return (default: 120)
+
+            Example:
+              cmux memory-history
+              cmux memory-history --limit 20
+            """
+        case "memory-incidents":
+            return """
+            Usage: cmux memory-incidents [flags]
+
+            Print recent persisted memory-pressure incident summaries as JSON.
+
+            Flags:
+              --limit <n>            Maximum number of incidents to return (default: 40)
+
+            Example:
+              cmux memory-incidents
+              cmux memory-incidents --limit 10
+            """
+        case "memory-metrickit":
+            return """
+            Usage: cmux memory-metrickit [flags]
+
+            Print archived MetricKit metric/diagnostic payload metadata as JSON.
+
+            Flags:
+              --limit <n>            Maximum number of payloads to return (default: 20)
+
+            Example:
+              cmux memory-metrickit
+              cmux memory-metrickit --limit 5
+            """
+        case "memory-dump":
+            return """
+            Usage: cmux memory-dump [flags]
+
+            Write an immediate memory diagnostics incident dump and print its path as JSON.
+
+            Flags:
+              --reason <text>        Human label for the dump (default: manual_dump)
+
+            Example:
+              cmux memory-dump
+              cmux memory-dump --reason "pre-force-quit"
             """
         case "set-app-focus":
             return """
@@ -12760,6 +12848,10 @@ struct CMUXCLI {
           notify --title <text> [--subtitle <text>] [--body <text>] [--workspace <id|ref>] [--surface <id|ref>]
           list-notifications
           clear-notifications
+          memory-history [--limit <n>]
+          memory-incidents [--limit <n>]
+          memory-metrickit [--limit <n>]
+          memory-dump [--reason <text>]
           claude-hook <session-start|stop|notification> [--workspace <id|ref>] [--surface <id|ref>]
           codex-hook <session-start|stop> [--workspace <id|ref>] [--surface <id|ref>]
           set-app-focus <active|inactive|clear>

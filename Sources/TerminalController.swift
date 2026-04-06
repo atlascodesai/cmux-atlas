@@ -1783,6 +1783,18 @@ class TerminalController {
         case "reset_sidebar":
             return resetSidebar(args)
 
+        case "memory_history":
+            return memoryHistory(args)
+
+        case "memory_incidents":
+            return memoryIncidents(args)
+
+        case "memory_metrickit":
+            return memoryMetricPayloads(args)
+
+        case "memory_dump":
+            return memoryDump(args)
+
         case "read_screen":
             return readScreenText(args)
 
@@ -10935,6 +10947,30 @@ class TerminalController {
         return String(decoding: data, as: UTF8.self)
     }
 
+    private func memoryHistory(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        let limit = max(1, min(Int(parsed.options["limit"] ?? "") ?? 120, 500))
+        return MemoryDiagnosticsStore.shared.recentSamplesJSON(limit: limit)
+    }
+
+    private func memoryIncidents(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        let limit = max(1, min(Int(parsed.options["limit"] ?? "") ?? 40, 200))
+        return MemoryDiagnosticsStore.shared.recentIncidentsJSON(limit: limit)
+    }
+
+    private func memoryMetricPayloads(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        let limit = max(1, min(Int(parsed.options["limit"] ?? "") ?? 20, 100))
+        return MemoryDiagnosticsStore.shared.recentMetricPayloadsJSON(limit: limit)
+    }
+
+    private func memoryDump(_ args: String) -> String {
+        let parsed = parseOptions(args)
+        let reason = normalizedOptionValue(parsed.options["reason"]) ?? "manual_dump"
+        return MemoryDiagnosticsStore.shared.createManualDump(reason: reason)
+    }
+
     private func helpText() -> String {
         var text = """
         Hierarchy: Workspace (sidebar tab) > Pane (split region) > Surface (nested tab) > Panel (terminal/browser)
@@ -11005,6 +11041,10 @@ class TerminalController {
           clear_ports [--tab=X] [--panel=Y] - Clear listening ports
           sidebar_state [--tab=X] - Dump sidebar metadata
           reset_sidebar [--tab=X] - Clear sidebar metadata
+          memory_history [--limit=N] - Dump recent persisted memory samples as JSON
+          memory_incidents [--limit=N] - Dump recent pressure/crash investigation incidents as JSON
+          memory_metrickit [--limit=N] - Dump archived MetricKit payload metadata as JSON
+          memory_dump [--reason=X] - Write an immediate memory diagnostics incident dump
 
         Browser commands:
           open_browser [url]              - Create browser panel with optional URL

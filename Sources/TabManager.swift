@@ -253,7 +253,7 @@ enum MemoryPressureKillSettings {
     }
 }
 
-struct MemoryPanelConsumer: Identifiable, Equatable {
+struct MemoryPanelConsumer: Identifiable, Equatable, Codable {
     let panelId: UUID
     let workspaceId: UUID
     let workspaceTitle: String
@@ -263,7 +263,7 @@ struct MemoryPanelConsumer: Identifiable, Equatable {
     var id: UUID { panelId }
 }
 
-struct MemoryProcessSummary: Identifiable, Equatable {
+struct MemoryProcessSummary: Identifiable, Equatable, Codable {
     let pid: Int32
     let name: String
     let bytes: Int64
@@ -275,7 +275,7 @@ struct MemoryProcessSummary: Identifiable, Equatable {
     var id: Int32 { pid }
 }
 
-struct MemoryWorkspaceProcessGroup: Identifiable, Equatable {
+struct MemoryWorkspaceProcessGroup: Identifiable, Equatable, Codable {
     let workspaceId: UUID?
     let workspaceTitle: String
     let processes: [MemoryProcessSummary]
@@ -381,29 +381,121 @@ enum MemoryUsageFormatter {
     }
 }
 
+struct TrackedProcessOwner {
+    let panelId: UUID
+    let workspaceId: UUID
+    let workspaceTitle: String
+    let panelTitle: String
+    let ttyName: String
+}
+
+struct ProcessTreeRow {
+    let pid: Int32
+    let ppid: Int32
+    let tty: String?
+    let residentBytes: Int64
+    let command: String
+}
+
+struct ProcessTreeOwner {
+    let panelId: UUID
+    let workspaceId: UUID
+    let workspaceTitle: String
+    let panelTitle: String
+}
+
+struct ProcessTreeSnapshot {
+    let rows: [ProcessTreeRow]
+
+    private let pidToRow: [Int32: ProcessTreeRow]
+    private let ownerByTTY: [String: ProcessTreeOwner]
+
+    init(rows: [ProcessTreeRow], trackedOwners: [TrackedProcessOwner]) {
+        self.rows = rows
+        self.pidToRow = Dictionary(
+            rows.map { ($0.pid, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        self.ownerByTTY = trackedOwners.reduce(into: [:]) { partialResult, owner in
+            guard let normalizedTTY = Self.normalizedTTY(owner.ttyName) else { return }
+            partialResult[normalizedTTY] = ProcessTreeOwner(
+                panelId: owner.panelId,
+                workspaceId: owner.workspaceId,
+                workspaceTitle: owner.workspaceTitle,
+                panelTitle: owner.panelTitle
+            )
+        }
+    }
+
+    func resolveOwner(for pid: Int32) -> ProcessTreeOwner? {
+        var current = pid
+        var visited: Set<Int32> = []
+
+        while let row = pidToRow[current] {
+            if let tty = row.tty,
+               let owner = ownerByTTY[tty] {
+                return owner
+            }
+            if !visited.insert(current).inserted {
+                break
+            }
+            if row.ppid <= 1 || row.ppid == current {
+                break
+            }
+            current = row.ppid
+        }
+
+        return nil
+    }
+
+    func residentBytesByPanel() -> [UUID: Int64] {
+        rows.reduce(into: [:]) { partialResult, row in
+            guard row.residentBytes > 0,
+                  let owner = resolveOwner(for: row.pid) else {
+                return
+            }
+            partialResult[owner.panelId, default: 0] += row.residentBytes
+        }
+    }
+
+    func descendantPIDs(forPanel panelId: UUID) -> [Int32] {
+        rows.compactMap { row in
+            guard let owner = resolveOwner(for: row.pid),
+                  owner.panelId == panelId else {
+                return nil
+            }
+            return row.pid
+        }
+    }
+
+    func ttyRootPIDs(forPanel panelId: UUID) -> [Int32] {
+        rows.compactMap { row in
+            guard let tty = row.tty,
+                  let owner = ownerByTTY[tty],
+                  owner.panelId == panelId else {
+                return nil
+            }
+            return row.pid
+        }
+    }
+
+    static func normalizedTTY(_ rawTTY: String) -> String? {
+        let trimmed = rawTTY.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "??", trimmed != "?" else { return nil }
+        if trimmed.hasPrefix("/dev/") {
+            return String(trimmed.dropFirst("/dev/".count))
+        }
+        return trimmed
+    }
+}
+
 final class MemoryUsageStore: ObservableObject {
     static let shared = MemoryUsageStore()
 
     @Published private(set) var snapshot: MemoryUsageSnapshot = .empty
 
-    private struct TrackedPanel {
-        let panelId: UUID
-        let workspaceId: UUID
-        let workspaceTitle: String
-        let panelTitle: String
-        let ttyName: String
-    }
-
     private struct PollContext {
-        let trackedPanels: [TrackedPanel]
-    }
-
-    private struct PSRow {
-        let pid: Int32
-        let ppid: Int32
-        let tty: String?
-        let residentBytes: Int64
-        let command: String
+        let trackedOwners: [TrackedProcessOwner]
     }
 
     private let pollQueue = DispatchQueue(
@@ -437,9 +529,14 @@ final class MemoryUsageStore: ObservableObject {
 
     private func pollOnce() {
         let context = capturePollContext()
-        let rows = loadProcessRows()
+        let rows = Self.loadProcessRows()
         let systemStats = querySystemMemory()
         let nextSnapshot = buildSnapshot(context: context, rows: rows, systemStats: systemStats)
+        MemoryDiagnosticsStore.shared.recordSample(
+            snapshot: nextSnapshot,
+            rows: rows,
+            trackedOwners: context.trackedOwners
+        )
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             guard self.snapshot != nextSnapshot else { return }
@@ -458,9 +555,13 @@ final class MemoryUsageStore: ObservableObject {
     }
 
     private func capturePollContext() -> PollContext {
+        PollContext(trackedOwners: Self.captureTrackedOwnersSnapshot())
+    }
+
+    static func captureTrackedOwnersSnapshot() -> [TrackedProcessOwner] {
         DispatchQueue.main.sync {
             let managers = AppDelegate.shared?.allTabManagers() ?? []
-            var trackedPanels: [TrackedPanel] = []
+            var trackedOwners: [TrackedProcessOwner] = []
 
             for tabManager in managers {
                 for workspace in tabManager.tabs {
@@ -476,8 +577,8 @@ final class MemoryUsageStore: ObservableObject {
                         let panelTitle = rawPanelTitle?.isEmpty == false
                             ? rawPanelTitle!
                             : String(localized: "memory.panel.fallbackTitle", defaultValue: "Terminal")
-                        trackedPanels.append(
-                            TrackedPanel(
+                        trackedOwners.append(
+                            TrackedProcessOwner(
                                 panelId: panelId,
                                 workspaceId: workspace.id,
                                 workspaceTitle: workspaceTitle,
@@ -489,11 +590,11 @@ final class MemoryUsageStore: ObservableObject {
                 }
             }
 
-            return PollContext(trackedPanels: trackedPanels)
+            return trackedOwners
         }
     }
 
-    private func loadProcessRows() -> [PSRow] {
+    static func loadProcessRows() -> [ProcessTreeRow] {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -516,10 +617,10 @@ final class MemoryUsageStore: ObservableObject {
 
         return output
             .split(whereSeparator: \.isNewline)
-            .compactMap { parsePSRow(String($0)) }
+            .compactMap { parseProcessTreeRow(String($0)) }
     }
 
-    private func parsePSRow(_ line: String) -> PSRow? {
+    static func parseProcessTreeRow(_ line: String) -> ProcessTreeRow? {
         let components = line.split(
             maxSplits: 4,
             whereSeparator: { $0.isWhitespace }
@@ -531,9 +632,9 @@ final class MemoryUsageStore: ObservableObject {
             return nil
         }
 
-        let tty = normalizedTTY(String(components[2]))
+        let tty = ProcessTreeSnapshot.normalizedTTY(String(components[2]))
         let command = String(components[4]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return PSRow(
+        return ProcessTreeRow(
             pid: pid,
             ppid: ppid,
             tty: tty,
@@ -620,34 +721,23 @@ final class MemoryUsageStore: ObservableObject {
         return Int64(info.phys_footprint)
     }
 
-    private func buildSnapshot(context: PollContext, rows: [PSRow], systemStats: SystemMemoryStats) -> MemoryUsageSnapshot {
+    private func buildSnapshot(context: PollContext, rows: [ProcessTreeRow], systemStats: SystemMemoryStats) -> MemoryUsageSnapshot {
         let appPID = getpid()
-        let trackedByTTY = context.trackedPanels.reduce(into: [String: TrackedPanel]()) { partialResult, panel in
-            guard let normalizedTTY = normalizedTTY(panel.ttyName) else { return }
-            partialResult[normalizedTTY] = panel
-        }
+        let processTree = ProcessTreeSnapshot(rows: rows, trackedOwners: context.trackedOwners)
 
         let appFootprintBytes = queryAppFootprintBytes()
-        var panelBytes: [UUID: Int64] = [:]
-
-        for row in rows {
-            guard let tty = row.tty,
-                  let trackedPanel = trackedByTTY[tty] else {
-                continue
-            }
-            panelBytes[trackedPanel.panelId, default: 0] += row.residentBytes
-        }
+        let panelBytes = processTree.residentBytesByPanel()
 
         var workspaceBytes: [UUID: Int64] = [:]
-        let topPanelConsumers = context.trackedPanels.compactMap { trackedPanel -> MemoryPanelConsumer? in
-            let bytes = panelBytes[trackedPanel.panelId] ?? 0
+        let topPanelConsumers = context.trackedOwners.compactMap { trackedOwner -> MemoryPanelConsumer? in
+            let bytes = panelBytes[trackedOwner.panelId] ?? 0
             guard bytes > 0 else { return nil }
-            workspaceBytes[trackedPanel.workspaceId, default: 0] += bytes
+            workspaceBytes[trackedOwner.workspaceId, default: 0] += bytes
             return MemoryPanelConsumer(
-                panelId: trackedPanel.panelId,
-                workspaceId: trackedPanel.workspaceId,
-                workspaceTitle: trackedPanel.workspaceTitle,
-                panelTitle: trackedPanel.panelTitle,
+                panelId: trackedOwner.panelId,
+                workspaceId: trackedOwner.workspaceId,
+                workspaceTitle: trackedOwner.workspaceTitle,
+                panelTitle: trackedOwner.panelTitle,
                 bytes: bytes
             )
         }
@@ -677,41 +767,6 @@ final class MemoryUsageStore: ObservableObject {
                 )
             }
 
-        // Build process tree ownership by walking the PPID chain. A process belongs to a tracked
-        // terminal panel if its own TTY or any ancestor's TTY matches that panel.
-        let pidToRow = Dictionary(rows.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
-
-        struct ProcessOwner {
-            let workspaceId: UUID
-            let workspaceTitle: String
-            let panelId: UUID
-            let panelTitle: String
-        }
-
-        // Map TTY-owning PIDs directly to their panel/workspace
-        var pidToOwner: [Int32: ProcessOwner] = [:]
-        for row in rows {
-            guard let tty = row.tty, let panel = trackedByTTY[tty] else { continue }
-            pidToOwner[row.pid] = ProcessOwner(
-                workspaceId: panel.workspaceId,
-                workspaceTitle: panel.workspaceTitle,
-                panelId: panel.panelId,
-                panelTitle: panel.panelTitle
-            )
-        }
-
-        func resolveOwner(for pid: Int32) -> ProcessOwner? {
-            var current = pid
-            var visited: Set<Int32> = []
-            while let row = pidToRow[current] {
-                if let owner = pidToOwner[current] { return owner }
-                if !visited.insert(current).inserted { break }
-                if row.ppid == 0 || row.ppid == current { break }
-                current = row.ppid
-            }
-            return nil
-        }
-
         // Group top processes by workspace
         var grouped: [UUID?: (title: String, procs: [MemoryProcessSummary])] = [:]
         let significantProcesses = rows
@@ -720,7 +775,7 @@ final class MemoryUsageStore: ObservableObject {
             .prefix(20)
 
         for row in significantProcesses {
-            let owner = resolveOwner(for: row.pid)
+            let owner = processTree.resolveOwner(for: row.pid)
             let summary = MemoryProcessSummary(
                 pid: row.pid,
                 name: displayProcessName(command: row.command),
@@ -762,15 +817,6 @@ final class MemoryUsageStore: ObservableObject {
             systemSwapUsedBytes: systemStats.swapUsedBytes,
             systemCompressedBytes: systemStats.compressedBytes
         )
-    }
-
-    private func normalizedTTY(_ rawTTY: String) -> String? {
-        let trimmed = rawTTY.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != "??", trimmed != "?" else { return nil }
-        if trimmed.hasPrefix("/dev/") {
-            return String(trimmed.dropFirst("/dev/".count))
-        }
-        return trimmed
     }
 
     private func displayProcessName(command: String) -> String {
@@ -872,12 +918,22 @@ final class SystemMemoryPressureMonitor {
     }
 
     private func handleWarning() {
+        MemoryDiagnosticsStore.shared.captureIncident(
+            reason: "memory_pressure_warning",
+            pressureLevel: .warning,
+            source: "SystemMemoryPressureMonitor"
+        )
         DispatchQueue.main.async {
             AppDelegate.shared?.emergencySessionSave(reason: "memory_pressure_warning")
         }
     }
 
     private func handleCritical(snapshot: MemoryUsageSnapshot) {
+        MemoryDiagnosticsStore.shared.captureIncident(
+            reason: "memory_pressure_critical",
+            pressureLevel: .critical,
+            source: "SystemMemoryPressureMonitor"
+        )
         // 1. Emergency save first
         DispatchQueue.main.async {
             AppDelegate.shared?.emergencySessionSave(reason: "memory_pressure_critical")

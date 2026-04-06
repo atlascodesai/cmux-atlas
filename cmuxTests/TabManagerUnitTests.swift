@@ -312,7 +312,7 @@ final class TabManagerAISessionSweepTests: XCTestCase {
 final class MemoryUsageSnapshotTests: XCTestCase {
     func testFooterResidentBytesAddsAppAndTrackedTerminalUsage() {
         let snapshot = MemoryUsageSnapshot(
-            appResidentBytes: 346_700_000,
+            appFootprintBytes: 346_700_000,
             trackedTerminalResidentBytes: 980_000_000,
             workspaceResidentBytes: [:],
             panelResidentBytes: [:],
@@ -327,6 +327,57 @@ final class MemoryUsageSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.footerResidentBytes, 1_326_700_000)
+    }
+
+    func testProcessTreeSnapshotCountsNonTTYDescendantsAgainstOwningPanel() {
+        let workspaceId = UUID()
+        let panelId = UUID()
+        let trackedOwner = TrackedProcessOwner(
+            panelId: panelId,
+            workspaceId: workspaceId,
+            workspaceTitle: "Workspace",
+            panelTitle: "Terminal",
+            ttyName: "ttys013"
+        )
+        let rows = [
+            ProcessTreeRow(
+                pid: 100,
+                ppid: 1,
+                tty: "ttys013",
+                residentBytes: 128 * 1024 * 1024,
+                command: "/bin/zsh"
+            ),
+            ProcessTreeRow(
+                pid: 101,
+                ppid: 100,
+                tty: nil,
+                residentBytes: 256 * 1024 * 1024,
+                command: "/usr/local/bin/node"
+            ),
+            ProcessTreeRow(
+                pid: 102,
+                ppid: 101,
+                tty: nil,
+                residentBytes: 512 * 1024 * 1024,
+                command: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ),
+            ProcessTreeRow(
+                pid: 200,
+                ppid: 1,
+                tty: nil,
+                residentBytes: 1024 * 1024 * 1024,
+                command: "/usr/bin/python3"
+            )
+        ]
+
+        let snapshot = ProcessTreeSnapshot(rows: rows, trackedOwners: [trackedOwner])
+        let residentBytes = snapshot.residentBytesByPanel()
+
+        XCTAssertEqual(
+            residentBytes[panelId],
+            Int64(896 * 1024 * 1024)
+        )
+        XCTAssertNil(snapshot.resolveOwner(for: 200))
     }
 }
 

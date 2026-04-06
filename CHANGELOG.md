@@ -2,6 +2,16 @@
 
 All notable changes to cmux are documented here.
 
+## [0.63.1-atlas.9] - 2026-04-07
+
+### Added
+- Persist memory diagnostics history, pressure incidents, and archived MetricKit payload metadata under Application Support so severe memory events leave real forensic data behind instead of only a post-mortem panic log
+- Add `cmux memory-history`, `cmux memory-incidents`, `cmux memory-metrickit`, and `cmux memory-dump` commands for inspecting or forcing live diagnostics dumps from the CLI/socket layer
+
+### Fixed
+- Count non-TTY descendant processes such as MCP servers and automation browser children against the owning terminal panel/workspace by resolving ownership through the full process tree instead of TTY matching alone
+- Tear down owned descendant process trees when closing terminal panels so orphaned Claude/Codex/MCP/browser children are much less likely to survive after their pane disappears
+
 ## [0.63.1-atlas.8] - 2026-04-04
 
 ### Fixed
