@@ -7363,7 +7363,7 @@ struct CMUXCLI {
             """
         case "codex-hook":
             return """
-            Usage: cmux codex-hook <session-start|prompt-submit|stop> [flags]
+            Usage: cmux codex-hook <session-start|session-end|prompt-submit|stop> [flags]
 
             Hook for Codex CLI integration. Reads JSON from stdin.
             Gracefully no-ops when not running inside cmux.
@@ -11472,6 +11472,31 @@ struct CMUXCLI {
                 _ = try? sendV1Command("clear_agent_pid claude_code --tab=\(workspaceId)", client: client)
                 _ = try? sendV1Command("clear_notifications --tab=\(workspaceId)", client: client)
             }
+
+            // Claude reuses SessionEnd hooks for /clear and /resume within the
+            // same process, so gate on the hook reason instead of probing PID
+            // liveness. We only prefill when the session is actually ending.
+            let sessionEndReason = parsedInput.object.flatMap {
+                firstString(in: $0, keys: ["reason"])
+            }?.lowercased()
+            if UserDefaults.standard.object(forKey: "agentAutoResumeOnExit") == nil || UserDefaults.standard.bool(forKey: "agentAutoResumeOnExit"),
+               let sessionId = parsedInput.sessionId,
+               sessionEndReason != "clear",
+               sessionEndReason != "resume",
+               !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let resumeCmd = claudeResumeCommand(sessionId: sessionId)
+                let resolvedSurface = try? resolveSurfaceIdForAgentHook(
+                    surfaceArg ?? fallbackSurfaceId,
+                    workspaceId: consumedSession?.workspaceId ?? fallbackWorkspaceId,
+                    client: client
+                )
+                let wsId = consumedSession?.workspaceId ?? fallbackWorkspaceId
+                var sendParams: [String: Any] = ["text": resumeCmd, "workspace_id": wsId]
+                if let sfId = resolvedSurface {
+                    sendParams["surface_id"] = sfId
+                }
+                _ = try? client.sendV2(method: "surface.send_text", params: sendParams)
+            }
             print("OK")
 
         case "pre-tool-use":
@@ -11614,11 +11639,45 @@ struct CMUXCLI {
             )
             print("{\"continue\":true}")
 
+        case "session-end":
+            telemetry.breadcrumb("codex-hook.session-end")
+            guard let sessionId = parsedInput.sessionId else {
+                print("{\"continue\":true}")
+                return
+            }
+            let existingRecord = try? sessionStore.lookup(sessionId: sessionId)
+            let workspaceId = existingRecord?.workspaceId ?? fallbackWorkspaceId
+            let resolvedSurfaceId = try resolveSurfaceIdForAgentHook(
+                existingRecord?.surfaceId ?? surfaceArg,
+                workspaceId: workspaceId,
+                client: client
+            )
+            try? sessionStore.upsert(
+                sessionId: sessionId,
+                workspaceId: workspaceId,
+                surfaceId: resolvedSurfaceId,
+                cwd: parsedInput.cwd ?? existingRecord?.cwd,
+                transcriptPath: parsedInput.transcriptPath ?? existingRecord?.transcriptPath,
+                permissionMode: parsedInput.permissionMode ?? existingRecord?.permissionMode,
+                source: parsedInput.source ?? existingRecord?.source
+            )
+            if UserDefaults.standard.object(forKey: "agentAutoResumeOnExit") == nil || UserDefaults.standard.bool(forKey: "agentAutoResumeOnExit") {
+                var sendParams: [String: Any] = [
+                    "text": codexResumeCommand(sessionId: sessionId),
+                    "workspace_id": workspaceId
+                ]
+                if !resolvedSurfaceId.isEmpty {
+                    sendParams["surface_id"] = resolvedSurfaceId
+                }
+                _ = try? client.sendV2(method: "surface.send_text", params: sendParams)
+            }
+            print("{\"continue\":true}")
+
         case "help", "--help", "-h":
             telemetry.breadcrumb("codex-hook.help")
             print(
                 """
-                cmux codex-hook <session-start|stop> [--workspace <id|index>] [--surface <id|index>]
+                cmux codex-hook <session-start|session-end|stop> [--workspace <id|index>] [--surface <id|index>]
                 """
             )
 
@@ -12000,6 +12059,24 @@ struct CMUXCLI {
         return nil
     }
 
+    private func claudeResumeCommand(sessionId: String, defaults: UserDefaults = .standard) -> String {
+        let permissiveModeEnabled = defaults.bool(forKey: "aiQuickLaunch.claudePermissive")
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if permissiveModeEnabled {
+            return "claude --dangerously-skip-permissions --resume \(trimmedSessionId)"
+        }
+        return "claude --resume \(trimmedSessionId)"
+    }
+
+    private func codexResumeCommand(sessionId: String, defaults: UserDefaults = .standard) -> String {
+        let permissiveModeEnabled = defaults.bool(forKey: "aiQuickLaunch.codexPermissive")
+        let trimmedSessionId = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if permissiveModeEnabled {
+            return "codex --dangerously-bypass-approvals-and-sandbox resume \(trimmedSessionId)"
+        }
+        return "codex resume \(trimmedSessionId)"
+    }
+
     private func normalizedSingleLine(_ value: String) -> String {
         let collapsed = value.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12040,6 +12117,13 @@ struct CMUXCLI {
                 "hooks": [[
                     "type": "command",
                     "command": codexHookCommand("prompt-submit"),
+                    "timeout": 10
+                ] as [String: Any]]
+            ] as [String: Any]],
+            "SessionEnd": [[
+                "hooks": [[
+                    "type": "command",
+                    "command": codexHookCommand("session-end"),
                     "timeout": 10
                 ] as [String: Any]]
             ] as [String: Any]],
@@ -12853,7 +12937,7 @@ struct CMUXCLI {
           memory-metrickit [--limit <n>]
           memory-dump [--reason <text>]
           claude-hook <session-start|stop|notification> [--workspace <id|ref>] [--surface <id|ref>]
-          codex-hook <session-start|stop> [--workspace <id|ref>] [--surface <id|ref>]
+          codex-hook <session-start|session-end|stop> [--workspace <id|ref>] [--surface <id|ref>]
           set-app-focus <active|inactive|clear>
           simulate-app-active
 

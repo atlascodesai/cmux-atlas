@@ -2,6 +2,15 @@
 
 All notable changes to cmux are documented here.
 
+## [0.63.1-atlas.11] - 2026-04-12
+
+### Added
+- Auto-resume on exit: when a Claude Code session exits, the resume command is prefilled into the terminal so you can re-enter the conversation with one keypress (configurable in Settings > Automation)
+- Keyboard shortcuts for launching agent sessions: Cmd+Option+A for Claude Code, Cmd+Option+X for Codex
+
+### Changed
+- Codex wrapper now relies on standard PATH resolution (via cvm or system) instead of env var overrides
+
 ## [0.63.1-atlas.10] - 2026-04-11
 
 ### Fixed

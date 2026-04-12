@@ -53154,6 +53154,40 @@
         }
       }
     },
+    "settings.automation.autoResume": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto-Resume on Exit"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了時に自動で再開コマンドを入力"
+          }
+        }
+      }
+    },
+    "settings.automation.autoResume.subtitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When an agent session exits, prefill the resume command so you can re-enter the conversation with one keypress."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントセッションが終了したときに再開コマンドを事前入力し、1回のキー操作で会話に戻れるようにします。"
+          }
+        }
+      }
+    },
     "settings.automation.claudeCode.subtitleOff": {
       "extractionState": "manual",
       "localizations": {

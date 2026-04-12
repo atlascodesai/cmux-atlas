@@ -2,11 +2,6 @@
 # cmux codex wrapper - injects launch-scoped hooks for interactive Codex runs
 
 find_real_codex() {
-    if [[ -n "${CMUX_CODEX_REAL_BIN:-}" && -x "${CMUX_CODEX_REAL_BIN}" ]]; then
-        printf '%s' "${CMUX_CODEX_REAL_BIN}"
-        return 0
-    fi
-
     local self_dir
     self_dir="$(cd "$(dirname "$0")" && pwd)"
     local IFS=:
@@ -54,5 +49,6 @@ exec \
     "$REAL_CODEX" \
     --enable codex_hooks \
     --hook "session_start=cmux codex-hook session-start" \
+    --hook "session_end=cmux codex-hook session-end" \
     --hook "stop=cmux codex-hook stop" \
     "$@"

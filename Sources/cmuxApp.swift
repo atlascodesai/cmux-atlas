@@ -814,6 +814,17 @@ struct cmuxApp: App {
                 Button(String(localized: "menu.file.refreshAIResumes", defaultValue: "Refresh AI Resumes")) {
                     _ = activeTabManager.selectedWorkspace?.refreshAIResumes()
                 }
+
+                Button(String(localized: "menu.file.newClaudeCode", defaultValue: "New Claude Code")) {
+                    activeTabManager.selectedWorkspace?.launchQuickAIAgent(.claudeCode)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .option])
+
+                Button(String(localized: "menu.file.newCodex", defaultValue: "New Codex")) {
+                    activeTabManager.selectedWorkspace?.launchQuickAIAgent(.codex)
+                }
+                .keyboardShortcut("x", modifiers: [.command, .option])
+
                 Divider()
 
                 // Terminal semantics:
@@ -4045,12 +4056,21 @@ enum CommandPaletteSwitcherSearchSettings {
 enum ClaudeCodeIntegrationSettings {
     static let hooksEnabledKey = "claudeCodeHooksEnabled"
     static let defaultHooksEnabled = true
+    static let autoResumeOnExitKey = "agentAutoResumeOnExit"
+    static let defaultAutoResumeOnExit = true
 
     static func hooksEnabled(defaults: UserDefaults = .standard) -> Bool {
         if defaults.object(forKey: hooksEnabledKey) == nil {
             return defaultHooksEnabled
         }
         return defaults.bool(forKey: hooksEnabledKey)
+    }
+
+    static func autoResumeOnExit(defaults: UserDefaults = .standard) -> Bool {
+        if defaults.object(forKey: autoResumeOnExitKey) == nil {
+            return defaultAutoResumeOnExit
+        }
+        return defaults.bool(forKey: autoResumeOnExitKey)
     }
 }
 
@@ -4086,6 +4106,8 @@ struct SettingsView: View {
     @AppStorage(SocketControlSettings.appStorageKey) private var socketControlMode = SocketControlSettings.defaultMode.rawValue
     @AppStorage(ClaudeCodeIntegrationSettings.hooksEnabledKey)
     private var claudeCodeHooksEnabled = ClaudeCodeIntegrationSettings.defaultHooksEnabled
+    @AppStorage(ClaudeCodeIntegrationSettings.autoResumeOnExitKey)
+    private var agentAutoResumeOnExit = ClaudeCodeIntegrationSettings.defaultAutoResumeOnExit
     @AppStorage(TelemetrySettings.sendAnonymousTelemetryKey)
     private var sendAnonymousTelemetry = TelemetrySettings.defaultSendAnonymousTelemetry
     @AppStorage("cmuxPortBase") private var cmuxPortBase = 9100
@@ -5508,6 +5530,18 @@ struct SettingsView: View {
                         SettingsCardDivider()
 
                         SettingsCardNote(String(localized: "settings.automation.claudeCode.note", defaultValue: "When enabled, cmux wraps the claude command to inject session tracking and notification hooks. Disable if you prefer to manage Claude Code hooks yourself."))
+
+                        SettingsCardDivider()
+
+                        SettingsCardRow(
+                            String(localized: "settings.automation.autoResume", defaultValue: "Auto-Resume on Exit"),
+                            subtitle: String(localized: "settings.automation.autoResume.subtitle", defaultValue: "When an agent session exits, prefill the resume command so you can re-enter the conversation with one keypress.")
+                        ) {
+                            Toggle("", isOn: $agentAutoResumeOnExit)
+                                .labelsHidden()
+                                .controlSize(.small)
+                                .accessibilityIdentifier("SettingsAutoResumeOnExitToggle")
+                        }
                     }
 
                     SettingsCard {
@@ -6059,6 +6093,7 @@ struct SettingsView: View {
         AppIconSettings.applyIcon(.automatic)
         socketControlMode = SocketControlSettings.defaultMode.rawValue
         claudeCodeHooksEnabled = ClaudeCodeIntegrationSettings.defaultHooksEnabled
+        agentAutoResumeOnExit = ClaudeCodeIntegrationSettings.defaultAutoResumeOnExit
         sendAnonymousTelemetry = TelemetrySettings.defaultSendAnonymousTelemetry
         browserSearchEngine = BrowserSearchSettings.defaultSearchEngine.rawValue
         browserSearchSuggestionsEnabled = BrowserSearchSettings.defaultSearchSuggestionsEnabled
