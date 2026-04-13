@@ -2978,6 +2978,13 @@ class GhosttyApp {
                         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                         return true
                     }
+                    // Respect the "Open Links in cmux Browser" toggle for local files too.
+                    if !BrowserLinkOpenSettings.openTerminalLinksInCmuxBrowser() {
+                        #if DEBUG
+                        dlog("link.openURL localFile cmuxBrowser=disabled, opening externally path=\(standardized)")
+                        #endif
+                        return NSWorkspace.shared.open(fileURL)
+                    }
                     if let targetPane = workspace.preferredBrowserTargetPane(fromPanelId: sourcePanelId) {
                         return workspace.newBrowserSurface(inPane: targetPane, url: fileURL, focus: true) != nil
                     } else {
