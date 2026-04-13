@@ -518,7 +518,7 @@ final class GhosttyDefaultBackgroundNotificationDispatcher {
 /// File extensions that should be revealed in Finder instead of opened in the
 /// embedded browser panel. Covers archives, disk images, binaries, media, and
 /// other types that a browser cannot usefully render.
-private let terminalRevealInFinderExtensions: Set<String> = [
+let terminalRevealInFinderExtensions: Set<String> = [
     // Archives & disk images
     "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "dmg", "iso", "pkg", "deb", "rpm",
     // Binaries & executables

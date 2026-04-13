@@ -133,6 +133,8 @@ Options:
   --name <app name>      Override app display/bundle name.
   --bundle-id <id>       Override bundle identifier.
   --derived-data <path>  Override derived data path.
+  --test                 Run atlas regression tests (shell + swift) after build.
+                         Exits nonzero if any test fails.
   -h, --help             Show this help.
 EOF
 }
@@ -250,6 +252,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --launch)
       LAUNCH=1
+      shift
+      ;;
+    --test)
+      RUN_ATLAS_TESTS=1
       shift
       ;;
     --derived-data)
@@ -476,6 +482,16 @@ fi
 CLI_PATH="$APP_PATH/Contents/Resources/bin/cmux"
 if [[ -x "$CLI_PATH" ]]; then
   echo "$CLI_PATH" > /tmp/cmux-last-cli-path || true
+fi
+
+# Run atlas-specific regression tests after successful build.
+if [[ "${RUN_ATLAS_TESTS:-0}" == "1" ]]; then
+  echo ""
+  echo "== Running atlas tests (shell + swift) =="
+  if ! "$(cd "$(dirname "$0")" && pwd)/test-atlas.sh" --shell --swift --tag "$TAG"; then
+    echo "error: atlas tests failed" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$LAUNCH" -eq 1 ]]; then
