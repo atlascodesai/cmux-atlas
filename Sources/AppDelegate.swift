@@ -426,6 +426,17 @@ enum FinderServicePathResolver {
         return canonical
     }
 
+    private static func normalizedComparisonURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private static func isSameOrDescendant(_ url: URL, of rootURL: URL) -> Bool {
+        let candidatePathComponents = normalizedComparisonURL(url).pathComponents
+        let rootPathComponents = normalizedComparisonURL(rootURL).pathComponents
+        guard candidatePathComponents.count >= rootPathComponents.count else { return false }
+        return Array(candidatePathComponents.prefix(rootPathComponents.count)) == rootPathComponents
+    }
+
     private static func resolvedDirectoryURL(from url: URL) -> URL {
         let standardized = url.standardizedFileURL
         if standardized.hasDirectoryPath {
@@ -438,12 +449,18 @@ enum FinderServicePathResolver {
         return standardized.deletingLastPathComponent()
     }
 
-    static func orderedUniqueDirectories(from pathURLs: [URL]) -> [String] {
+    static func orderedUniqueDirectories(
+        from pathURLs: [URL],
+        excludingDescendantsOf excludedRootURLs: [URL] = []
+    ) -> [String] {
         var seen: Set<String> = []
         var directories: [String] = []
 
         for url in pathURLs {
-            let directoryURL = resolvedDirectoryURL(from: url)
+            let directoryURL = normalizedComparisonURL(resolvedDirectoryURL(from: url))
+            guard !excludedRootURLs.contains(where: { isSameOrDescendant(directoryURL, of: $0) }) else {
+                continue
+            }
             let path = canonicalDirectoryPath(directoryURL.path(percentEncoded: false))
             guard !path.isEmpty else { continue }
             if seen.insert(path).inserted {
@@ -2042,12 +2059,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let visibleFrame: CGRect
     }
 
-    private struct PersistedWindowGeometry: Codable, Sendable {
+    struct PersistedWindowGeometry: Codable, Sendable {
+        let version: Int
         let frame: SessionRectSnapshot
         let display: SessionDisplaySnapshot?
     }
 
-    private static let persistedWindowGeometryDefaultsKey = "cmux.session.lastWindowGeometry.v1"
+    nonisolated static let persistedWindowGeometrySchemaVersion = 2
+    private nonisolated static let persistedWindowGeometryDefaultsKey = "cmux.session.lastWindowGeometry.v2"
+    private nonisolated static let legacyPersistedWindowGeometryDefaultsKeys = [
+        "cmux.session.lastWindowGeometry.v1"
+    ]
 
     weak var tabManager: TabManager?
     weak var notificationStore: TerminalNotificationStore?
@@ -2296,6 +2318,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // SwiftUI/AppKit can attempt to restore autosaved window geometry during launch
+        // before the app scene is fully constructed. Clear obviously corrupt persisted
+        // frames here so startup tests and real launches do not inherit pathological sizes.
+        MainWindowAutosaveFrameSanitizer.sanitizeLaunchDomainsIfNeeded()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let env = ProcessInfo.processInfo.environment
         let isRunningUnderXCTest = isRunningUnderXCTest(env)
@@ -2339,9 +2368,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // Related to: #836
             _ = Locale.current
             _ = NSLocale.preferredLanguages
+            let sentryDSN = SentryLaunchDiagnostics.atlasDSN
+            let sentryReleaseName = SentryLaunchDiagnostics.expectedReleaseName()
+            let sentryDist = SentryLaunchDiagnostics.normalizedComponent(
+                Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            )
+            let sentryCacheDirectory = SentryLaunchDiagnostics.scopedCachesDirectory()
 
             SentrySDK.start { options in
-                options.dsn = "https://ecba1ec90ecaee02a102fba931b6d2b3@o4507547940749312.ingest.us.sentry.io/4510796264636416"
+                options.dsn = sentryDSN
+                options.releaseName = sentryReleaseName
+                options.dist = sentryDist
+                if let sentryCacheDirectory {
+                    options.cacheDirectoryPath = sentryCacheDirectory.path
+                }
                 #if DEBUG
                 options.environment = "development"
                 options.debug = true
@@ -2361,6 +2401,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 // Avoid recursively capturing failed requests from Sentry's own ingestion endpoint.
                 options.enableCaptureFailedRequests = false
             }
+
+            SentryLaunchDiagnostics.scheduleLaunchCheck(
+                telemetryEnabled: telemetryEnabled,
+                cacheDirectoryOverride: sentryCacheDirectory,
+                dsn: sentryDSN
+            )
         }
 
         if telemetryEnabled && !isRunningUnderXCTest {
@@ -2840,16 +2886,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard !didPrepareStartupSessionSnapshot else { return }
         didPrepareStartupSessionSnapshot = true
         guard SessionRestorePolicy.shouldAttemptRestore() else { return }
+        Self.removeLegacyPersistedWindowGeometry()
         startupSessionSnapshot = SessionPersistenceStore.load()
     }
 
     private func persistedWindowGeometry(
         defaults: UserDefaults = .standard
     ) -> PersistedWindowGeometry? {
+        Self.removeLegacyPersistedWindowGeometry(defaults: defaults)
         guard let data = defaults.data(forKey: Self.persistedWindowGeometryDefaultsKey) else {
             return nil
         }
-        return try? JSONDecoder().decode(PersistedWindowGeometry.self, from: data)
+        guard let payload = Self.decodedPersistedWindowGeometryData(data) else {
+            defaults.removeObject(forKey: Self.persistedWindowGeometryDefaultsKey)
+            return nil
+        }
+        return payload
     }
 
     private func persistWindowGeometry(
@@ -2857,6 +2909,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         display: SessionDisplaySnapshot?,
         defaults: UserDefaults = .standard
     ) {
+        Self.removeLegacyPersistedWindowGeometry(defaults: defaults)
         guard let data = Self.encodedPersistedWindowGeometryData(frame: frame, display: display) else {
             return
         }
@@ -2868,8 +2921,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         display: SessionDisplaySnapshot?
     ) -> Data? {
         guard let frame else { return nil }
-        let payload = PersistedWindowGeometry(frame: frame, display: display)
+        let payload = PersistedWindowGeometry(
+            version: persistedWindowGeometrySchemaVersion,
+            frame: frame,
+            display: display
+        )
         return try? JSONEncoder().encode(payload)
+    }
+
+    nonisolated static func decodedPersistedWindowGeometryData(_ data: Data) -> PersistedWindowGeometry? {
+        guard let payload = try? JSONDecoder().decode(PersistedWindowGeometry.self, from: data),
+              payload.version == persistedWindowGeometrySchemaVersion else {
+            return nil
+        }
+        return payload
+    }
+
+    private nonisolated static func removeLegacyPersistedWindowGeometry(
+        defaults: UserDefaults = .standard
+    ) {
+        legacyPersistedWindowGeometryDefaultsKeys.forEach { defaults.removeObject(forKey: $0) }
     }
 
     private func persistWindowGeometry(from window: NSWindow?) {
@@ -3797,6 +3868,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard snapshot != nil || removeWhenEmpty || persistedGeometryData != nil else { return }
 
         let writeBlock = {
+            Self.removeLegacyPersistedWindowGeometry()
             if let persistedGeometryData {
                 UserDefaults.standard.set(
                     persistedGeometryData,
@@ -5578,8 +5650,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         target: ServiceOpenTarget,
         error: AutoreleasingUnsafeMutablePointer<NSString>
     ) {
-        prepareForExplicitOpenIntentAtStartup()
-
         let pathURLs = servicePathURLs(from: pasteboard)
         guard !pathURLs.isEmpty else {
             error.pointee = Self.serviceErrorNoPath
@@ -5592,6 +5662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
 
+        prepareForExplicitOpenIntentAtStartup()
         for directory in directories {
             switch target {
             case .window:
@@ -5646,7 +5717,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func externalOpenDirectories(from urls: [URL]) -> [String] {
-        FinderServicePathResolver.orderedUniqueDirectories(from: urls.filter { $0.isFileURL })
+        FinderServicePathResolver.orderedUniqueDirectories(
+            from: urls.filter { $0.isFileURL },
+            excludingDescendantsOf: [Bundle.main.bundleURL]
+        )
     }
 
     private func openWorkspaceForExternalDirectory(

@@ -110,7 +110,7 @@ final class MemoryDiagnosticsStore {
         let systemTimeNs: UInt64
         let cpuTimeNs: UInt64
         let footprintBytes: Int64
-        let lifetimeMaxFootprintBytes: Int64
+        let lifetimeMaxFootprintBytes: Int64?
     }
 
     private let queue = DispatchQueue(
@@ -424,26 +424,31 @@ final class MemoryDiagnosticsStore {
     private static func queryResourceUsage(for pid: Int32) -> ProcessResourceUsageSnapshot? {
         guard pid > 0 else { return nil }
 
-        var info = rusage_info_current()
-        let status = withUnsafeMutablePointer(to: &info) { infoPtr -> Int32 in
-            var rawPointer: rusage_info_t? = UnsafeMutableRawPointer(infoPtr)
-            return withUnsafeMutablePointer(to: &rawPointer) { rawPtr in
-                proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, rawPtr)
-            }
-        }
+        var info = proc_taskinfo()
+        let expectedSize = Int32(MemoryLayout<proc_taskinfo>.stride)
+        let status = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &info, expectedSize)
+        guard status == expectedSize else { return nil }
 
-        guard status == 0 else { return nil }
-
-        let userTimeNs = info.ri_user_time
-        let systemTimeNs = info.ri_system_time
+        let userTimeNs = info.pti_total_user
+        let systemTimeNs = info.pti_total_system
         return ProcessResourceUsageSnapshot(
             userTimeNs: userTimeNs,
             systemTimeNs: systemTimeNs,
             cpuTimeNs: userTimeNs + systemTimeNs,
-            footprintBytes: Int64(info.ri_phys_footprint),
-            lifetimeMaxFootprintBytes: Int64(info.ri_lifetime_max_phys_footprint)
+            footprintBytes: Int64(info.pti_resident_size),
+            lifetimeMaxFootprintBytes: nil
         )
     }
+
+#if DEBUG
+    static func debugResourceUsageSnapshotForTesting(pid: Int32) -> (cpuTimeNs: UInt64, footprintBytes: Int64)? {
+        guard let snapshot = queryResourceUsage(for: pid) else { return nil }
+        return (
+            cpuTimeNs: snapshot.cpuTimeNs,
+            footprintBytes: snapshot.footprintBytes
+        )
+    }
+#endif
 
     private func prepareDatabaseIfNeeded() {
         guard !didPrepareDatabase else { return }

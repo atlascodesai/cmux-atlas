@@ -7,6 +7,11 @@ import XCTest
 #endif
 
 final class SessionPersistenceTests: XCTestCase {
+    private struct LegacyPersistedWindowGeometry: Codable {
+        let frame: SessionRectSnapshot
+        let display: SessionDisplaySnapshot?
+    }
+
     @MainActor
     func testWorkspaceSessionSnapshotRestoresMarkdownPanel() throws {
         let root = FileManager.default.temporaryDirectory
@@ -119,6 +124,132 @@ final class SessionPersistenceTests: XCTestCase {
 
         let decoded = try JSONDecoder().decode(AppSessionSnapshot.self, from: data)
         XCTAssertNil(decoded.windows.first?.tabManager.workspaces.first?.customColor)
+    }
+
+    func testSaveArchivesPreviousSnapshotBeforeOverwrite() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-session-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshotURL = tempDir.appendingPathComponent("session.json", isDirectory: false)
+        let first = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        var second = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        second.windows[0].tabManager.workspaces[0].customTitle = "Updated"
+
+        XCTAssertTrue(SessionPersistenceStore.save(first, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(second, fileURL: snapshotURL))
+
+        let backupDirectory = try XCTUnwrap(
+            SessionPersistenceStore.backupDirectoryURL(forSnapshotFileURL: snapshotURL)
+        )
+        let backupFiles = try FileManager.default.contentsOfDirectory(
+            at: backupDirectory,
+            includingPropertiesForKeys: nil
+        )
+            .filter { $0.pathExtension == "json" }
+
+        XCTAssertEqual(backupFiles.count, 1)
+        let archived = try XCTUnwrap(SessionPersistenceStore.load(fileURL: backupFiles[0]))
+        XCTAssertEqual(
+            archived.windows.first?.tabManager.workspaces.first?.customTitle,
+            "Restored"
+        )
+        let current = try XCTUnwrap(SessionPersistenceStore.load(fileURL: snapshotURL))
+        XCTAssertEqual(
+            current.windows.first?.tabManager.workspaces.first?.customTitle,
+            "Updated"
+        )
+    }
+
+    func testLoadFallsBackToNewestValidBackupWhenPrimarySnapshotIsUnreadable() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-session-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshotURL = tempDir.appendingPathComponent("session.json", isDirectory: false)
+        var first = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        first.windows[0].tabManager.workspaces[0].customTitle = "First"
+        var second = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        second.windows[0].tabManager.workspaces[0].customTitle = "Second"
+        var third = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        third.windows[0].tabManager.workspaces[0].customTitle = "Third"
+
+        XCTAssertTrue(SessionPersistenceStore.save(first, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(second, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(third, fileURL: snapshotURL))
+
+        try "not valid session json".write(to: snapshotURL, atomically: true, encoding: .utf8)
+
+        let loaded = try XCTUnwrap(SessionPersistenceStore.load(fileURL: snapshotURL))
+        XCTAssertEqual(
+            loaded.windows.first?.tabManager.workspaces.first?.customTitle,
+            "Second"
+        )
+
+        let backupDirectory = try XCTUnwrap(
+            SessionPersistenceStore.backupDirectoryURL(forSnapshotFileURL: snapshotURL)
+        )
+        let backupFiles = try FileManager.default.contentsOfDirectory(
+            at: backupDirectory,
+            includingPropertiesForKeys: nil
+        )
+            .filter { $0.pathExtension == "json" }
+        XCTAssertGreaterThanOrEqual(backupFiles.count, 3)
+    }
+
+    func testLoadFallsBackToNewestValidBackupWhenPrimarySnapshotIsOversized() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-session-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshotURL = tempDir.appendingPathComponent("session.json", isDirectory: false)
+        var first = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        first.windows[0].tabManager.workspaces[0].customTitle = "First"
+        var second = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        second.windows[0].tabManager.workspaces[0].customTitle = "Second"
+        var third = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        third.windows[0].tabManager.workspaces[0].customTitle = "Third"
+
+        XCTAssertTrue(SessionPersistenceStore.save(first, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(second, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(third, fileURL: snapshotURL))
+
+        let oversizedPayload = String(repeating: "x", count: SessionPersistencePolicy.maxSnapshotBytes + 1)
+        try oversizedPayload.write(to: snapshotURL, atomically: true, encoding: .utf8)
+
+        let loaded = try XCTUnwrap(SessionPersistenceStore.load(fileURL: snapshotURL))
+        XCTAssertEqual(
+            loaded.windows.first?.tabManager.workspaces.first?.customTitle,
+            "Second"
+        )
+    }
+
+    func testRemoveSnapshotDeletesAssociatedBackups() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-session-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let snapshotURL = tempDir.appendingPathComponent("session.json", isDirectory: false)
+        let first = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        var second = makeSnapshot(version: SessionSnapshotSchema.currentVersion)
+        second.windows[0].tabManager.workspaces[0].customTitle = "Updated"
+
+        XCTAssertTrue(SessionPersistenceStore.save(first, fileURL: snapshotURL))
+        XCTAssertTrue(SessionPersistenceStore.save(second, fileURL: snapshotURL))
+
+        let backupDirectory = try XCTUnwrap(
+            SessionPersistenceStore.backupDirectoryURL(forSnapshotFileURL: snapshotURL)
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: backupDirectory.path))
+
+        SessionPersistenceStore.removeSnapshot(fileURL: snapshotURL)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backupDirectory.path))
     }
 
     func testLoadRejectsSchemaVersionMismatch() {
@@ -639,6 +770,55 @@ final class SessionPersistenceTests: XCTestCase {
         XCTAssertEqual(restored.minY, 160, accuracy: 0.001)
         XCTAssertEqual(restored.width, 980, accuracy: 0.001)
         XCTAssertEqual(restored.height, 700, accuracy: 0.001)
+    }
+
+    func testDecodedPersistedWindowGeometryDataAcceptsCurrentSchema() throws {
+        let data = try JSONEncoder().encode(
+            AppDelegate.PersistedWindowGeometry(
+                version: AppDelegate.persistedWindowGeometrySchemaVersion,
+                frame: SessionRectSnapshot(x: 220, y: 160, width: 980, height: 700),
+                display: SessionDisplaySnapshot(
+                    displayID: 1,
+                    frame: SessionRectSnapshot(x: 0, y: 0, width: 1_600, height: 1_000),
+                    visibleFrame: SessionRectSnapshot(x: 0, y: 0, width: 1_600, height: 1_000)
+                )
+            )
+        )
+
+        let decoded = try XCTUnwrap(AppDelegate.decodedPersistedWindowGeometryData(data))
+        XCTAssertEqual(decoded.version, AppDelegate.persistedWindowGeometrySchemaVersion)
+        XCTAssertEqual(decoded.frame.x, 220, accuracy: 0.001)
+        XCTAssertEqual(decoded.frame.y, 160, accuracy: 0.001)
+        XCTAssertEqual(decoded.frame.width, 980, accuracy: 0.001)
+        XCTAssertEqual(decoded.frame.height, 700, accuracy: 0.001)
+        XCTAssertEqual(decoded.display?.displayID, 1)
+    }
+
+    func testDecodedPersistedWindowGeometryDataRejectsLegacyUnversionedPayload() throws {
+        let data = try JSONEncoder().encode(
+            LegacyPersistedWindowGeometry(
+                frame: SessionRectSnapshot(x: 180, y: 140, width: 900, height: 640),
+                display: SessionDisplaySnapshot(
+                    displayID: 1,
+                    frame: SessionRectSnapshot(x: 0, y: 0, width: 1_600, height: 1_000),
+                    visibleFrame: SessionRectSnapshot(x: 0, y: 0, width: 1_600, height: 1_000)
+                )
+            )
+        )
+
+        XCTAssertNil(AppDelegate.decodedPersistedWindowGeometryData(data))
+    }
+
+    func testDecodedPersistedWindowGeometryDataRejectsDifferentSchemaVersion() throws {
+        let data = try JSONEncoder().encode(
+            AppDelegate.PersistedWindowGeometry(
+                version: AppDelegate.persistedWindowGeometrySchemaVersion + 1,
+                frame: SessionRectSnapshot(x: 220, y: 160, width: 980, height: 700),
+                display: nil
+            )
+        )
+
+        XCTAssertNil(AppDelegate.decodedPersistedWindowGeometryData(data))
     }
 
     func testResolvedWindowFrameCentersInFallbackDisplayWhenOffscreen() {

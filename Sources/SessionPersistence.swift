@@ -21,6 +21,7 @@ enum SessionPersistencePolicy {
     static let maxPanelsPerWorkspace: Int = 512
     static let maxScrollbackLinesPerTerminal: Int = 4000
     static let maxScrollbackCharactersPerTerminal: Int = 400_000
+    static let maxSnapshotBytes: Int = 8_000_000
 
     static func sanitizedSidebarWidth(_ candidate: Double?) -> Double {
         let fallback = defaultSidebarWidth
@@ -691,14 +692,43 @@ struct AppSessionSnapshot: Codable, Sendable {
 }
 
 enum SessionPersistenceStore {
+    static let maximumBackupSnapshots = 12
+
     static func load(fileURL: URL? = nil) -> AppSessionSnapshot? {
         guard let fileURL = fileURL ?? defaultSnapshotFileURL() else { return nil }
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        let decoder = JSONDecoder()
-        guard let snapshot = try? decoder.decode(AppSessionSnapshot.self, from: data) else { return nil }
-        guard snapshot.version == SessionSnapshotSchema.currentVersion else { return nil }
-        guard !snapshot.windows.isEmpty else { return nil }
-        return snapshot
+        if let fileSize = snapshotFileSize(at: fileURL),
+           fileSize > SessionPersistencePolicy.maxSnapshotBytes {
+            sentryBreadcrumb(
+                "session.restore.skipped.oversize_snapshot",
+                category: "startup",
+                data: [
+                    "path": fileURL.path,
+                    "bytes": fileSize,
+                    "maxBytes": SessionPersistencePolicy.maxSnapshotBytes
+                ]
+            )
+            return loadLatestBackupSnapshot(forSnapshotFileURL: fileURL)
+        }
+
+        if let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]) {
+            guard data.count <= SessionPersistencePolicy.maxSnapshotBytes else {
+                sentryBreadcrumb(
+                    "session.restore.skipped.oversize_snapshot_data",
+                    category: "startup",
+                    data: [
+                        "path": fileURL.path,
+                        "bytes": data.count,
+                        "maxBytes": SessionPersistencePolicy.maxSnapshotBytes
+                    ]
+                )
+                return loadLatestBackupSnapshot(forSnapshotFileURL: fileURL)
+            }
+            if let snapshot = validatedSnapshot(from: data) {
+                return snapshot
+            }
+            archiveSnapshotData(data, forSnapshotFileURL: fileURL, reason: "failed-load")
+        }
+        return loadLatestBackupSnapshot(forSnapshotFileURL: fileURL)
     }
 
     @discardableResult
@@ -708,10 +738,14 @@ enum SessionPersistenceStore {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
             let data = try encodedSnapshotData(snapshot)
-            if let existingData = try? Data(contentsOf: fileURL), existingData == data {
-                return true
+            if let existingData = try? Data(contentsOf: fileURL) {
+                if existingData == data {
+                    return true
+                }
+                archiveSnapshotData(existingData, forSnapshotFileURL: fileURL, reason: "save")
             }
             try data.write(to: fileURL, options: .atomic)
+            pruneBackups(forSnapshotFileURL: fileURL)
             return true
         } catch {
             return false
@@ -727,6 +761,9 @@ enum SessionPersistenceStore {
     static func removeSnapshot(fileURL: URL? = nil) {
         guard let fileURL = fileURL ?? defaultSnapshotFileURL() else { return }
         try? FileManager.default.removeItem(at: fileURL)
+        if let backupDirectory = backupDirectoryURL(forSnapshotFileURL: fileURL) {
+            try? FileManager.default.removeItem(at: backupDirectory)
+        }
     }
 
     static func defaultSnapshotFileURL(
@@ -753,6 +790,139 @@ enum SessionPersistenceStore {
             .appendingPathComponent(Branding.appSupportDirectoryName, isDirectory: true)
             .appendingPathComponent("session-\(safeBundleId).json", isDirectory: false)
     }
+
+    static func backupDirectoryURL(forSnapshotFileURL fileURL: URL) -> URL? {
+        let fileName = fileURL.deletingPathExtension().lastPathComponent
+        let parent = fileURL.deletingLastPathComponent()
+        return parent
+            .appendingPathComponent("session-backups", isDirectory: true)
+            .appendingPathComponent(fileName, isDirectory: true)
+    }
+
+    private static func snapshotFileSize(at fileURL: URL) -> Int? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+              let size = attributes[.size] as? NSNumber else {
+            return nil
+        }
+        return size.intValue
+    }
+
+    private static func validatedSnapshot(from data: Data) -> AppSessionSnapshot? {
+        let decoder = JSONDecoder()
+        guard let snapshot = try? decoder.decode(AppSessionSnapshot.self, from: data) else { return nil }
+        guard snapshot.version == SessionSnapshotSchema.currentVersion else { return nil }
+        guard !snapshot.windows.isEmpty else { return nil }
+        return snapshot
+    }
+
+    private static func loadLatestBackupSnapshot(forSnapshotFileURL fileURL: URL) -> AppSessionSnapshot? {
+        guard let backupDirectory = backupDirectoryURL(forSnapshotFileURL: fileURL) else { return nil }
+        guard let backupURLs = try? FileManager.default.contentsOfDirectory(
+            at: backupDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let sortedBackups = backupURLs
+            .filter { $0.pathExtension == "json" }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return lhsDate > rhsDate
+            }
+
+        for backupURL in sortedBackups {
+            guard let data = try? Data(contentsOf: backupURL) else { continue }
+            if let snapshot = validatedSnapshot(from: data) {
+                return snapshot
+            }
+        }
+        return nil
+    }
+
+    private static func archiveSnapshotData(
+        _ data: Data,
+        forSnapshotFileURL fileURL: URL,
+        reason: String
+    ) {
+        guard let backupDirectory = backupDirectoryURL(forSnapshotFileURL: fileURL) else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: backupDirectory,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+
+            if latestBackupData(in: backupDirectory) == data {
+                return
+            }
+
+            let stamp = ISO8601DateFormatter.sessionBackupTimestamp.string(from: Date())
+            let backupURL = backupDirectory.appendingPathComponent("\(stamp)-\(reason).json", isDirectory: false)
+            try data.write(to: backupURL, options: .atomic)
+            pruneBackups(in: backupDirectory)
+        } catch {
+            return
+        }
+    }
+
+    private static func latestBackupData(in backupDirectory: URL) -> Data? {
+        guard let backupURLs = try? FileManager.default.contentsOfDirectory(
+            at: backupDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let latestBackup = backupURLs
+            .filter { $0.pathExtension == "json" }
+            .max { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return lhsDate < rhsDate
+            }
+
+        guard let latestBackup else { return nil }
+        return try? Data(contentsOf: latestBackup)
+    }
+
+    private static func pruneBackups(forSnapshotFileURL fileURL: URL) {
+        guard let backupDirectory = backupDirectoryURL(forSnapshotFileURL: fileURL) else { return }
+        pruneBackups(in: backupDirectory)
+    }
+
+    private static func pruneBackups(in backupDirectory: URL) {
+        guard let backupURLs = try? FileManager.default.contentsOfDirectory(
+            at: backupDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        let sortedBackups = backupURLs
+            .filter { $0.pathExtension == "json" }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return lhsDate > rhsDate
+            }
+
+        for staleBackup in sortedBackups.dropFirst(maximumBackupSnapshots) {
+            try? FileManager.default.removeItem(at: staleBackup)
+        }
+    }
+}
+
+private extension ISO8601DateFormatter {
+    static let sessionBackupTimestamp: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 // MARK: - Workspace Organizations

@@ -2,6 +2,55 @@
 
 All notable changes to cmux are documented here.
 
+## [Unreleased]
+
+### Added
+- Atlas docs, doc map, and commit-oriented devlog workflow under `atlas-docs/`
+- Repo-managed git hooks plus helper scripts for forcing Atlas devlog updates and explicit canonical-doc review notes on each normal commit
+
+### Changed
+- `cmux welcome`, the public README, and the Atlas doc set now describe the current Atlas product story consistently
+
+### Fixed
+- Terminal local file links now respect the browser-toggle setting again
+- Wrapper/process docs now reflect the current Claude/Codex hook behavior, including Claude session-end hooks, custom Claude binary overrides, and Codex PATH-only real-binary resolution
+
+## [0.63.1-atlas.14] - 2026-04-14
+
+### Fixed
+- Replace the startup-crashing memory diagnostics resource query with the safer `PROC_PIDTASKINFO` path so Atlas no longer dies immediately on macOS 26 during memory diagnostics polling
+- Prevent launch-session restore from being suppressed by self-bundle relaunch/open events, including Finder-service paths inside the app bundle
+- Reject stale or unversioned persisted window geometry, clear legacy geometry keys, and keep corrupt launch geometry from poisoning startup restore
+- Skip oversized startup session snapshots and fall back to the newest valid backup instead of trusting pathological primary snapshots
+- Freeze `File > Organizations` and `File > Workspace` menu contents while the submenu is open so live state changes stop causing blinking/rebuild churn
+- Scope Atlas and CLI Sentry caches per bundle/release, set explicit release metadata, and add launch-check diagnostics so local Sentry state is no longer clobbered across prod/dev/CLI binaries
+
+### Tests
+- Add regression coverage for repeated memory diagnostics resource usage queries, self-bundle relaunch filtering, persisted window geometry schema validation, oversized snapshot fallback, and Sentry launch-check helpers
+
+## [0.63.1-atlas.7] - 2026-04-03
+
+### Changed
+- Under critical memory pressure, send Ctrl-C to the heaviest tracked terminal session instead of closing the entire workspace
+- Compact selected workspace rows more aggressively so RAM chips, logs, metadata, and progress do not stack into an unreadable block
+
+### Fixed
+- Update memory-pressure warnings and notifications to reflect the new non-destructive interrupt behavior
+
+## [0.63.1-atlas.6] - 2026-04-02
+
+### Fixed
+- Stabilize release signing by making the temporary CI signing keychain the default before re-signing bundled helper binaries
+
+## [0.63.1-atlas.5] - 2026-04-02
+
+### Changed
+- Move current-workspace organization actions out of the sidebar workspace right-click menu and into File > Organizations, keeping organization management in the top menu where it belongs
+- Make the centered titlebar breadcrumb show the organization name more prominently, with the current workspace title as secondary context
+
+### Fixed
+- Add a direct titlebar context-menu affordance to rename or clear the current workspace organization without going back to the sidebar workspace menu
+
 ## [0.63.1-atlas.11] - 2026-04-12
 
 ### Added
@@ -33,19 +82,6 @@ All notable changes to cmux are documented here.
 ### Fixed
 - Switch app RAM reporting from `ps` RSS to macOS task footprint accounting so the sidebar/footer memory meter reflects the real app memory reported by Force Quit and Activity Monitor much more closely
 - Harden workspace creation against stale selected-tab state during shortcut-driven tab creation, reducing the chance of crashing in `TabManager.addWorkspace(...)` when the current selection snapshot is inconsistent
-
-## [0.63.1-atlas.7] - 2026-04-03
-
-### Changed
-- Move current-workspace organization actions out of the sidebar workspace right-click menu and into File > Organizations, keeping organization management in the top menu where it belongs
-- Make the centered titlebar breadcrumb show the organization name more prominently, with the current workspace title as secondary context
-- Under critical memory pressure, send Ctrl-C to the heaviest tracked terminal session instead of closing the entire workspace
-- Compact selected workspace rows more aggressively so RAM chips, logs, metadata, and progress do not stack into an unreadable block
-
-### Fixed
-- Add a direct titlebar context-menu affordance to rename or clear the current workspace organization without going back to the sidebar workspace menu
-- Stabilize release signing by making the temporary CI signing keychain the default before re-signing bundled helper binaries
-- Update memory-pressure warnings and notifications to reflect the new non-destructive interrupt behavior
 
 ## [0.63.1-atlas.4] - 2026-04-02
 

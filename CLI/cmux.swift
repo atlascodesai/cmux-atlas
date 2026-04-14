@@ -41,6 +41,29 @@ private final class CLISocketSentryTelemetry {
         return "\(bundleIdentifier)@\(version)+\(build)"
     }
 
+    private static func currentSentryCacheDirectoryPath() -> String? {
+        guard let baseCachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        #if os(macOS)
+        let isSandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
+        if isSandboxed {
+            return baseCachesDirectory.path
+        }
+
+        let identifier = currentSentryBundleIdentifier()
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleExecutable") as? String
+        guard let identifier = identifier?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !identifier.isEmpty else {
+            return nil
+        }
+        return baseCachesDirectory.appendingPathComponent(identifier, isDirectory: true).path
+        #else
+        return baseCachesDirectory.path
+        #endif
+    }
+
     private static func currentSentryBundleIdentifier() -> String? {
         if let bundleIdentifier = ProcessInfo.processInfo.environment["CMUX_BUNDLE_ID"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -277,6 +300,15 @@ private final class CLISocketSentryTelemetry {
         SentrySDK.start { options in
             options.dsn = dsn
             options.releaseName = currentSentryReleaseName()
+            if let cacheDirectoryPath = currentSentryCacheDirectoryPath() {
+                options.cacheDirectoryPath = cacheDirectoryPath
+            }
+            // The CLI should report explicit errors, but it should not create app sessions or
+            // lifecycle noise in the same Sentry project/cache as Atlas.
+            options.enableAutoSessionTracking = false
+            options.enableAppHangTracking = false
+            options.enableWatchdogTerminationTracking = false
+            options.enableAutoPerformanceTracing = false
 #if DEBUG
             options.environment = "development-cli"
 #else

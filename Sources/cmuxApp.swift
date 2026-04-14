@@ -145,7 +145,37 @@ enum MainWindowAutosaveFrameSanitizer {
     private static let minimumReasonableScreenDimension: CGFloat = 480
     private static let maximumDimensionMultiplier: CGFloat = 4
     private static let absoluteDimensionCeiling: CGFloat = 10_000
+    private static let atlasBaseDebugBundleIdentifier = "com.atlascodes.cmux-atlas.debug"
+    private static let cmuxBaseDebugBundleIdentifier = "com.cmuxterm.app.debug"
     private static var pendingTelemetryRecords: [SanitizedFrameRecord] = []
+
+    static func sanitizeLaunchDomainsIfNeeded(
+        processEnv: [String: String] = ProcessInfo.processInfo.environment,
+        mainBundleIdentifier: String? = Bundle.main.bundleIdentifier
+    ) {
+        sanitizeIfNeeded()
+
+        var suiteNames: Set<String> = []
+        if let mainBundleIdentifier {
+            suiteNames.insert(mainBundleIdentifier)
+            if mainBundleIdentifier.hasPrefix("\(atlasBaseDebugBundleIdentifier).") {
+                suiteNames.insert(atlasBaseDebugBundleIdentifier)
+            }
+            if mainBundleIdentifier.hasPrefix("\(cmuxBaseDebugBundleIdentifier).") {
+                suiteNames.insert(cmuxBaseDebugBundleIdentifier)
+            }
+        }
+
+        if processEnv["XCTestConfigurationFilePath"] != nil {
+            suiteNames.insert(atlasBaseDebugBundleIdentifier)
+            suiteNames.insert(cmuxBaseDebugBundleIdentifier)
+        }
+
+        for suiteName in suiteNames {
+            guard let defaults = UserDefaults(suiteName: suiteName) else { continue }
+            sanitizeIfNeeded(defaults: defaults)
+        }
+    }
 
     static func sanitizeIfNeeded(
         defaults: UserDefaults = .standard,
@@ -257,6 +287,36 @@ enum MainWindowAutosaveFrameSanitizer {
     }
 }
 
+private struct OrganizationsMenuSnapshot {
+    let hasCurrentWorkspace: Bool
+    let currentWorkspaceHasOrganizationName: Bool
+    let organizations: [WorkspaceOrganization]
+}
+
+private struct WorkspaceCommandMenuWindowTargetSnapshot: Identifiable {
+    let windowId: UUID
+    let label: String
+    let isCurrentWindow: Bool
+
+    var id: UUID { windowId }
+}
+
+private struct WorkspaceCommandMenuSnapshot {
+    let hasSelectedWorkspace: Bool
+    let selectedWorkspaceIsPinned: Bool
+    let selectedWorkspaceHasCustomTitle: Bool
+    let selectedWorkspaceIndex: Int?
+    let workspaceCount: Int
+    let windowMoveTargets: [WorkspaceCommandMenuWindowTargetSnapshot]
+    let hasUnreadNotifications: Bool
+    let hasReadNotifications: Bool
+}
+
+private final class CommandMenuFreezeStore {
+    var frozenOrganizationsMenuSnapshot: OrganizationsMenuSnapshot?
+    var frozenWorkspaceCommandMenuSnapshot: WorkspaceCommandMenuSnapshot?
+}
+
 @main
 struct cmuxApp: App {
     @StateObject private var tabManager: TabManager
@@ -293,6 +353,7 @@ struct cmuxApp: App {
     @AppStorage(KeyboardShortcutSettings.Action.openFolder.defaultsKey) private var openFolderShortcutData = Data()
     @AppStorage(KeyboardShortcutSettings.Action.closeWorkspace.defaultsKey) private var closeWorkspaceShortcutData = Data()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    private let commandMenuFreezeStore = CommandMenuFreezeStore()
 
     private var browserToolbarAccessorySpacing: Int {
         BrowserToolbarAccessorySpacingDebugSettings.resolved(browserToolbarAccessorySpacingRaw)
@@ -313,7 +374,7 @@ struct cmuxApp: App {
         // SwiftUI restores autosaved main-window geometry before our own session
         // restore path runs. Drop clearly corrupt entries first so AppKit doesn't
         // crash in startup layout with a pathological persisted frame.
-        MainWindowAutosaveFrameSanitizer.sanitizeIfNeeded()
+        MainWindowAutosaveFrameSanitizer.sanitizeLaunchDomainsIfNeeded()
 
         let startupAppearance = AppearanceSettings.resolvedMode()
         Self.applyAppearance(startupAppearance)
@@ -725,74 +786,16 @@ struct cmuxApp: App {
                 Divider()
 
                 Menu(String(localized: "menu.file.organizations", defaultValue: "Organizations")) {
-                    let currentWorkspace = activeTabManager.selectedWorkspace
-                    let orgs = WorkspaceOrganizationStore.loadAll()
-
-                    Button(
-                        (currentWorkspace?.organizationName?.isEmpty == false)
-                            ? String(localized: "menu.file.organizations.renameCurrent", defaultValue: "Rename Current Organization…")
-                            : String(localized: "menu.file.organizations.nameCurrent", defaultValue: "Name Current Organization…")
-                    ) {
-                        promptRenameCurrentOrganization()
-                    }
-                    .disabled(currentWorkspace == nil)
-
-                    Button(String(localized: "menu.file.organizations.saveCurrent", defaultValue: "Save Current Workspace as Organization")) {
-                        saveCurrentWorkspaceAsOrganization(includeScrollback: false)
-                    }
-                    .disabled(currentWorkspace == nil)
-
-                    Button(String(localized: "menu.file.organizations.exportCurrent", defaultValue: "Export Current Organization…")) {
-                        saveCurrentWorkspaceAsOrganization(includeScrollback: true)
-                    }
-                    .disabled(currentWorkspace == nil)
-
-                    Divider()
-
-                    if !orgs.isEmpty {
-                        let recentOrgs = Array(orgs.prefix(5))
-                        ForEach(Array(recentOrgs.enumerated()), id: \.element.id) { index, org in
-                            Button(org.name) {
-                                WorkspaceOrganizationStore.touchLastUsed(org.id)
-                                activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
-                            }
-                            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.control])
+                    organizationsMenuContent(
+                        snapshot: commandMenuFreezeStore.frozenOrganizationsMenuSnapshot ?? makeOrganizationsMenuSnapshot()
+                    )
+                    .onAppear {
+                        if commandMenuFreezeStore.frozenOrganizationsMenuSnapshot == nil {
+                            commandMenuFreezeStore.frozenOrganizationsMenuSnapshot = makeOrganizationsMenuSnapshot()
                         }
-
-                        if orgs.count > 5 {
-                            Menu(String(localized: "menu.file.organizations.more", defaultValue: "More…")) {
-                                ForEach(orgs.dropFirst(5), id: \.id) { org in
-                                    Button(org.name) {
-                                        WorkspaceOrganizationStore.touchLastUsed(org.id)
-                                        activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
-                                    }
-                                }
-                            }
-                        }
-
-                        Divider()
-
-                        Menu(String(localized: "menu.file.organizations.remove", defaultValue: "Remove…")) {
-                            ForEach(orgs, id: \.id) { org in
-                                Button(String.localizedStringWithFormat(
-                                    String(localized: "menu.file.organizations.remove.named", defaultValue: "Remove \"%@\""),
-                                    org.name
-                                )) {
-                                    WorkspaceOrganizationStore.remove(org.id)
-                                }
-                            }
-                        }
-                    } else {
-                        Text(String(localized: "menu.file.organizations.empty", defaultValue: "No saved organizations"))
-                            .foregroundStyle(.secondary)
                     }
-
-                    Divider()
-
-                    Button(String(localized: "menu.file.organizations.import", defaultValue: "Import Organization…")) {
-                        if let org = WorkspaceOrganizationStore.importWorkspace() {
-                            activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
-                        }
+                    .onDisappear {
+                        commandMenuFreezeStore.frozenOrganizationsMenuSnapshot = nil
                     }
                 }
             }
@@ -850,7 +853,17 @@ struct cmuxApp: App {
                 }
 
                 Menu(String(localized: "commandPalette.switcher.workspaceLabel", defaultValue: "Workspace")) {
-                    workspaceCommandMenuContent(manager: activeTabManager)
+                    workspaceCommandMenuContent(
+                        snapshot: commandMenuFreezeStore.frozenWorkspaceCommandMenuSnapshot ?? makeWorkspaceCommandMenuSnapshot(manager: activeTabManager)
+                    )
+                    .onAppear {
+                        if commandMenuFreezeStore.frozenWorkspaceCommandMenuSnapshot == nil {
+                            commandMenuFreezeStore.frozenWorkspaceCommandMenuSnapshot = makeWorkspaceCommandMenuSnapshot(manager: activeTabManager)
+                        }
+                    }
+                    .onDisappear {
+                        commandMenuFreezeStore.frozenWorkspaceCommandMenuSnapshot = nil
+                    }
                 }
 
                 Button(String(localized: "menu.file.reopenClosedPanel", defaultValue: "Reopen Closed Panel")) {
@@ -1189,6 +1202,15 @@ struct cmuxApp: App {
         return String(localized: "workspace.displayName.fallback", defaultValue: "Workspace")
     }
 
+    private func makeOrganizationsMenuSnapshot() -> OrganizationsMenuSnapshot {
+        let currentWorkspace = activeTabManager.selectedWorkspace
+        return OrganizationsMenuSnapshot(
+            hasCurrentWorkspace: currentWorkspace != nil,
+            currentWorkspaceHasOrganizationName: currentWorkspace?.organizationName?.isEmpty == false,
+            organizations: WorkspaceOrganizationStore.loadAll()
+        )
+    }
+
     private func promptRenameCurrentOrganization() {
         guard let workspace = activeTabManager.selectedWorkspace else { return }
 
@@ -1234,6 +1256,76 @@ struct cmuxApp: App {
         WorkspaceOrganizationStore.save(organization)
     }
 
+    @ViewBuilder
+    private func organizationsMenuContent(snapshot: OrganizationsMenuSnapshot) -> some View {
+        Button(
+            snapshot.currentWorkspaceHasOrganizationName
+                ? String(localized: "menu.file.organizations.renameCurrent", defaultValue: "Rename Current Organization…")
+                : String(localized: "menu.file.organizations.nameCurrent", defaultValue: "Name Current Organization…")
+        ) {
+            promptRenameCurrentOrganization()
+        }
+        .disabled(!snapshot.hasCurrentWorkspace)
+
+        Button(String(localized: "menu.file.organizations.saveCurrent", defaultValue: "Save Current Workspace as Organization")) {
+            saveCurrentWorkspaceAsOrganization(includeScrollback: false)
+        }
+        .disabled(!snapshot.hasCurrentWorkspace)
+
+        Button(String(localized: "menu.file.organizations.exportCurrent", defaultValue: "Export Current Organization…")) {
+            saveCurrentWorkspaceAsOrganization(includeScrollback: true)
+        }
+        .disabled(!snapshot.hasCurrentWorkspace)
+
+        Divider()
+
+        if !snapshot.organizations.isEmpty {
+            let recentOrganizations = Array(snapshot.organizations.prefix(5))
+            ForEach(Array(recentOrganizations.enumerated()), id: \.element.id) { index, org in
+                Button(org.name) {
+                    WorkspaceOrganizationStore.touchLastUsed(org.id)
+                    activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [.control])
+            }
+
+            if snapshot.organizations.count > 5 {
+                Menu(String(localized: "menu.file.organizations.more", defaultValue: "More…")) {
+                    ForEach(snapshot.organizations.dropFirst(5), id: \.id) { org in
+                        Button(org.name) {
+                            WorkspaceOrganizationStore.touchLastUsed(org.id)
+                            activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Menu(String(localized: "menu.file.organizations.remove", defaultValue: "Remove…")) {
+                ForEach(snapshot.organizations, id: \.id) { org in
+                    Button(String.localizedStringWithFormat(
+                        String(localized: "menu.file.organizations.remove.named", defaultValue: "Remove \"%@\""),
+                        org.name
+                    )) {
+                        WorkspaceOrganizationStore.remove(org.id)
+                    }
+                }
+            }
+        } else {
+            Text(String(localized: "menu.file.organizations.empty", defaultValue: "No saved organizations"))
+                .foregroundStyle(.secondary)
+        }
+
+        Divider()
+
+        Button(String(localized: "menu.file.organizations.import", defaultValue: "Import Organization…")) {
+            if let org = WorkspaceOrganizationStore.importWorkspace() {
+                activeTabManager.addWorkspaceFromSnapshot(org.snapshot, organizationName: org.name)
+            }
+        }
+    }
+
     private func decodeShortcut(from data: Data, fallback: StoredShortcut) -> StoredShortcut {
         guard !data.isEmpty,
               let shortcut = try? JSONDecoder().decode(StoredShortcut.self, from: data) else {
@@ -1276,6 +1368,26 @@ struct cmuxApp: App {
     private func selectedWorkspaceWindowMoveTargets(in manager: TabManager) -> [AppDelegate.WindowMoveTarget] {
         let referenceWindowId = AppDelegate.shared?.windowId(for: manager)
         return AppDelegate.shared?.windowMoveTargets(referenceWindowId: referenceWindowId) ?? []
+    }
+
+    private func makeWorkspaceCommandMenuSnapshot(manager: TabManager) -> WorkspaceCommandMenuSnapshot {
+        let workspace = manager.selectedWorkspace
+        return WorkspaceCommandMenuSnapshot(
+            hasSelectedWorkspace: workspace != nil,
+            selectedWorkspaceIsPinned: workspace?.isPinned == true,
+            selectedWorkspaceHasCustomTitle: workspace?.hasCustomTitle == true,
+            selectedWorkspaceIndex: workspace.flatMap { selectedWorkspaceIndex(in: manager, workspaceId: $0.id) },
+            workspaceCount: manager.tabs.count,
+            windowMoveTargets: selectedWorkspaceWindowMoveTargets(in: manager).map { target in
+                WorkspaceCommandMenuWindowTargetSnapshot(
+                    windowId: target.windowId,
+                    label: target.label,
+                    isCurrentWindow: target.isCurrentWindow
+                )
+            },
+            hasUnreadNotifications: selectedWorkspaceHasUnreadNotifications(in: manager),
+            hasReadNotifications: selectedWorkspaceHasReadNotifications(in: manager)
+        )
     }
 
     private func toggleSelectedWorkspacePinned(in manager: TabManager) {
@@ -1362,100 +1474,96 @@ struct cmuxApp: App {
     }
 
     @ViewBuilder
-    private func workspaceCommandMenuContent(manager: TabManager) -> some View {
-        let workspace = manager.selectedWorkspace
-        let workspaceIndex = workspace.flatMap { selectedWorkspaceIndex(in: manager, workspaceId: $0.id) }
-        let windowMoveTargets = selectedWorkspaceWindowMoveTargets(in: manager)
-
+    private func workspaceCommandMenuContent(snapshot: WorkspaceCommandMenuSnapshot) -> some View {
         Button(
-            workspace?.isPinned == true
+            snapshot.selectedWorkspaceIsPinned
                 ? String(localized: "contextMenu.unpinWorkspace", defaultValue: "Unpin Workspace")
                 : String(localized: "contextMenu.pinWorkspace", defaultValue: "Pin Workspace")
         ) {
-            toggleSelectedWorkspacePinned(in: manager)
+            toggleSelectedWorkspacePinned(in: activeTabManager)
         }
-        .disabled(workspace == nil)
+        .disabled(!snapshot.hasSelectedWorkspace)
 
         Button(String(localized: "menu.view.renameWorkspace", defaultValue: "Rename Workspace…")) {
             _ = AppDelegate.shared?.requestRenameWorkspaceViaCommandPalette()
         }
-        .disabled(workspace == nil)
+        .disabled(!snapshot.hasSelectedWorkspace)
 
-        if workspace?.hasCustomTitle == true {
+        if snapshot.selectedWorkspaceHasCustomTitle {
             Button(String(localized: "contextMenu.removeCustomWorkspaceName", defaultValue: "Remove Custom Workspace Name")) {
-                clearSelectedWorkspaceCustomName(in: manager)
+                clearSelectedWorkspaceCustomName(in: activeTabManager)
             }
         }
 
         Divider()
 
         Button(String(localized: "contextMenu.moveUp", defaultValue: "Move Up")) {
-            moveSelectedWorkspace(in: manager, by: -1)
+            moveSelectedWorkspace(in: activeTabManager, by: -1)
         }
-        .disabled(workspaceIndex == nil || workspaceIndex == 0)
+        .disabled(snapshot.selectedWorkspaceIndex == nil || snapshot.selectedWorkspaceIndex == 0)
 
         Button(String(localized: "contextMenu.moveDown", defaultValue: "Move Down")) {
-            moveSelectedWorkspace(in: manager, by: 1)
+            moveSelectedWorkspace(in: activeTabManager, by: 1)
         }
-        .disabled(workspaceIndex == nil || workspaceIndex == manager.tabs.count - 1)
+        .disabled(snapshot.selectedWorkspaceIndex == nil || snapshot.selectedWorkspaceIndex == snapshot.workspaceCount - 1)
 
         Button(String(localized: "contextMenu.moveToTop", defaultValue: "Move to Top")) {
-            moveSelectedWorkspaceToTop(in: manager)
+            moveSelectedWorkspaceToTop(in: activeTabManager)
         }
-        .disabled(workspace == nil || workspaceIndex == 0)
+        .disabled(!snapshot.hasSelectedWorkspace || snapshot.selectedWorkspaceIndex == 0)
 
         Menu(String(localized: "contextMenu.moveWorkspaceToWindow", defaultValue: "Move Workspace to Window")) {
             Button(String(localized: "contextMenu.newWindow", defaultValue: "New Window")) {
-                moveSelectedWorkspaceToNewWindow(in: manager)
+                moveSelectedWorkspaceToNewWindow(in: activeTabManager)
             }
-            .disabled(workspace == nil)
+            .disabled(!snapshot.hasSelectedWorkspace)
 
-            if !windowMoveTargets.isEmpty {
+            if !snapshot.windowMoveTargets.isEmpty {
                 Divider()
             }
 
-            ForEach(windowMoveTargets) { target in
+            ForEach(snapshot.windowMoveTargets) { target in
                 Button(target.label) {
-                    moveSelectedWorkspace(in: manager, toWindow: target.windowId)
+                    moveSelectedWorkspace(in: activeTabManager, toWindow: target.windowId)
                 }
-                .disabled(target.isCurrentWindow || workspace == nil)
+                .disabled(target.isCurrentWindow || !snapshot.hasSelectedWorkspace)
             }
         }
-        .disabled(workspace == nil)
+        .disabled(!snapshot.hasSelectedWorkspace)
 
         Divider()
 
         Button(String(localized: "menu.file.closeWorkspace", defaultValue: "Close Workspace")) {
-            manager.closeCurrentWorkspaceWithConfirmation()
+            activeTabManager.closeCurrentWorkspaceWithConfirmation()
         }
-        .disabled(workspace == nil)
+        .disabled(!snapshot.hasSelectedWorkspace)
 
         Button(String(localized: "contextMenu.closeOtherWorkspaces", defaultValue: "Close Other Workspaces")) {
-            closeOtherSelectedWorkspacePeers(in: manager)
+            closeOtherSelectedWorkspacePeers(in: activeTabManager)
         }
-        .disabled(workspace == nil || manager.tabs.count <= 1)
+        .disabled(!snapshot.hasSelectedWorkspace || snapshot.workspaceCount <= 1)
 
         Button(String(localized: "contextMenu.closeWorkspacesBelow", defaultValue: "Close Workspaces Below")) {
-            closeSelectedWorkspacesBelow(in: manager)
+            closeSelectedWorkspacesBelow(in: activeTabManager)
         }
-        .disabled(workspaceIndex == nil || workspaceIndex == manager.tabs.count - 1)
+        .disabled(snapshot.selectedWorkspaceIndex == nil || snapshot.selectedWorkspaceIndex == snapshot.workspaceCount - 1)
 
         Button(String(localized: "contextMenu.closeWorkspacesAbove", defaultValue: "Close Workspaces Above")) {
-            closeSelectedWorkspacesAbove(in: manager)
+            closeSelectedWorkspacesAbove(in: activeTabManager)
         }
-        .disabled(workspaceIndex == nil || workspaceIndex == 0)
+        .disabled(snapshot.selectedWorkspaceIndex == nil || snapshot.selectedWorkspaceIndex == 0)
 
         Divider()
 
         Button(String(localized: "contextMenu.markWorkspaceRead", defaultValue: "Mark Workspace as Read")) {
-            markSelectedWorkspaceRead(in: manager)
+            markSelectedWorkspaceRead(in: activeTabManager)
         }
-        .disabled(!selectedWorkspaceHasUnreadNotifications(in: manager))
+        .disabled(!snapshot.hasUnreadNotifications)
 
         Button(String(localized: "contextMenu.markWorkspaceUnread", defaultValue: "Mark Workspace as Unread")) {
-            markSelectedWorkspaceUnread(in: manager)
+            markSelectedWorkspaceUnread(in: activeTabManager)
         }
-        .disabled(!selectedWorkspaceHasReadNotifications(in: manager))
+        .disabled(!snapshot.hasReadNotifications)
     }
 
     @ViewBuilder
