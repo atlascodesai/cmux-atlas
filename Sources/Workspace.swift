@@ -514,7 +514,8 @@ extension Workspace {
     private func currentRestoredTerminalAction(panelId: UUID) -> RestoredTerminalActionSnapshot? {
         RestoredTerminalActionRegistry.latestAction(
             workspaceId: id,
-            panelId: panelId
+            panelId: panelId,
+            workingDirectory: panelDirectories[panelId] ?? currentDirectory
         ) ?? restoredTerminalActions[panelId]
     }
 
@@ -5608,6 +5609,9 @@ final class Workspace: Identifiable, ObservableObject {
     @Published private(set) var panelCustomTitles: [UUID: String] = [:]
     @Published private(set) var pinnedPanelIds: Set<UUID> = []
     @Published private(set) var manualUnreadPanelIds: Set<UUID> = []
+    @Published private(set) var tmuxWorkspaceFlashPanelId: UUID?
+    @Published private(set) var tmuxWorkspaceFlashReason: WorkspaceAttentionFlashReason?
+    @Published private(set) var tmuxWorkspaceFlashToken: UInt64 = 0
     private var manualUnreadMarkedAt: [UUID: Date] = [:]
     nonisolated private static let manualUnreadFocusGraceInterval: TimeInterval = 0.2
     nonisolated private static let manualUnreadClearDelayAfterFocusFlash: TimeInterval = 0.2
@@ -5658,6 +5662,7 @@ final class Workspace: Identifiable, ObservableObject {
     /// Used for stale-session detection: if the PID is dead, the status entry is cleared.
     var agentPIDs: [String: pid_t] = [:]
     @Published private(set) var cachedAISessions: [UUID: AISessionSnapshot] = [:]
+    private var compatibilityActiveAISessions: [UUID: ActiveAISessionSnapshot] = [:]
     private var aiSessionRefreshGenerationByPanel: [UUID: UUID] = [:]
     private let aiSessionRefreshQueue = DispatchQueue(
         label: "com.cmux.ai-session-refresh",
@@ -5992,6 +5997,7 @@ final class Workspace: Identifiable, ObservableObject {
     private var layoutFollowUpBrowserExitFocusPanelId: UUID?
     private var layoutFollowUpNeedsGeometryPass = false
     private var layoutFollowUpAttemptScheduled = false
+    private var layoutFollowUpAttemptVersion: Int = 0
     private var layoutFollowUpStalledAttemptCount = 0
     private var isAttemptingLayoutFollowUp = false
     private var isNormalizingPinnedTabOrder = false
@@ -6744,6 +6750,7 @@ final class Workspace: Identifiable, ObservableObject {
         panelShellActivityStates = panelShellActivityStates.filter { validSurfaceIds.contains($0.key) }
         panelPullRequests = panelPullRequests.filter { validSurfaceIds.contains($0.key) }
         cachedAISessions = cachedAISessions.filter { validSurfaceIds.contains($0.key) }
+        compatibilityActiveAISessions = compatibilityActiveAISessions.filter { validSurfaceIds.contains($0.key) }
         aiSessionRefreshGenerationByPanel = aiSessionRefreshGenerationByPanel.filter { validSurfaceIds.contains($0.key) }
         recomputeListeningPorts()
     }
@@ -6826,6 +6833,40 @@ final class Workspace: Identifiable, ObservableObject {
             cachedAISessions.removeValue(forKey: panelId)
         }
         MemoryUsageStore.shared.requestImmediateRefresh()
+    }
+
+    func registerActiveAISession(panelId: UUID, snapshot: ActiveAISessionSnapshot) {
+        guard panels[panelId]?.panelType == .terminal else { return }
+        compatibilityActiveAISessions[panelId] = snapshot
+    }
+
+    func activeAISession(panelId: UUID, agentType: AIAgentType) -> ActiveAISessionSnapshot? {
+        guard let snapshot = compatibilityActiveAISessions[panelId],
+              snapshot.agentType == agentType else {
+            return nil
+        }
+        return snapshot
+    }
+
+    func sweepCompatibilityActiveAISessions() {
+        for (panelId, snapshot) in compatibilityActiveAISessions {
+            let isAlive: Bool
+            if snapshot.pid <= 0 {
+                isAlive = false
+            } else {
+                errno = 0
+                if Darwin.kill(snapshot.pid, 0) == 0 {
+                    isAlive = true
+                } else {
+                    isAlive = POSIXErrorCode(rawValue: errno) != .ESRCH
+                }
+            }
+            guard !isAlive else { continue }
+            if let terminalPanel = terminalPanel(for: panelId) {
+                _ = terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
+            }
+            compatibilityActiveAISessions.removeValue(forKey: panelId)
+        }
     }
 
     func recomputeListeningPorts() {
@@ -9099,6 +9140,12 @@ final class Workspace: Identifiable, ObservableObject {
 
     // MARK: - Flash/Notification Support
 
+    private func triggerWorkspacePaneFlash(panelId: UUID, reason: WorkspaceAttentionFlashReason) {
+        tmuxWorkspaceFlashPanelId = panelId
+        tmuxWorkspaceFlashReason = reason
+        tmuxWorkspaceFlashToken &+= 1
+    }
+
     func triggerFocusFlash(panelId: UUID) {
         panels[panelId]?.triggerFlash()
     }
@@ -9119,8 +9166,17 @@ final class Workspace: Identifiable, ObservableObject {
         terminalPanel.triggerFlash()
     }
 
+    func triggerNotificationDismissFlash(panelId: UUID) {
+        guard let terminalPanel = terminalPanel(for: panelId) else { return }
+        terminalPanel.triggerNotificationDismissFlash()
+        triggerWorkspacePaneFlash(panelId: panelId, reason: .notificationDismiss)
+    }
+
     func triggerDebugFlash(panelId: UUID) {
-        triggerNotificationFocusFlash(panelId: panelId, requiresSplit: false, shouldFocus: true)
+        guard let terminalPanel = terminalPanel(for: panelId) else { return }
+        focusPanel(panelId)
+        terminalPanel.triggerFlash()
+        triggerWorkspacePaneFlash(panelId: panelId, reason: .debug)
     }
 
     // MARK: - Portal Lifecycle
@@ -9277,12 +9333,26 @@ final class Workspace: Identifiable, ObservableObject {
         }
         layoutFollowUpNeedsGeometryPass = layoutFollowUpNeedsGeometryPass || includeGeometry
         layoutFollowUpStalledAttemptCount = 0
+        // Invalidate any pending retry whose delay was computed from a stale stall count.
+        // Incrementing the version causes old closures to exit early; clearing the flag
+        // allows scheduleLayoutFollowUpAttempt() below to enqueue a fresh asyncAfter(0).
+        layoutFollowUpAttemptVersion &+= 1
+        layoutFollowUpAttemptScheduled = false
 
         if layoutFollowUpTimeoutWorkItem == nil {
             installLayoutFollowUpObservers()
         }
         refreshLayoutFollowUpTimeout()
-        attemptEventDrivenLayoutFollowUp()
+        // Use async scheduling instead of a synchronous call here. beginEventDrivenLayoutFollowUp
+        // is often invoked from splitTabBar(_:didChangeGeometry:), which fires from inside
+        // SwiftUI's .onChange(of: geometry) during an active layout pass. Calling
+        // attemptEventDrivenLayoutFollowUp() synchronously in that context causes
+        // flushWorkspaceWindowLayouts() → displayIfNeeded() to be called re-entrantly,
+        // incrementing AppKit's per-window constraint-pass counter on every display cycle
+        // until it exceeds the limit and crashes with NSGenericException.
+        // scheduleLayoutFollowUpAttempt() defers via asyncAfter(0) so the flush always
+        // happens after the current layout pass completes.
+        scheduleLayoutFollowUpAttempt()
     }
 
     private func installLayoutFollowUpObservers() {
@@ -9369,6 +9439,7 @@ final class Workspace: Identifiable, ObservableObject {
         layoutFollowUpBrowserPanelId = nil
         layoutFollowUpBrowserExitFocusPanelId = nil
         layoutFollowUpNeedsGeometryPass = false
+        layoutFollowUpAttemptVersion &+= 1
         layoutFollowUpAttemptScheduled = false
         layoutFollowUpStalledAttemptCount = 0
     }
@@ -9379,8 +9450,10 @@ final class Workspace: Identifiable, ObservableObject {
 
         layoutFollowUpAttemptScheduled = true
         let delay = layoutFollowUpBackoffDelay()
+        let version = layoutFollowUpAttemptVersion
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
+            guard self.layoutFollowUpAttemptVersion == version else { return }
             self.layoutFollowUpAttemptScheduled = false
             self.attemptEventDrivenLayoutFollowUp()
         }
