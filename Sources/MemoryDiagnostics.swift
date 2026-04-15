@@ -910,19 +910,24 @@ final class MemoryMetricKitSubscriber: NSObject, MXMetricManagerSubscriber {
         archivePastPayloads(from: manager)
     }
 
+    #if os(iOS) || os(visionOS)
     func didReceive(_ payloads: [MXMetricPayload]) {
         archive(metricPayloads: payloads)
     }
+    #endif
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         archive(diagnosticPayloads: payloads)
     }
 
     private func archivePastPayloads(from manager: MXMetricManager) {
+        #if os(iOS) || os(visionOS)
         archive(metricPayloads: manager.pastPayloads)
+        #endif
         archive(diagnosticPayloads: manager.pastDiagnosticPayloads)
     }
 
+    #if os(iOS) || os(visionOS)
     private func archive(metricPayloads: [MXMetricPayload]) {
         for payload in metricPayloads {
             MemoryDiagnosticsStore.shared.archiveMetricPayload(
@@ -934,6 +939,7 @@ final class MemoryMetricKitSubscriber: NSObject, MXMetricManagerSubscriber {
             )
         }
     }
+    #endif
 
     private func archive(diagnosticPayloads: [MXDiagnosticPayload]) {
         for payload in diagnosticPayloads {
