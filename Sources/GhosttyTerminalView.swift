@@ -521,6 +521,19 @@ private let terminalPositionedFileReferenceBareExtensions: Set<String> = [
     "tsx", "txt", "xml", "yaml", "yml", "zig", "zsh"
 ]
 
+private let terminalTrailingFileReferencePunctuation = CharacterSet(charactersIn: ".,;!?)]}\"'")
+
+private func terminalTrimTrailingFileReferencePunctuation(_ value: String) -> String {
+    guard !value.isEmpty else { return value }
+
+    var trimmed = value
+    while let lastScalar = trimmed.unicodeScalars.last,
+          terminalTrailingFileReferencePunctuation.contains(lastScalar) {
+        trimmed.removeLast()
+    }
+    return trimmed
+}
+
 private func terminalFileReferenceType(for path: String) -> TerminalOpenURLTarget? {
     let lowercasedPath = path.lowercased()
     let lastComponent = NSString(string: path).lastPathComponent
@@ -585,6 +598,7 @@ private func terminalPositionedFileReference(_ rawValue: String) -> TerminalOpen
 
 func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? {
     let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let fileReferenceCandidate = terminalTrimTrailingFileReferencePunctuation(trimmed)
     #if DEBUG
     dlog("link.resolve input=\(trimmed)")
     #endif
@@ -595,7 +609,7 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         return nil
     }
 
-    if let reference = terminalPositionedFileReference(trimmed) {
+    if let reference = terminalPositionedFileReference(fileReferenceCandidate) {
         if reference.path.lowercased().hasSuffix(".md") || reference.path.lowercased().hasSuffix(".markdown") {
             #if DEBUG
             dlog("link.resolve result=markdownFile(positioned) path=\(reference.pathWithPosition)")
@@ -608,16 +622,16 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
         return .localFile(reference)
     }
 
-    if NSString(string: trimmed).isAbsolutePath {
+    if NSString(string: fileReferenceCandidate).isAbsolutePath {
         // Absolute local file paths should stay inside cmux rather than opening
         // in the system default app.
-        if let target = terminalFileReferenceType(for: trimmed) {
+        if let target = terminalFileReferenceType(for: fileReferenceCandidate) {
             #if DEBUG
             switch target {
             case .markdownFile(_):
-                dlog("link.resolve result=markdownFile(absolutePath) path=\(trimmed)")
+                dlog("link.resolve result=markdownFile(absolutePath) path=\(fileReferenceCandidate)")
             case .localFile(_):
-                dlog("link.resolve result=localFile(absolutePath) path=\(trimmed)")
+                dlog("link.resolve result=localFile(absolutePath) path=\(fileReferenceCandidate)")
             default:
                 break
             }
@@ -625,21 +639,21 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
             return target
         }
         #if DEBUG
-        dlog("link.resolve result=external(absolutePath) url=\(trimmed)")
+        dlog("link.resolve result=external(absolutePath) url=\(fileReferenceCandidate)")
         #endif
-        return .external(URL(fileURLWithPath: trimmed))
+        return .external(URL(fileURLWithPath: fileReferenceCandidate))
     }
 
     // Relative paths to markdown files (e.g. "docs/story.md", "./README.md")
     // These look like file paths but aren't absolute, so they'd otherwise be
     // misinterpreted as URLs. Detect them early and mark for markdown rendering.
-    if (trimmed.lowercased().hasSuffix(".md") || trimmed.lowercased().hasSuffix(".markdown")),
-       !trimmed.contains("://"),
-       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil {
+    if (fileReferenceCandidate.lowercased().hasSuffix(".md") || fileReferenceCandidate.lowercased().hasSuffix(".markdown")),
+       !fileReferenceCandidate.contains("://"),
+       fileReferenceCandidate.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil {
         #if DEBUG
-        dlog("link.resolve result=markdownFile(relativePath) path=\(trimmed)")
+        dlog("link.resolve result=markdownFile(relativePath) path=\(fileReferenceCandidate)")
         #endif
-        return .markdownFile(TerminalOpenFileReference(path: trimmed, line: nil, column: nil))
+        return .markdownFile(TerminalOpenFileReference(path: fileReferenceCandidate, line: nil, column: nil))
     }
 
     if let parsed = URL(string: trimmed),
@@ -664,16 +678,16 @@ func resolveTerminalOpenURLTarget(_ rawValue: String) -> TerminalOpenURLTarget? 
 
     // Detect relative file paths (e.g. "output.html", "./report.pdf", "dir/file.txt")
     // before falling through to web URL resolution which would prepend https://.
-    if !trimmed.contains("://"),
-       trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil,
-       (trimmed.contains("/") || trimmed.contains(".")) {
+    if !fileReferenceCandidate.contains("://"),
+       fileReferenceCandidate.rangeOfCharacter(from: CharacterSet(charactersIn: " ?#")) == nil,
+       (fileReferenceCandidate.contains("/") || fileReferenceCandidate.contains(".")) {
         // Check if it looks like a file extension (last component has a dot)
-        let lastComponent = NSString(string: trimmed).lastPathComponent
+        let lastComponent = NSString(string: fileReferenceCandidate).lastPathComponent
         if lastComponent.contains(".") {
             #if DEBUG
-            dlog("link.resolve result=localFile(relative) path=\(trimmed)")
+            dlog("link.resolve result=localFile(relative) path=\(fileReferenceCandidate)")
             #endif
-            return .localFile(TerminalOpenFileReference(path: trimmed, line: nil, column: nil))
+            return .localFile(TerminalOpenFileReference(path: fileReferenceCandidate, line: nil, column: nil))
         }
     }
 

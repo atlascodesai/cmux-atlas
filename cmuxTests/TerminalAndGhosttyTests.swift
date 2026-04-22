@@ -3103,6 +3103,30 @@ final class TerminalOpenURLTargetResolutionTests: XCTestCase {
         }
     }
 
+    func testResolvesRelativeMarkdownFileWithTrailingPeriodAsMarkdownFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("docs/audi-scs-market-differences.md."))
+        switch target {
+        case let .markdownFile(reference):
+            XCTAssertEqual(reference.path, "docs/audi-scs-market-differences.md")
+            XCTAssertNil(reference.line)
+            XCTAssertNil(reference.column)
+        default:
+            XCTFail("Expected markdown path with trailing punctuation to route as markdown")
+        }
+    }
+
+    func testResolvesPositionedRelativeSourceFileWithTrailingPeriodAsLocalFile() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("Sources/AppDelegate.swift:451:58."))
+        switch target {
+        case let .localFile(reference):
+            XCTAssertEqual(reference.path, "Sources/AppDelegate.swift")
+            XCTAssertEqual(reference.line, 451)
+            XCTAssertEqual(reference.column, 58)
+        default:
+            XCTFail("Expected positioned source file path with trailing punctuation to route as a local file")
+        }
+    }
+
     func testDoesNotTreatHostPortValueAsPositionedFile() throws {
         let target = try XCTUnwrap(resolveTerminalOpenURLTarget("example.com:8080"))
         switch target {
@@ -3120,6 +3144,17 @@ final class TerminalOpenURLTargetResolutionTests: XCTestCase {
             XCTAssertEqual(url.host, "example.com")
         default:
             XCTFail("Expected bare domain to remain a browser URL")
+        }
+    }
+
+    func testPrefersBareDomainWithTrailingPeriodOverRelativeFileHeuristic() throws {
+        let target = try XCTUnwrap(resolveTerminalOpenURLTarget("example.com/docs."))
+        switch target {
+        case let .embeddedBrowser(url):
+            XCTAssertEqual(url.host, "example.com")
+            XCTAssertEqual(url.path, "/docs.")
+        default:
+            XCTFail("Expected bare domain with trailing punctuation to remain a browser URL")
         }
     }
 

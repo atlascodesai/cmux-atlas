@@ -11845,6 +11845,8 @@ private struct TabItemView: View, Equatable {
             isMulti: isMulti)
         let renameWorkspaceShortcut = KeyboardShortcutSettings.shortcut(for: .renameWorkspace)
         let closeWorkspaceShortcut = KeyboardShortcutSettings.shortcut(for: .closeWorkspace)
+        let orderedWorkspaceDirectories = tab.sidebarDirectoriesInDisplayOrder()
+        let primaryWorkspaceDirectory = orderedWorkspaceDirectories.first
         Button(pinLabel) {
             for id in targetIds {
                 if let tab = tabManager.tabs.first(where: { $0.id == id }) {
@@ -12002,20 +12004,30 @@ private struct TabItemView: View, Equatable {
         Divider()
 
         Button(String(localized: "contextMenu.revealInFinder", defaultValue: "Reveal in Finder")) {
-            let dir = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !dir.isEmpty {
+            if let dir = primaryWorkspaceDirectory {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir)
             }
         }
-        .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(primaryWorkspaceDirectory == nil)
 
-        Button(String(localized: "contextMenu.copyPath", defaultValue: "Copy Path")) {
-            let dir = tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !dir.isEmpty {
-                copyTextToPasteboard(dir)
+        Divider()
+
+        if orderedWorkspaceDirectories.count <= 1 {
+            Button(String(localized: "contextMenu.copyPath", defaultValue: "Copy Path")) {
+                if let dir = orderedWorkspaceDirectories.first {
+                    copyTextToPasteboard(dir)
+                }
+            }
+            .disabled(orderedWorkspaceDirectories.isEmpty)
+        } else {
+            Menu(String(localized: "contextMenu.copyPath", defaultValue: "Copy Path")) {
+                ForEach(orderedWorkspaceDirectories, id: \.self) { directory in
+                    Button(workspaceContextMenuPathLabel(for: directory)) {
+                        copyTextToPasteboard(directory)
+                    }
+                }
             }
         }
-        .disabled(tab.currentDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
         Divider()
 
@@ -12035,6 +12047,14 @@ private struct TabItemView: View, Equatable {
             return parsed
         }
         return cmuxAccentNSColor(for: colorScheme)
+    }
+
+    private func workspaceContextMenuPathLabel(for directory: String) -> String {
+        let shortened = SidebarPathFormatter.shortenedPath(
+            directory,
+            homeDirectoryPath: SidebarPathFormatter.homeDirectoryPath
+        )
+        return shortened.isEmpty ? directory : shortened
     }
 
     private var backgroundColor: Color {
