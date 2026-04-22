@@ -285,6 +285,57 @@
         }
       }
     },
+    "memory.popover.appDominanceNotice": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Most memory is currently inside cmux itself rather than tracked terminal child processes. If this keeps climbing across the launch, suspect retained app state or a leak."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のメモリの大半は、追跡中のターミナル子プロセスではなく cmux 自身の内部にあります。起動中にこれが増え続ける場合は、アプリ状態の保持やリークを疑ってください。"
+          }
+        }
+      }
+    },
+    "memory.popover.appGrowth10m": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Growth (10 min)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "増加量（直近10分）"
+          }
+        }
+      }
+    },
+    "memory.popover.appPeakThisLaunch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Peak this launch"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "起動後の最大値"
+          }
+        }
+      }
+    },
     "cli.claude-teams.usage": {
       "extractionState": "manual",
       "localizations": {

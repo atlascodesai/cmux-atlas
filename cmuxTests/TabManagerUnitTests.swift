@@ -312,7 +312,9 @@ final class TabManagerAISessionSweepTests: XCTestCase {
 final class MemoryUsageSnapshotTests: XCTestCase {
     func testFooterResidentBytesAddsAppAndTrackedTerminalUsage() {
         let snapshot = MemoryUsageSnapshot(
-            appResidentBytes: 346_700_000,
+            appFootprintBytes: 346_700_000,
+            peakAppFootprintBytes: 346_700_000,
+            recentAppGrowthBytes: 0,
             trackedTerminalResidentBytes: 980_000_000,
             workspaceResidentBytes: [:],
             panelResidentBytes: [:],
@@ -327,6 +329,48 @@ final class MemoryUsageSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.footerResidentBytes, 1_326_700_000)
+    }
+
+    func testAppMemoryDominatesUsageWhenAppFootprintOverwhelmsTrackedTerminals() {
+        let snapshot = MemoryUsageSnapshot(
+            appFootprintBytes: 46 * 1024 * 1024 * 1024,
+            peakAppFootprintBytes: 46 * 1024 * 1024 * 1024,
+            recentAppGrowthBytes: 12 * 1024 * 1024 * 1024,
+            trackedTerminalResidentBytes: 4 * 1024 * 1024 * 1024,
+            workspaceResidentBytes: [:],
+            panelResidentBytes: [:],
+            topPanelConsumers: [],
+            topSystemProcesses: [],
+            processGroups: [],
+            systemPressureLevel: .critical,
+            systemTotalBytes: 0,
+            systemAvailableBytes: 0,
+            systemSwapUsedBytes: 0,
+            systemCompressedBytes: 0
+        )
+
+        XCTAssertTrue(snapshot.appMemoryDominatesUsage)
+    }
+
+    func testAppMemoryDoesNotDominateWhenTrackedTerminalsAreComparable() {
+        let snapshot = MemoryUsageSnapshot(
+            appFootprintBytes: 3 * 1024 * 1024 * 1024,
+            peakAppFootprintBytes: 3 * 1024 * 1024 * 1024,
+            recentAppGrowthBytes: 256 * 1024 * 1024,
+            trackedTerminalResidentBytes: 2 * 1024 * 1024 * 1024,
+            workspaceResidentBytes: [:],
+            panelResidentBytes: [:],
+            topPanelConsumers: [],
+            topSystemProcesses: [],
+            processGroups: [],
+            systemPressureLevel: .normal,
+            systemTotalBytes: 0,
+            systemAvailableBytes: 0,
+            systemSwapUsedBytes: 0,
+            systemCompressedBytes: 0
+        )
+
+        XCTAssertFalse(snapshot.appMemoryDominatesUsage)
     }
 }
 
