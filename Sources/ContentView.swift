@@ -9622,6 +9622,14 @@ private struct SidebarMemoryUsageButton: View {
             MemoryUsageFormatter.footerLabel(for: bytes)
     }
 
+    private var appGrowthValueText: String {
+        let growthBytes = memoryUsageStore.snapshot.recentAppGrowthBytes
+        if growthBytes <= 0 {
+            return MemoryUsageFormatter.detailedString(for: 0)
+        }
+        return "+" + MemoryUsageFormatter.detailedString(for: growthBytes)
+    }
+
     var body: some View {
         Button {
             isPopoverPresented.toggle()
@@ -9661,6 +9669,31 @@ private struct SidebarMemoryUsageButton: View {
                 subtitle: String(localized: "memory.popover.thisApp", defaultValue: "This app"),
                 value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.appFootprintBytes)
             )
+            SidebarMemoryUsagePopoverRow(
+                title: String(localized: "memory.popover.appPeakThisLaunch", defaultValue: "Peak this launch"),
+                subtitle: nil,
+                value: MemoryUsageFormatter.detailedString(for: memoryUsageStore.snapshot.peakAppFootprintBytes)
+            )
+            SidebarMemoryUsagePopoverRow(
+                title: String(localized: "memory.popover.appGrowth10m", defaultValue: "Growth (10 min)"),
+                subtitle: nil,
+                value: appGrowthValueText
+            )
+            if memoryUsageStore.snapshot.appMemoryDominatesUsage {
+                Text(
+                    String(
+                        localized: "memory.popover.appDominanceNotice",
+                        defaultValue: "Most memory is currently inside cmux itself rather than tracked terminal child processes. If this keeps climbing across the launch, suspect retained app state or a leak."
+                    )
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(
+                    memoryUsageStore.snapshot.systemPressureLevel > .normal || memoryUsageStore.snapshot.recentAppGrowthBytes > 1024 * 1024 * 1024
+                        ? Color.orange
+                        : .secondary
+                )
+                .fixedSize(horizontal: false, vertical: true)
+            }
 
             SidebarMemoryUsagePopoverSection(
                 title: String(localized: "memory.popover.tabsSection", defaultValue: "Terminal Tabs")

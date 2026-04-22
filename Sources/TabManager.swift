@@ -294,6 +294,8 @@ enum SystemMemoryPressureLevel: Int, Equatable, Comparable {
 
 struct MemoryUsageSnapshot: Equatable {
     let appFootprintBytes: Int64
+    let peakAppFootprintBytes: Int64
+    let recentAppGrowthBytes: Int64
     let trackedTerminalResidentBytes: Int64
     let workspaceResidentBytes: [UUID: Int64]
     let panelResidentBytes: [UUID: Int64]
@@ -308,6 +310,8 @@ struct MemoryUsageSnapshot: Equatable {
 
     static let empty = Self(
         appFootprintBytes: 0,
+        peakAppFootprintBytes: 0,
+        recentAppGrowthBytes: 0,
         trackedTerminalResidentBytes: 0,
         workspaceResidentBytes: [:],
         panelResidentBytes: [:],
@@ -331,6 +335,13 @@ struct MemoryUsageSnapshot: Equatable {
 
     var footerResidentBytes: Int64 {
         max(0, appFootprintBytes + trackedTerminalResidentBytes)
+    }
+
+    var appMemoryDominatesUsage: Bool {
+        let minimumAppBytes = Int64(4 * 1024 * 1024 * 1024)
+        guard appFootprintBytes >= minimumAppBytes else { return false }
+        guard trackedTerminalResidentBytes > 0 else { return true }
+        return appFootprintBytes >= trackedTerminalResidentBytes * 3
     }
 }
 
@@ -502,8 +513,21 @@ final class MemoryUsageStore: ObservableObject {
         label: "com.cmuxterm.memoryUsage",
         qos: .utility
     )
+    private struct AppFootprintSample {
+        let timestamp: TimeInterval
+        let bytes: Int64
+    }
+    private struct AppFootprintMetrics {
+        let peakBytes: Int64
+        let recentGrowthBytes: Int64
+    }
+    private static let appGrowthWindow: TimeInterval = 10 * 60
+    private static let appHistoryRetention: TimeInterval = 30 * 60
+    private static let appHistorySampleLimit = 1024
     private var timer: DispatchSourceTimer?
     private var lastImmediateRefreshAt: TimeInterval = 0
+    private var peakAppFootprintBytes: Int64 = 0
+    private var appFootprintHistory: [AppFootprintSample] = []
 
     private init() {
         startPolling()
@@ -531,7 +555,15 @@ final class MemoryUsageStore: ObservableObject {
         let context = capturePollContext()
         let rows = Self.loadProcessRows()
         let systemStats = querySystemMemory()
-        let nextSnapshot = buildSnapshot(context: context, rows: rows, systemStats: systemStats)
+        let appFootprintBytes = queryAppFootprintBytes()
+        let appFootprintMetrics = recordAppFootprintMetrics(for: appFootprintBytes)
+        let nextSnapshot = buildSnapshot(
+            context: context,
+            rows: rows,
+            systemStats: systemStats,
+            appFootprintBytes: appFootprintBytes,
+            appFootprintMetrics: appFootprintMetrics
+        )
         MemoryDiagnosticsStore.shared.recordSample(
             snapshot: nextSnapshot,
             rows: rows,
@@ -721,11 +753,40 @@ final class MemoryUsageStore: ObservableObject {
         return Int64(info.phys_footprint)
     }
 
-    private func buildSnapshot(context: PollContext, rows: [ProcessTreeRow], systemStats: SystemMemoryStats) -> MemoryUsageSnapshot {
+    private func recordAppFootprintMetrics(for bytes: Int64, now: TimeInterval = Date().timeIntervalSince1970) -> AppFootprintMetrics {
+        peakAppFootprintBytes = max(peakAppFootprintBytes, bytes)
+        appFootprintHistory.append(
+            AppFootprintSample(
+                timestamp: now,
+                bytes: bytes
+            )
+        )
+
+        let retentionCutoff = now - Self.appHistoryRetention
+        appFootprintHistory.removeAll { $0.timestamp < retentionCutoff }
+        if appFootprintHistory.count > Self.appHistorySampleLimit {
+            appFootprintHistory.removeFirst(appFootprintHistory.count - Self.appHistorySampleLimit)
+        }
+
+        let growthCutoff = now - Self.appGrowthWindow
+        let baselineSample = appFootprintHistory.last(where: { $0.timestamp <= growthCutoff }) ?? appFootprintHistory.first
+        let baselineBytes = baselineSample?.bytes ?? bytes
+
+        return AppFootprintMetrics(
+            peakBytes: peakAppFootprintBytes,
+            recentGrowthBytes: max(0, bytes - baselineBytes)
+        )
+    }
+
+    private func buildSnapshot(
+        context: PollContext,
+        rows: [ProcessTreeRow],
+        systemStats: SystemMemoryStats,
+        appFootprintBytes: Int64,
+        appFootprintMetrics: AppFootprintMetrics
+    ) -> MemoryUsageSnapshot {
         let appPID = getpid()
         let processTree = ProcessTreeSnapshot(rows: rows, trackedOwners: context.trackedOwners)
-
-        let appFootprintBytes = queryAppFootprintBytes()
         let panelBytes = processTree.residentBytesByPanel()
 
         var workspaceBytes: [UUID: Int64] = [:]
@@ -805,6 +866,8 @@ final class MemoryUsageStore: ObservableObject {
 
         return MemoryUsageSnapshot(
             appFootprintBytes: appFootprintBytes,
+            peakAppFootprintBytes: appFootprintMetrics.peakBytes,
+            recentAppGrowthBytes: appFootprintMetrics.recentGrowthBytes,
             trackedTerminalResidentBytes: panelBytes.values.reduce(0, +),
             workspaceResidentBytes: workspaceBytes,
             panelResidentBytes: panelBytes,
