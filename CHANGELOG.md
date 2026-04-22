@@ -2,6 +2,20 @@
 
 All notable changes to cmux are documented here.
 
+## [1.38.1-atlas.6] - 2026-04-22
+
+### Added
+- Extend the memory popover with current app footprint, peak footprint for this launch, and a 10-minute growth signal so release builds can surface runaway app-owned memory instead of only tracked terminal child-process RAM.
+
+### Fixed
+- Flag when memory is dominated by cmux Atlas itself rather than tracked terminal child processes, making app-state leaks much more obvious during real workloads.
+- Strip trailing punctuation from terminal file references so paths like `docs/file.md.` and `Sources/AppDelegate.swift:451:58.` still open correctly.
+- Make workspace `Copy Path` and `Reveal in Finder` use the ordered sidebar directory set, including a chooser menu when a workspace is tracking multiple directories.
+
+### Tests
+- Add memory snapshot unit coverage for app-dominant usage detection.
+- Add terminal link resolution coverage for trailing punctuation on markdown paths and positioned source file links.
+
 ## [1.38.1-atlas.5] - 2026-03-29
 
 ### Fixed
