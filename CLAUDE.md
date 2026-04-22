@@ -225,7 +225,7 @@ Use the `/release` command to prepare a new fork release.
 
 ### Fork versioning scheme
 
-`MARKETING_VERSION` stays aligned with upstream (manaflow-ai/cmux). Fork releases use atlas tags:
+`MARKETING_VERSION` should match the active Atlas release base for the branch you are releasing. This often follows upstream, but this repo has carried multiple Atlas version lines in history. Fork releases use atlas tags:
 
 ```
 v{upstream-version}-atlas.{N}
@@ -234,6 +234,15 @@ v{upstream-version}-atlas.{N}
 Examples: `v0.62.2-atlas.1`, `v0.62.2-atlas.2`, `v0.63.0-atlas.1`
 
 When upstream bumps their version and we sync, reset the atlas suffix to `.1`.
+
+Release-line warning:
+- Do not infer the next Atlas release number from `main` alone.
+- This repo has carried multiple Atlas version lines in history, including a clean-upstream rebuild line (`1.38.1-atlas.*`) and the active Atlas fork line (`0.63.1-atlas.*` on `feat/rebuild-ai-resume-core`).
+- Before tagging, verify the intended release series from the target branch itself:
+  - `git show HEAD:GhosttyTabs.xcodeproj/project.pbxproj | rg -m2 'MARKETING_VERSION = |CURRENT_PROJECT_VERSION = '`
+  - `git show HEAD:CHANGELOG.md | sed -n '1,20p'`
+  - `git tag --list 'v*atlas*' --sort=-creatordate | head`
+- If the branch's `MARKETING_VERSION`, `CHANGELOG.md`, and latest intended Atlas tag do not clearly agree on one release train, stop and ask before creating a release commit or tag.
 
 ### Version bumping
 
@@ -245,7 +254,7 @@ When upstream bumps their version and we sync, reset the atlas suffix to `.1`.
 ./scripts/bump-version.sh 1.0.0    # set specific version
 ```
 
-For fork releases, always use `build` to keep `MARKETING_VERSION` aligned with upstream. The build number (`CURRENT_PROJECT_VERSION`) is what Sparkle uses to detect updates.
+For fork releases, usually use `build` so `CURRENT_PROJECT_VERSION` advances without inventing a new marketing-version train. The build number is what Sparkle uses to detect updates.
 
 ### Release steps
 
