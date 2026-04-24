@@ -6745,6 +6745,7 @@ final class Workspace: Identifiable, ObservableObject {
 
     func registerActiveAISession(panelId: UUID, snapshot: ActiveAISessionSnapshot) {
         guard panels[panelId]?.panelType == .terminal else { return }
+        terminalPanel(for: panelId)?.clearPendingResumePrefill()
         activeAISessions[panelId] = snapshot
         MemoryUsageStore.shared.requestImmediateRefresh()
     }

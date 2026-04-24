@@ -4,7 +4,8 @@ E2E regression test for Codex hook session mapping.
 
 Validates:
 1) session-start records session_id -> workspace/surface mapping on disk
-2) stop updates the mapped session state without failing
+2) prompt-submit preserves the mapped session state without failing
+3) stop updates the mapped session state without failing
 3) hook responses stay valid JSON for Codex's silent hook contract
 """
 
@@ -151,6 +152,30 @@ def main() -> int:
                 return fail("Mapped permissionMode did not match session-start payload")
             if session_row.get("source") != "startup":
                 return fail("Mapped source did not match session-start payload")
+
+            prompt_submit_response = run_codex_hook(
+                cli_path,
+                client.socket_path,
+                "prompt-submit",
+                {
+                    "session_id": session_id,
+                    "cwd": str(project_dir),
+                    "transcript_path": first_transcript,
+                    "permission_mode": "default",
+                    "source": "user_prompt_submit",
+                },
+                hook_env,
+            )
+            if prompt_submit_response != {"continue": True}:
+                return fail(f"Expected silent success JSON from prompt-submit, got {prompt_submit_response!r}")
+
+            with state_path.open("r", encoding="utf-8") as f:
+                post_prompt_submit_state = json.load(f)
+            session_row = (post_prompt_submit_state.get("sessions") or {}).get(session_id)
+            if not session_row:
+                return fail("Expected Codex session row to remain after prompt-submit")
+            if session_row.get("source") != "user_prompt_submit":
+                return fail("Expected prompt-submit to refresh source")
 
             stop_response = run_codex_hook(
                 cli_path,

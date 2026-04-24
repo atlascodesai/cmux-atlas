@@ -7,14 +7,18 @@ find_real_codex() {
         return 0
     fi
 
-    local dev_build="/Users/timapple/Documents/guest/codex/codex-rs/target/debug/codex"
-    if [[ -x "$dev_build" ]]; then
-        printf '%s' "$dev_build"
-        return 0
-    fi
-
     local self_dir
     self_dir="$(cd "$(dirname "$0")" && pwd)"
+
+    if command -v ovm >/dev/null 2>&1; then
+        local ovm_path
+        ovm_path="$(ovm which codex 2>/dev/null || true)"
+        if [[ -n "$ovm_path" && -x "$ovm_path" && "$ovm_path" != "$self_dir/codex" ]]; then
+            printf '%s' "$ovm_path"
+            return 0
+        fi
+    fi
+
     local IFS=:
     for d in $PATH; do
         [[ "$d" == "$self_dir" ]] && continue
@@ -37,6 +41,23 @@ cmux_socket_available() {
         "$cmux_bin" --socket "$socket" ping >/dev/null 2>&1
 }
 
+codex_config_dir() {
+    if [[ -n "${CODEX_HOME:-}" ]]; then
+        printf '%s' "${CODEX_HOME}"
+    else
+        printf '%s' "${HOME}/.codex"
+    fi
+}
+
+cmux_config_hooks_installed() {
+    local config_dir hooks_path
+    config_dir="$(codex_config_dir)"
+    hooks_path="${config_dir}/hooks.json"
+    [[ -f "$hooks_path" ]] || return 1
+    command -v grep >/dev/null 2>&1 || return 1
+    grep -q "cmux codex-hook" "$hooks_path"
+}
+
 REAL_CODEX="$(find_real_codex)" || { echo "Error: codex not found in PATH" >&2; exit 127; }
 
 IN_CMUX=0
@@ -45,6 +66,10 @@ if [[ -n "${CMUX_SURFACE_ID:-}" ]]; then
 fi
 
 if [[ "$IN_CMUX" == "0" || "${CMUX_CODEX_HOOKS_DISABLED:-0}" == "1" ]] || ! cmux_socket_available; then
+    exec "$REAL_CODEX" "$@"
+fi
+
+if cmux_config_hooks_installed; then
     exec "$REAL_CODEX" "$@"
 fi
 
@@ -61,4 +86,5 @@ exec \
     --enable codex_hooks \
     --hook "session_start=cmux codex-hook session-start" \
     --hook "stop=cmux codex-hook stop" \
+    --hook "session_end=cmux codex-hook session-end" \
     "$@"

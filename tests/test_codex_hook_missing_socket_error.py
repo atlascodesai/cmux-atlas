@@ -48,6 +48,8 @@ def main() -> int:
 
     env = os.environ.copy()
     env["CMUX_CLI_SENTRY_DISABLED"] = "1"
+    env["CMUX_SURFACE_ID"] = "surface:test"
+    env["CMUX_WORKSPACE_ID"] = "workspace:test"
     env.pop("CMUX_SOCKET_PATH", None)
 
     proc = subprocess.run(

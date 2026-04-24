@@ -2,6 +2,18 @@
 
 All notable changes to cmux are documented here.
 
+## [0.63.1-atlas.20] - 2026-04-24
+
+### Added
+- `cmux codex install-hooks`, `cmux codex uninstall-hooks`, and `cmux setup-hooks --agent codex` for installing Codex lifecycle hooks into `~/.codex`
+- `--atlas-extended` hook installation mode for Atlas/local Codex builds that emit `SessionEnd`
+
+### Fixed
+- Repeated stale `claude --resume ...` prefills appending into the same terminal prompt after background cleanup and recovery churn
+- Codex wrapper duplicate hook firing when config-installed Codex hooks are already present
+- Codex wrapper resolution so the active OVM-selected or PATH `codex` binary is used by default instead of a repo-local fallback
+- Codex hook lifecycle coverage so `prompt-submit` and Atlas `session-end` flows preserve session mapping and cleanup behavior consistently
+
 ## [1.38.1-atlas.5] - 2026-03-29
 
 ### Fixed

@@ -279,6 +279,82 @@ final class TabManagerChildExitCloseTests: XCTestCase {
 
 @MainActor
 final class TabManagerAISessionSweepTests: XCTestCase {
+    func testTerminalPanelBlocksAdditionalResumePrefillsUntilLiveSessionStarts() {
+        let manager = TabManager()
+        guard let workspace = manager.selectedWorkspace,
+              let panelId = workspace.focusedPanelId,
+              let terminalPanel = workspace.terminalPanel(for: panelId) else {
+            XCTFail("Expected selected workspace with focused terminal panel")
+            return
+        }
+
+        let first = RestoredTerminalActionSnapshot(
+            agentType: .claudeCode,
+            sessionId: "first-session",
+            workingDirectory: "/tmp/project",
+            projectPath: "/tmp/project",
+            lastSeenActive: 1
+        )
+        let second = RestoredTerminalActionSnapshot(
+            agentType: .claudeCode,
+            sessionId: "second-session",
+            workingDirectory: "/tmp/project",
+            projectPath: "/tmp/project",
+            lastSeenActive: 2
+        )
+
+        XCTAssertTrue(terminalPanel.prefillResumeAction(first))
+        XCTAssertFalse(terminalPanel.prefillResumeAction(second))
+        XCTAssertEqual(terminalPanel.queuedTextForTesting(), "claude --resume first-session")
+
+        workspace.registerActiveAISession(
+            panelId: panelId,
+            snapshot: ActiveAISessionSnapshot(
+                agentType: .claudeCode,
+                sessionId: "first-session",
+                workingDirectory: "/tmp/project",
+                projectPath: "/tmp/project",
+                pid: 123,
+                lastUpdatedAt: Date().timeIntervalSince1970
+            )
+        )
+
+        XCTAssertTrue(terminalPanel.prefillResumeAction(second))
+        XCTAssertEqual(
+            terminalPanel.queuedTextForTesting(),
+            "claude --resume first-sessionclaude --resume second-session"
+        )
+    }
+
+    func testSweepDoesNotPrefillResumeCommandWhenTrackedClaudeProcessIsDead() {
+        let manager = TabManager()
+        guard let workspace = manager.selectedWorkspace,
+              let panelId = workspace.focusedPanelId,
+              let terminalPanel = workspace.terminalPanel(for: panelId) else {
+            XCTFail("Expected selected workspace with focused terminal panel")
+            return
+        }
+
+        workspace.registerActiveAISession(
+            panelId: panelId,
+            snapshot: ActiveAISessionSnapshot(
+                agentType: .claudeCode,
+                sessionId: "session-dead-pid",
+                workingDirectory: "/tmp/project",
+                projectPath: "/tmp/project",
+                pid: 0,
+                lastUpdatedAt: Date().timeIntervalSince1970
+            )
+        )
+
+        XCTAssertEqual(terminalPanel.queuedTextForTesting(), "")
+
+        manager.sweepAgentProcessesForTesting()
+
+        XCTAssertEqual(terminalPanel.queuedTextForTesting(), "")
+        XCTAssertNil(workspace.activeAISession(panelId: panelId, agentType: .claudeCode))
+    }
+
     func testSweepPrefillsResumeCommandWhenTrackedCodexProcessIsDead() {
         let manager = TabManager()
         guard let workspace = manager.selectedWorkspace,

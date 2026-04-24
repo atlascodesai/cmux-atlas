@@ -37,6 +37,7 @@ final class TerminalPanel: Panel, ObservableObject {
     @Published var viewReattachToken: UInt64 = 0
 
     private var cancellables = Set<AnyCancellable>()
+    private var pendingResumePrefillCommand: String?
 
     var displayTitle: String {
         title.isEmpty ? "Terminal" : title
@@ -211,8 +212,22 @@ final class TerminalPanel: Panel, ObservableObject {
             )
             return false
         }
+        if let pendingResumePrefillCommand {
+            if pendingResumePrefillCommand == command {
+                return false
+            }
+            // Automatic recovery paths should not keep appending stale resume
+            // commands into the same shell prompt. Hold one pending prefill
+            // until the panel actually starts a live AI session again.
+            return false
+        }
+        pendingResumePrefillCommand = command
         sendText(command)
         return true
+    }
+
+    func clearPendingResumePrefill() {
+        pendingResumePrefillCommand = nil
     }
 
 #if DEBUG

@@ -1771,6 +1771,18 @@ class TabManager: ObservableObject {
             return true
         }
 
+        func shouldPrefillResumeForDeadProcess(_ snapshot: ActiveAISessionSnapshot) -> Bool {
+            switch snapshot.agentType {
+            case .claudeCode:
+                // Claude has an explicit SessionEnd hook with reason semantics.
+                // Falling back to PID death here bypasses that gate and can paste
+                // a stale `claude --resume ...` into an otherwise idle shell.
+                return false
+            case .codex:
+                return true
+            }
+        }
+
         for tab in tabs {
             var keysToRemove: [String] = []
             for (key, pid) in tab.agentPIDs {
@@ -1785,7 +1797,8 @@ class TabManager: ObservableObject {
             }
 
             for (panelId, snapshot) in deadActiveSessions {
-                if let terminalPanel = tab.terminalPanel(for: panelId) {
+                if shouldPrefillResumeForDeadProcess(snapshot),
+                   let terminalPanel = tab.terminalPanel(for: panelId) {
                     terminalPanel.prefillResumeAction(snapshot.restoredTerminalAction)
                 }
                 tab.clearActiveAISession(panelId: panelId, agentType: snapshot.agentType)
