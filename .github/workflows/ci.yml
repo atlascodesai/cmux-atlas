@@ -172,6 +172,22 @@ jobs:
             sleep $((attempt * 5))
           done
 
+      - name: Create virtual display
+        # AppDelegateShortcutRoutingTests exercise NSWindow lifecycle (registration,
+        # focus routing, close confirmation, modal dialogs). Without a real display
+        # session, AppKit's autorelease/responder lifecycle behaves inconsistently
+        # and these tests fail with NSWindow leaks and missing key-window state.
+        # The same virtual display is used by tests-build-and-lag and ui-regressions.
+        run: |
+          set -euo pipefail
+          clang -framework Foundation -framework CoreGraphics \
+            -o /tmp/create-virtual-display scripts/create-virtual-display.m
+          /tmp/create-virtual-display &
+          VDISPLAY_PID=$!
+          echo "VDISPLAY_PID=$VDISPLAY_PID" >> "$GITHUB_ENV"
+          sleep 3
+          kill -0 "$VDISPLAY_PID"
+
       - name: Run unit tests
         run: |
           set -euo pipefail
@@ -234,6 +250,15 @@ jobs:
           fi
 
           CMUX_CLI_BIN="$CLI_BIN" python3 tests/test_cli_version_memory_guard.py
+
+      - name: Cleanup virtual display
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -n "${VDISPLAY_PID:-}" ]; then
+            kill "$VDISPLAY_PID" >/dev/null 2>&1 || true
+          fi
+          rm -f /tmp/create-virtual-display
 
   tests-build-and-lag:
     # Build the full cmux scheme and run the lag regression on WarpBuild.
