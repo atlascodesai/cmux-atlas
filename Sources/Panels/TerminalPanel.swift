@@ -197,6 +197,13 @@ final class TerminalPanel: Panel, ObservableObject {
             permissiveModeEnabled = AIQuickLaunchController.shared.permissiveModeEnabled(for: .codex)
         }
         guard let command = snapshot.resumeCommand(permissiveModeEnabled: permissiveModeEnabled) else {
+#if DEBUG
+            dlog(
+                "resume.prefill.skip.no-session-id panel=\(id.uuidString.prefix(5)) " +
+                "agent=\(snapshot.agentType.rawValue) " +
+                "cwd=\(snapshot.workingDirectory ?? "nil")"
+            )
+#endif
             sentryCaptureWarning(
                 "AI resume command missing",
                 category: "ai_resume",
@@ -214,15 +221,29 @@ final class TerminalPanel: Panel, ObservableObject {
         }
         if let pendingResumePrefillCommand {
             if pendingResumePrefillCommand == command {
+#if DEBUG
+                dlog("resume.prefill.skip.duplicate panel=\(id.uuidString.prefix(5))")
+#endif
                 return false
             }
             // Automatic recovery paths should not keep appending stale resume
             // commands into the same shell prompt. Hold one pending prefill
             // until the panel actually starts a live AI session again.
+#if DEBUG
+            dlog("resume.prefill.skip.stale panel=\(id.uuidString.prefix(5)) agent=\(snapshot.agentType.rawValue)")
+#endif
             return false
         }
         pendingResumePrefillCommand = command
         sendText(command)
+#if DEBUG
+        dlog(
+            "resume.prefill.sent panel=\(id.uuidString.prefix(5)) " +
+            "agent=\(snapshot.agentType.rawValue) " +
+            "session=\(snapshot.sessionId?.prefix(8) ?? "nil") " +
+            "permissive=\(permissiveModeEnabled ? 1 : 0)"
+        )
+#endif
         return true
     }
 

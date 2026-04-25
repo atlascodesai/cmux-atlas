@@ -50,66 +50,16 @@ final class AISessionDetectorTests: XCTestCase {
         XCTAssertEqual(decoded.command, "codex --yolo")
     }
 
-    // MARK: - Resume Command Tests
+    // MARK: - PID Liveness
 
-    func testClaudeCodeResumeCommandWithSessionId() {
-        let session = AISessionSnapshot(
-            agentType: .claudeCode,
-            sessionId: "abc-123",
-            workingDirectory: nil,
-            command: nil,
-            projectPath: nil,
-            lastSeenActive: 0
-        )
-        XCTAssertEqual(session.resumeCommand, "claude --resume abc-123")
+    func testIsPIDAliveReturnsTrueForCurrentProcess() {
+        XCTAssertTrue(AISessionDetector.isPIDAlive(getpid()))
     }
 
-    func testClaudeCodeResumeCommandWithoutSessionId() {
-        let session = AISessionSnapshot(
-            agentType: .claudeCode,
-            sessionId: nil,
-            workingDirectory: nil,
-            command: nil,
-            projectPath: nil,
-            lastSeenActive: 0
-        )
-        XCTAssertEqual(session.resumeCommand, "claude --resume")
-    }
-
-    func testCodexResumeCommandUsesWorkingDirectory() {
-        let session = AISessionSnapshot(
-            agentType: .codex,
-            sessionId: nil,
-            workingDirectory: "/tmp/my project",
-            command: "codex --yolo",
-            projectPath: nil,
-            lastSeenActive: 0
-        )
-        XCTAssertEqual(session.resumeCommand, "cd '/tmp/my project' && codex")
-    }
-
-    func testCodexResumeCommandFallsBackToCodex() {
-        let session = AISessionSnapshot(
-            agentType: .codex,
-            sessionId: nil,
-            workingDirectory: nil,
-            command: nil,
-            projectPath: nil,
-            lastSeenActive: 0
-        )
-        XCTAssertEqual(session.resumeCommand, "codex")
-    }
-
-    func testCodexResumeCommandUsesProjectPathWhenWorkingDirectoryMissing() {
-        let session = AISessionSnapshot(
-            agentType: .codex,
-            sessionId: nil,
-            workingDirectory: nil,
-            command: "codex --continue",
-            projectPath: "/tmp/project's name",
-            lastSeenActive: 0
-        )
-        XCTAssertEqual(session.resumeCommand, "cd '/tmp/project'\\''s name' && codex")
+    func testIsPIDAliveReturnsFalseForUnusedPID() {
+        // PID 0 is reserved (kernel scheduler); kill(0, 0) signals the process
+        // group, not a single process, so we use a clearly-unused high PID.
+        XCTAssertFalse(AISessionDetector.isPIDAlive(0))
     }
 
     // MARK: - Panel Snapshot Backward Compatibility
@@ -127,16 +77,15 @@ final class AISessionDetectorTests: XCTestCase {
         let data = Data(json.utf8)
         let decoded = try JSONDecoder().decode(SessionPanelSnapshot.self, from: data)
 
-        XCTAssertNil(decoded.aiSession)
+        XCTAssertNil(decoded.restoredTerminalAction)
         XCTAssertEqual(decoded.type, .terminal)
     }
 
-    func testPanelSnapshotRoundTripWithAISession() throws {
-        let aiSession = AISessionSnapshot(
+    func testPanelSnapshotRoundTripWithRestoredTerminalAction() throws {
+        let action = RestoredTerminalActionSnapshot(
             agentType: .claudeCode,
             sessionId: "test-session-id",
             workingDirectory: "/tmp/test",
-            command: "claude --resume",
             projectPath: "/tmp/test",
             lastSeenActive: 1700000000
         )
@@ -155,7 +104,7 @@ final class AISessionDetectorTests: XCTestCase {
             terminal: nil,
             browser: nil,
             markdown: nil,
-            aiSession: aiSession
+            restoredTerminalAction: action
         )
 
         let encoder = JSONEncoder()
@@ -163,9 +112,14 @@ final class AISessionDetectorTests: XCTestCase {
         let data = try encoder.encode(snapshot)
         let decoded = try JSONDecoder().decode(SessionPanelSnapshot.self, from: data)
 
-        XCTAssertNotNil(decoded.aiSession)
-        XCTAssertEqual(decoded.aiSession?.agentType, .claudeCode)
-        XCTAssertEqual(decoded.aiSession?.sessionId, "test-session-id")
+        XCTAssertNotNil(decoded.restoredTerminalAction)
+        XCTAssertEqual(decoded.restoredTerminalAction?.agentType, .claudeCode)
+        XCTAssertEqual(decoded.restoredTerminalAction?.sessionId, "test-session-id")
+
+        // Sanity check: backwards-compatible JSON key remains "aiSession" so older
+        // snapshots written by previous releases still decode into this field.
+        let json = String(data: data, encoding: .utf8) ?? ""
+        XCTAssertTrue(json.contains("\"aiSession\""), "expected JSON key 'aiSession' for backward-compat")
     }
 
     // MARK: - Detect with nil/empty TTY
@@ -288,7 +242,6 @@ final class AISessionDetectorTests: XCTestCase {
         XCTAssertEqual(snapshot?.workingDirectory, "/tmp/actual-project")
         XCTAssertEqual(snapshot?.projectPath, "/tmp/actual-project")
         XCTAssertEqual(snapshot?.lastSeenActive, 123)
-        XCTAssertEqual(snapshot?.resumeCommand, "cd '/tmp/actual-project' && codex")
     }
 
     func testCodexSnapshotFallsBackToWorkspaceDirectoryWhenProcessCwdMissing() {
@@ -552,17 +505,17 @@ final class AISessionCrashSimulationTests: XCTestCase {
         XCTAssertNotNil(staleSessionMtime)
         XCTAssertGreaterThan(activeSessionMtime!.timeIntervalSince1970, staleSessionMtime!.timeIntervalSince1970)
 
-        // Step 5: Verify resume command generation
-        let snapshot = AISessionSnapshot(
+        // Step 5: Verify resume command generation goes through the
+        // RestoredTerminalActionSnapshot path (the production restore code).
+        let action = RestoredTerminalActionSnapshot(
             agentType: .claudeCode,
             sessionId: sessionId,
             workingDirectory: "/tmp/myapp",
-            command: "claude --dangerously-skip-permissions",
             projectPath: "/tmp/myapp",
             lastSeenActive: Double(crashTime)
         )
 
-        XCTAssertEqual(snapshot.resumeCommand, "claude --resume \(sessionId)")
+        XCTAssertEqual(action.resumeCommand, "claude --resume \(sessionId)")
 
         // Step 6: Verify the session content matches what we'd expect to resume
         // (In a real crash, the .jsonl file would still be on disk with all history)

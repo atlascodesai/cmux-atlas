@@ -344,6 +344,20 @@ extension Workspace {
         } else {
             scheduleFocusReconcile()
         }
+
+        // Race fix: agent CLI hooks (Claude/Codex) sometimes write their
+        // hook-state JSON file *after* cmux has already finished restoring
+        // panels — when the agent re-launches inside the resumed shell, its
+        // SessionStart hook fires and emits the new session id slightly later.
+        // Re-check after a short delay so a freshly written session id can
+        // still be picked up without the user having to invoke "Refresh AI
+        // Resumes" by hand. Only acts on panels that don't already have a
+        // pending prefill or a live agent.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self else { return }
+            _ = self.refreshAIResumes(reportTelemetry: false)
+        }
     }
 
     private func sessionLayoutSnapshot(from node: ExternalTreeNode) -> SessionWorkspaceLayoutSnapshot {

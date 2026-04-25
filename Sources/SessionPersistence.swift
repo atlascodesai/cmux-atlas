@@ -360,16 +360,31 @@ enum RestoredTerminalActionRegistry {
         processEnv: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> RestoredTerminalActionSnapshot? {
-        providers
-            .compactMap {
-                $0.restoredTerminalAction(
-                    workspaceId: workspaceId,
-                    panelId: panelId,
-                    processEnv: processEnv,
-                    fileManager: fileManager
-                )
-            }
-            .max(by: { $0.lastSeenActive < $1.lastSeenActive })
+        let candidates = providers.compactMap {
+            $0.restoredTerminalAction(
+                workspaceId: workspaceId,
+                panelId: panelId,
+                processEnv: processEnv,
+                fileManager: fileManager
+            )
+        }
+        let winner = candidates.max(by: { $0.lastSeenActive < $1.lastSeenActive })
+#if DEBUG
+        let agentSummary = candidates.map { "\($0.agentType.rawValue):\($0.sessionId ?? "nil")" }.joined(separator: ",")
+        if let winner {
+            dlog(
+                "resume.registry.match workspace=\(workspaceId.uuidString.prefix(5)) " +
+                "panel=\(panelId.uuidString.prefix(5)) winner=\(winner.agentType.rawValue) " +
+                "session=\(winner.sessionId?.prefix(8) ?? "nil") candidates=[\(agentSummary)]"
+            )
+        } else {
+            dlog(
+                "resume.registry.miss workspace=\(workspaceId.uuidString.prefix(5)) " +
+                "panel=\(panelId.uuidString.prefix(5))"
+            )
+        }
+#endif
+        return winner
     }
 }
 

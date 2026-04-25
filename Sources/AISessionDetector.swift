@@ -17,12 +17,19 @@ import Foundation
 // 7. Lowest score wins — this disambiguates multiple sessions in the same project dir
 
 /// Snapshot of a detected AI agent session, persisted alongside the panel snapshot.
+///
+/// This is the *live-detection* model used to display "agent is running" UI on a
+/// panel. The *resume-after-relaunch* path uses `RestoredTerminalActionSnapshot`
+/// in `SessionPersistence.swift`, which requires a session UUID for both Claude
+/// and Codex and never falls back to a directory-only restart.
 struct AISessionSnapshot: Codable, Sendable, Equatable {
     /// The type of agent that was running.
     var agentType: AIAgentType
 
     /// The session/conversation identifier, if detectable.
     /// For Claude Code this is the UUID from the .jsonl filename.
+    /// For Codex this is the session UUID from the hook-state file (nil if hooks
+    /// haven't reported yet).
     var sessionId: String?
 
     /// The working directory the agent was operating in.
@@ -36,35 +43,6 @@ struct AISessionSnapshot: Codable, Sendable, Equatable {
 
     /// Timestamp when the session was last detected as active.
     var lastSeenActive: TimeInterval
-
-    /// Builds the shell command to resume this session.
-    var resumeCommand: String? {
-        switch agentType {
-        case .claudeCode:
-            if let sessionId {
-                return "claude --resume \(sessionId)"
-            }
-            return "claude --resume"
-        case .codex:
-            // Codex doesn't expose a resumable session ID; restart it in the same directory.
-            return shellCommandPrefixedWithWorkingDirectory(
-                "codex",
-                directory: workingDirectory ?? projectPath
-            )
-        }
-    }
-}
-
-private func shellCommandPrefixedWithWorkingDirectory(_ command: String, directory: String?) -> String {
-    guard let directory = directory?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !directory.isEmpty else {
-        return command
-    }
-    return "cd \(shellSingleQuoted(directory)) && \(command)"
-}
-
-private func shellSingleQuoted(_ value: String) -> String {
-    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
 }
 
 /// Detects AI coding agents running inside terminal sessions.
@@ -73,7 +51,9 @@ enum AISessionDetector {
     // MARK: - Hook-State Fast Path Cache
 
     /// Memoization cache for (pid, startEpoch) → sessionId to avoid repeated JSONL scans.
-    /// Protected by `cacheLock`. Entries are evicted when the PID is no longer alive.
+    /// Protected by `cacheLock`. Entries are evicted on cache hit when the PID is no
+    /// longer alive (`kill(pid, 0)` returns -1 with ESRCH) or when the live process's
+    /// start epoch no longer matches the cache key (PID was reused).
     private static let cacheLock = NSLock()
     private static var pidSessionCache: [PIDSessionCacheKey: CachedPIDSession] = [:]
 
@@ -85,6 +65,20 @@ enum AISessionDetector {
     private struct CachedPIDSession {
         let sessionId: String?
         let projectPath: String?
+    }
+
+    /// Returns true if the given PID is still a live process. Used to evict stale
+    /// cache entries instead of returning a session id that no longer matches
+    /// any running agent.
+    static func isPIDAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0 else { return false }
+        // kill(pid, 0) does not deliver a signal — it just performs the existence
+        // and permission check. Returns 0 if the process exists, -1 with errno
+        // ESRCH if it does not (EPERM still implies existence).
+        if kill(pid, 0) == 0 {
+            return true
+        }
+        return errno != ESRCH
     }
 
     // MARK: - Process Detection
@@ -328,12 +322,21 @@ enum AISessionDetector {
         let cacheKey = PIDSessionCacheKey(pid: pid, startEpoch: startEpoch)
         cacheLock.lock()
         if let cached = pidSessionCache[cacheKey] {
-            cacheLock.unlock()
-            return ClaudeSessionInfo(
-                sessionId: cached.sessionId ?? "",
-                projectPath: cached.projectPath,
-                score: 0
-            )
+            // Only trust the cache if the PID is still alive *and* the
+            // start-epoch match held. processStartEpoch above already ensures
+            // the live PID still has the same start time we cached, so a hit
+            // here implies the same process is still running. Verify liveness
+            // explicitly to defend against the very narrow window where ps(1)
+            // succeeds but the process exits before we use the cached value.
+            if isPIDAlive(pid) {
+                cacheLock.unlock()
+                return ClaudeSessionInfo(
+                    sessionId: cached.sessionId ?? "",
+                    projectPath: cached.projectPath,
+                    score: 0
+                )
+            }
+            pidSessionCache.removeValue(forKey: cacheKey)
         }
         cacheLock.unlock()
 
