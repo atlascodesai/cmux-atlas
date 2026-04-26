@@ -2,6 +2,14 @@
 
 All notable changes to cmux are documented here.
 
+## [0.63.1-atlas.23] - 2026-04-27
+
+### Fixed
+- CI lanes (CI / macOS Compatibility / Build GhosttyKit) moved from the self-hosted Mac mini to GitHub-hosted `macos-15` runners. Self-hosted accumulated AppKit window state between runs and was hiding NSWindow lifecycle test failures; fresh-VM hosted runners pass cleanly.
+- Nightly workflow: fixed Atlas-rebrand drift (`cmux.app` → `cmux Atlas.app`), and made the `bin/ghostty` helper architecture verification conditional now that the fork uses upstream's ghostty (which doesn't bundle a CLI helper).
+- Compat smoke test: pointed at the Atlas-branded socket path (`/tmp/cmux-atlas-debug.sock`) and bumped the socket-ready timeout 30s → 60s for slower hosted runners.
+- Skip-list / runner-label guard scripts updated to allow GitHub-hosted CI without diverging from upstream's actual security guarantees.
+
 ## [0.63.1-atlas.22] - 2026-04-25
 
 ### Fixed
