@@ -51,8 +51,12 @@ fi
 
 # --- Wait for socket (up to 30s) ---
 echo "Waiting for socket at $SOCKET_PATH..."
+# 120 iterations × 0.5s = 60s. GitHub-hosted macos-15 runners launch the
+# Atlas DEV bundle noticeably slower than self-hosted; 30s was too tight
+# and the ping check then races against an app that hasn't bound its
+# socket yet.
 SOCKET_READY=false
-for i in $(seq 1 60); do
+for i in $(seq 1 120); do
   if [ -S "$SOCKET_PATH" ]; then
     echo "Socket ready after $((i / 2))s"
     SOCKET_READY=true
@@ -70,7 +74,7 @@ for i in $(seq 1 60); do
   sleep 0.5
 done
 if [ "$SOCKET_READY" != "true" ]; then
-  echo "ERROR: Socket not ready after 30s"
+  echo "ERROR: Socket not ready after 60s"
   echo "--- stdout/stderr ---"
   cat /tmp/cmux-smoke-stdout.log 2>/dev/null | tail -30 || true
   echo "--- debug log ---"
