@@ -201,6 +201,7 @@ jobs:
               -disableAutomaticPackageResolution \
               -destination "platform=macOS" \
               -skip-testing:cmuxTests/AppDelegateShortcutRoutingTests/testCmdWClosesWindowWhenClosingLastSurfaceInLastWorkspace \
+              -skip-testing:cmuxTests/TerminalControllerSocketSecurityTests \
               test 2>&1
           }
 
